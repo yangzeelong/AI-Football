@@ -1,0 +1,18 @@
+labels:
+  person:
+    - person
+  ball:
+    - sports ball
+    - ball
+    - football
+    - soccer ball
+
+filters:
+  person:
+    min_confidence: 0.25
+    min_width_px: 8
+    min_height_px: 24
+  ball:
+    min_confidence: 0.1
+    min_width_px: 2
+    min_height_px: 2

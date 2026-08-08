@@ -1,0 +1,11 @@
+opencv-python
+ultralytics
+numpy<2
+loguru
+PyYAML
+tqdm
+mmpose
+mmcv-lite<2.2.0
+mmengine
+mmdet
+lap
