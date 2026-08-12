@@ -2,8 +2,8 @@
 
 This MVP generates per-frame 2D observations for task 1:
 
-- YOLO detects people and footballs.
-- Ultralytics BoT-SORT assigns single-camera person track IDs.
+- RF-DETR detects people and footballs. YOLO remains available for comparison.
+- The tracker currently assigns football states; person track IDs need an external tracker after RF-DETR.
 - MMPose RTMPose/WholeBody projects body keypoints into the project 26-point schema.
 - A lightweight football tracker keeps one ball track and short missing-frame predictions.
 - JSONL output stores camera ID, timestamp, person observations, ball observations, confidence, and state.
@@ -13,17 +13,18 @@ This MVP generates per-frame 2D observations for task 1:
 ```bash
 python code/app.py ^
   --video data/sample.mov ^
-  --model yolov8n.pt ^
+  --detector rfdetr ^
+  --rfdetr-size nano ^
   --classes person "sports ball" ^
   --output-observations tmp/C1_observations.jsonl ^
   --camera-id C1 ^
   --tracker botsort.yaml ^
-  --pose-config path/to/rtmpose_wholebody_config.py ^
-  --pose-checkpoint path/to/rtmpose_wholebody_checkpoint.pth ^
   --show
 ```
 
-If `--pose-config` is omitted, the MVP still writes tracked ball observations and the frame-level schema, but person keypoints are not estimated.
+Task 1 requires person landmarks. JSONL export loads MMPose by default from
+`models/mmpose`; if the config or checkpoint is missing, the app fails fast
+instead of writing observations without 26 keypoints.
 
 ## Project 26 Keypoints
 

@@ -79,12 +79,13 @@ python code/app.py --video data/素材/射门1-1080p60.mov --draw-roi --roi-conf
 
 ```bash
 python code/app.py --video data/素材/射门1-1080p60.mov \
-  --model yolov8n.pt \
+  --detector yolo \
+  --model models/yolo/yolov8n.pt \
   --device cuda:0 \
   --pose-device cuda:0 \
   --output-observations tmp/C1_observations.jsonl \
-  --pose-config deps/mmpose/configs/wholebody_2d_keypoint/rtmpose/coco-wholebody/rtmpose-m_8xb64-270e_coco-wholebody-256x192.py \
-  --pose-checkpoint deps/mmpose/rtmpose-wholebody/rtmpose-m_simcc-coco-wholebody_pt-aic-coco_270e-256x192-cd5e845c_20230123.pth \
+  --pose-config models/mmpose/configs/wholebody_2d_keypoint/rtmpose/coco-wholebody/rtmpose-m_8xb64-270e_coco-wholebody-256x192.py \
+  --pose-checkpoint models/mmpose/rtmpose-wholebody/rtmpose-m_simcc-coco-wholebody_pt-aic-coco_270e-256x192-cd5e845c_20230123.pth \
   --use-roi \
   --app-config config/app.yaml \
   --roi-config config/roi.json
@@ -129,7 +130,7 @@ python code/replay_observations.py \
 - `output_report`：结构化质量报告
 - `output_report_md`：可读版质量报告
 
-脚本里的 pose 配置和权重都放在本地 `deps/mmpose/`，暂不纳入 git。
+脚本里的检测、姿态配置和权重都放在本地 `models/`，暂不纳入 git。
 
 ## 关键参数
 

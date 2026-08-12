@@ -325,6 +325,142 @@ class YoloDetector:
         return detections
 
 
+class RfdetrDetector:
+    WEIGHTS = {
+        "nano": (
+            "rf-detr-nano.pth",
+            "https://storage.googleapis.com/rfdetr/nano_coco/checkpoint_best_regular.pth",
+        ),
+        "small": (
+            "rf-detr-small.pth",
+            "https://storage.googleapis.com/rfdetr/small_coco/checkpoint_best_regular.pth",
+        ),
+        "base": (
+            "rf-detr-base.pth",
+            "https://storage.googleapis.com/rfdetr/rf-detr-base-coco.pth",
+        ),
+        "medium": (
+            "rf-detr-medium.pth",
+            "https://storage.googleapis.com/rfdetr/medium_coco/checkpoint_best_regular.pth",
+        ),
+        "large": (
+            "rf-detr-large.pth",
+            "https://storage.googleapis.com/rfdetr/rf-detr-large.pth",
+        ),
+    }
+
+    def __init__(
+        self,
+        confidence: float = 0.25,
+        class_names: Sequence[str] | None = None,
+        size: str = "medium",
+        device: str | None = None,
+        model_dir: str | Path = "models/rfdetr",
+    ) -> None:
+        try:
+            from rfdetr import (
+                RFDETRBase,
+                RFDETRLarge,
+                RFDETRMedium,
+                RFDETRNano,
+                RFDETRSmall,
+            )
+            from rfdetr.util.coco_classes import COCO_CLASSES
+        except ImportError as exc:
+            raise RuntimeError(
+                "rfdetr is required for RF-DETR detection. Install it with: pip install rfdetr"
+            ) from exc
+
+        model_classes = {
+            "nano": RFDETRNano,
+            "small": RFDETRSmall,
+            "base": RFDETRBase,
+            "medium": RFDETRMedium,
+            "large": RFDETRLarge,
+        }
+        if size not in model_classes:
+            raise ValueError(
+                f"Unsupported RF-DETR size: {size}. Expected one of {sorted(model_classes)}"
+            )
+
+        rfdetr_device = self._normalize_device(device)
+        weights_path = self._resolve_weights(size, model_dir)
+        model_kwargs = {"pretrain_weights": str(weights_path)}
+        if rfdetr_device:
+            model_kwargs["device"] = rfdetr_device
+        self.model = model_classes[size](**model_kwargs)
+        self.confidence = confidence
+        self.class_names = set(class_names or ["person", "sports ball"])
+        self.device = device
+        self.coco_classes = getattr(self.model, "class_names", COCO_CLASSES)
+
+    def detect(self, frame: VideoFrame) -> list[Detection]:
+        rgb_image = cv2.cvtColor(frame.image, cv2.COLOR_BGR2RGB)
+        predictions = self.model.predict(rgb_image, threshold=self.confidence)
+        return self._parse_predictions(frame, predictions)
+
+    def track(self,
+              frame: VideoFrame,
+              tracker: str = "botsort.yaml",
+              persist: bool = True) -> list[Detection]:
+        # RF-DETR 只负责检测；track_id 后续由外部 tracker 接入。
+        return self.detect(frame)
+
+    def _parse_predictions(self, frame: VideoFrame,
+                           predictions) -> list[Detection]:
+        detections: list[Detection] = []
+        xyxy = getattr(predictions, "xyxy", [])
+        confidences = getattr(predictions, "confidence", [])
+        class_ids = getattr(predictions, "class_id", [])
+        data = getattr(predictions, "data", {}) or {}
+        class_names = data.get("class_name") if isinstance(data, dict) else None
+
+        for index, box in enumerate(xyxy):
+            class_id = int(class_ids[index]) if index < len(class_ids) else -1
+            label = self._label_for(class_id, class_names, index)
+            if self.class_names and label not in self.class_names:
+                continue
+            confidence = float(confidences[index]) if index < len(
+                confidences) else 0.0
+            x1, y1, x2, y2 = [float(value) for value in box]
+            detections.append(
+                Detection(
+                    frame_index=frame.index,
+                    label=label,
+                    confidence=confidence,
+                    bbox=(x1, y1, x2, y2),
+                    class_id=class_id,
+                    track_id=None,
+                ))
+        return detections
+
+    def _label_for(self, class_id: int, class_names, index: int) -> str:
+        if class_names is not None and index < len(class_names):
+            return str(class_names[index])
+        if isinstance(self.coco_classes, dict):
+            return str(self.coco_classes.get(class_id, class_id))
+        if 0 <= class_id < len(self.coco_classes):
+            return str(self.coco_classes[class_id])
+        return str(class_id)
+
+    def _normalize_device(self, device: str | None) -> str | None:
+        if not device:
+            return None
+        if device == "0" or device.startswith("cuda"):
+            return "cuda"
+        return device
+
+    def _resolve_weights(self, size: str, model_dir: str | Path) -> Path:
+        filename, url = self.WEIGHTS[size]
+        weights_path = Path(model_dir) / filename
+        if weights_path.exists():
+            return weights_path
+        raise FileNotFoundError(
+            f"RF-DETR weights not found: {weights_path}. Download from {url} "
+            f"and save as {weights_path}."
+        )
+
+
 class ResultVideoWriter:
 
     def __init__(self,

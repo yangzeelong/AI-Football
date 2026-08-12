@@ -25,6 +25,15 @@ class MMPoseTopDownEstimator:
         checkpoint_path: str | Path | None = None,
         device: str = "cuda:0",
     ) -> None:
+        config_path = Path(config_path)
+        if not config_path.exists():
+            raise FileNotFoundError(f"MMPose config not found: {config_path}")
+        if checkpoint_path is not None:
+            checkpoint_path = Path(checkpoint_path)
+            if not checkpoint_path.exists():
+                raise FileNotFoundError(
+                    f"MMPose checkpoint not found: {checkpoint_path}")
+
         _patch_mmcv_lite_ops_for_rtmpose()
         try:
             from mmpose.apis import init_model, inference_topdown

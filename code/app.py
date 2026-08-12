@@ -5,7 +5,13 @@ from pathlib import Path
 
 from loguru import logger
 
-from football_vision import RoiAnnotator, RoiManager, YoloDetector, run_detection_preview
+from football_vision import (
+    RfdetrDetector,
+    RoiAnnotator,
+    RoiManager,
+    YoloDetector,
+    run_detection_preview,
+)
 from app_config import AppConfig
 from app_pipeline import run_single_view_app
 from pose_estimation import MMPoseTopDownEstimator
@@ -14,6 +20,14 @@ from pose_estimation import MMPoseTopDownEstimator
 DEFAULT_ROI_CONFIG = "config/roi.json"
 DEFAULT_APP_CONFIG = "config/app.yaml"
 DEFAULT_CLASSES = ["person", "sports ball"]
+DEFAULT_POSE_CONFIG = (
+    "models/mmpose/configs/wholebody_2d_keypoint/rtmpose/coco-wholebody/"
+    "rtmpose-m_8xb64-270e_coco-wholebody-256x192.py"
+)
+DEFAULT_POSE_CHECKPOINT = (
+    "models/mmpose/rtmpose-wholebody/"
+    "rtmpose-m_simcc-coco-wholebody_pt-aic-coco_270e-256x192-cd5e845c_20230123.pth"
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -60,10 +74,21 @@ def parse_args() -> argparse.Namespace:
                         type=int,
                         default=1080,
                         help="OpenCV preview window height.")
+    parser.add_argument("--detector",
+                        choices=["rfdetr", "yolo"],
+                        default="rfdetr",
+                        help="Detection backend.")
     parser.add_argument("--model", default="yolov8n.pt", help="YOLO model path or model name.")
     parser.add_argument("--conf", type=float, default=0.25, help="Detection confidence threshold.")
     parser.add_argument("--imgsz", type=int, default=640, help="YOLO inference image size.")
-    parser.add_argument("--device", default="cuda:0", help="YOLO device, e.g. cpu, 0, cuda:0.")
+    parser.add_argument("--rfdetr-size",
+                        choices=["nano", "small", "base", "medium", "large"],
+                        default="base",
+                        help="RF-DETR model size.")
+    parser.add_argument("--model-dir",
+                        default="models/rfdetr",
+                        help="Directory for RF-DETR model weights.")
+    parser.add_argument("--device", default="cuda:0", help="Detector device, e.g. cpu, 0, cuda:0.")
     parser.add_argument(
         "--classes",
         nargs="*",
@@ -87,10 +112,10 @@ def parse_args() -> argparse.Namespace:
                         default="botsort.yaml",
                         help="Ultralytics tracker config, e.g. botsort.yaml.")
     parser.add_argument("--pose-config",
-                        default=None,
+                        default=DEFAULT_POSE_CONFIG,
                         help="MMPose RTMPose/WholeBody config path.")
     parser.add_argument("--pose-checkpoint",
-                        default=None,
+                        default=DEFAULT_POSE_CHECKPOINT,
                         help="MMPose RTMPose/WholeBody checkpoint path.")
     parser.add_argument("--pose-device",
                         default=None,
@@ -110,24 +135,14 @@ def main() -> None:
                     len(config.points), args.roi_config)
         return
 
-    logger.info("loading detector: model={} conf={} imgsz={} device={}",
-                args.model, args.conf, args.imgsz, args.device or "auto")
-    detector = YoloDetector(
-        model_path=args.model,
-        confidence=args.conf,
-        image_size=args.imgsz,
-        class_names=args.classes,
-        device=args.device,
-    )
+    detector = build_detector(args)
     if args.output_observations:
         app_config = AppConfig.from_yaml(args.app_config)
-        pose_estimator = None
-        if args.pose_config:
-            pose_estimator = MMPoseTopDownEstimator(
-                config_path=args.pose_config,
-                checkpoint_path=args.pose_checkpoint,
-                device=args.pose_device or args.device,
-            )
+        pose_estimator = MMPoseTopDownEstimator(
+            config_path=args.pose_config,
+            checkpoint_path=args.pose_checkpoint,
+            device=args.pose_device or args.device,
+        )
         run_single_view_app(
             video_path=video_path,
             detector=detector,
@@ -160,6 +175,28 @@ def main() -> None:
         perf_log=args.perf_log,
         perf_every=args.perf_every,
         output_video=args.output_video,
+    )
+
+
+def build_detector(args: argparse.Namespace):
+    logger.info("loading detector: backend={} conf={} device={}",
+                args.detector, args.conf, args.device or "auto")
+    if args.detector == "rfdetr":
+        logger.info("RF-DETR size={}", args.rfdetr_size)
+        return RfdetrDetector(
+            confidence=args.conf,
+            class_names=args.classes,
+            size=args.rfdetr_size,
+            device=args.device,
+            model_dir=args.model_dir,
+        )
+    logger.info("YOLO model={} imgsz={}", args.model, args.imgsz)
+    return YoloDetector(
+        model_path=args.model,
+        confidence=args.conf,
+        image_size=args.imgsz,
+        class_names=args.classes,
+        device=args.device,
     )
 
 

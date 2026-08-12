@@ -46,6 +46,12 @@ vscode/
 
 # Local model weights and generated outputs
 *.pt
+*.pth
+*.crdownload
+models/**/*
+!models/**/
+!models/**/.gitkeep
+!models/**/*.md
 reports/
 tmp/
 tmp/*.mp4
