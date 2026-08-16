@@ -3,7 +3,7 @@
 This MVP generates per-frame 2D observations for task 1:
 
 - RF-DETR detects people and footballs. YOLO remains available for comparison.
-- The tracker currently assigns football states; person track IDs need an external tracker after RF-DETR.
+- RF-DETR person detections are assigned single-camera track IDs with ByteTrack.
 - MMPose RTMPose/WholeBody projects body keypoints into the project 26-point schema.
 - A lightweight football tracker keeps one ball track and short missing-frame predictions.
 - JSONL output stores camera ID, timestamp, person observations, ball observations, confidence, and state.

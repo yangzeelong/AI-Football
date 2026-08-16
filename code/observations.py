@@ -98,6 +98,7 @@ class FrameObservation2D:
     camera_id: str
     persons: list[PersonObservation2D]
     balls: list[BallObservation2D]
+    raw_detection_counts: dict[str, int]
 
 
 @dataclass(frozen=True)
@@ -172,6 +173,7 @@ def frame_observation(
     camera_id: str,
     persons: list[PersonObservation2D] | None = None,
     balls: list[BallObservation2D] | None = None,
+    raw_detection_counts: dict[str, int] | None = None,
 ) -> FrameObservation2D:
     return FrameObservation2D(
         frame_index=frame.index,
@@ -179,4 +181,5 @@ def frame_observation(
         camera_id=camera_id,
         persons=persons or [],
         balls=balls or [],
+        raw_detection_counts=raw_detection_counts or {},
     )

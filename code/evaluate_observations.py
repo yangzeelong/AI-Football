@@ -16,6 +16,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input", required=True, help="Input observation JSONL.")
     parser.add_argument("--output", required=True, help="Output JSON report path.")
     parser.add_argument("--markdown", default=None, help="Optional Markdown report path.")
+    parser.add_argument("--video-labels",
+                        default="config/video_labels.yaml",
+                        help="Optional video label YAML with expected counts.")
     parser.add_argument("--low-conf", type=float, default=0.3, help="Low keypoint confidence threshold.")
     parser.add_argument("--short-track", type=int, default=10, help="Track length below this is short.")
     parser.add_argument("--jitter-gap", type=int, default=1, help="Max frame gap for keypoint motion stats.")
@@ -26,10 +29,12 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     metadata, frames = load_jsonl(args.input)
+    video_labels = load_video_labels(args.video_labels)
     report = build_report(
         metadata=metadata,
         frames=frames,
         input_path=args.input,
+        video_labels=video_labels,
         low_conf=args.low_conf,
         short_track=args.short_track,
         jitter_gap=args.jitter_gap,
@@ -66,10 +71,30 @@ def load_jsonl(path: str | Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     return metadata, sorted(frames, key=lambda frame: frame["frame_index"])
 
 
+def load_video_labels(path: str | Path | None) -> dict[str, Any]:
+    if not path:
+        return {}
+    label_path = Path(path)
+    if not label_path.exists():
+        return {}
+    try:
+        import yaml
+    except ImportError as exc:
+        raise RuntimeError("PyYAML is required to read video labels.") from exc
+    data = yaml.safe_load(label_path.read_text(encoding="utf-8")) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"Invalid video label YAML: {label_path}")
+    videos = data.get("videos", {})
+    if not isinstance(videos, dict):
+        raise ValueError(f"Invalid `videos` mapping in: {label_path}")
+    return videos
+
+
 def build_report(
     metadata: dict[str, Any],
     frames: list[dict[str, Any]],
     input_path: str | Path,
+    video_labels: dict[str, Any],
     low_conf: float,
     short_track: int,
     jitter_gap: int,
@@ -79,8 +104,11 @@ def build_report(
     person_tracks = compute_person_track_stats(frames, short_track)
     keypoints = compute_keypoint_stats(frames, low_conf, jitter_gap)
     balls = compute_ball_stats(frames)
-    quality_score = compute_quality_score(frame_stats, person_tracks, keypoints, balls)
-    review_frames = select_review_frames(frames, low_conf, review_frame_limit)
+    labels = compute_label_stats(metadata, frames, video_labels)
+    quality_score = compute_quality_score(frame_stats, person_tracks, keypoints,
+                                          balls, labels)
+    review_frames = select_review_frames(frames, low_conf, review_frame_limit,
+                                         labels)
 
     return {
         "input": str(input_path),
@@ -90,6 +118,7 @@ def build_report(
         "person_tracks": person_tracks,
         "keypoints": keypoints,
         "balls": balls,
+        "labels": labels,
         "review_frames": review_frames,
         "settings": {
             "low_conf": low_conf,
@@ -308,16 +337,115 @@ def compute_ball_stats(frames: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def compute_label_stats(
+    metadata: dict[str, Any],
+    frames: list[dict[str, Any]],
+    video_labels: dict[str, Any],
+) -> dict[str, Any]:
+    video_path = Path(metadata["video"]["video_path"])
+    label = video_labels.get(video_path.name, {})
+    if not isinstance(label, dict):
+        label = {}
+
+    expected_balls = label.get("expected_balls")
+    expected_balls_min = label.get("expected_balls_min")
+    expected_balls_max = label.get("expected_balls_max")
+    expected_persons_min = label.get("expected_persons_min")
+    expected_persons_max = label.get("expected_persons_max")
+    raw_ball_counts = [
+        int(frame.get("raw_detection_counts", {}).get("ball", len(frame.get("balls", []))))
+        for frame in frames
+    ]
+    raw_person_counts = [
+        int(frame.get("raw_detection_counts", {}).get("person", len(frame.get("persons", []))))
+        for frame in frames
+    ]
+    max_raw_balls = max(raw_ball_counts, default=0)
+    avg_raw_balls = mean_or_zero(raw_ball_counts)
+
+    stats: dict[str, Any] = {
+        "video_label": label,
+        "expected_balls": expected_balls,
+        "expected_balls_min": expected_balls_min,
+        "expected_balls_max": expected_balls_max,
+        "expected_persons_min": expected_persons_min,
+        "expected_persons_max": expected_persons_max,
+        "avg_raw_balls_per_frame": round(avg_raw_balls, 3),
+        "max_raw_balls_per_frame": max_raw_balls,
+        "avg_raw_persons_per_frame": round(mean_or_zero(raw_person_counts), 3),
+        "min_raw_persons_per_frame": min(raw_person_counts, default=0),
+        "max_raw_persons_per_frame": max(raw_person_counts, default=0),
+    }
+
+    if expected_balls is not None:
+        expected = int(expected_balls)
+        over_count = sum(1 for count in raw_ball_counts if count > expected)
+        under_count = sum(1 for count in raw_ball_counts if count < expected)
+        exact_count = sum(1 for count in raw_ball_counts if count == expected)
+        false_positive_count = sum(1 for count in raw_ball_counts if expected == 0 and count > 0)
+        multi_ball_count = sum(1 for count in raw_ball_counts if expected == 1 and count > 1)
+
+        stats.update({
+            "raw_ball_over_count_frame_ratio": round(ratio(over_count, len(raw_ball_counts)), 4),
+            "raw_ball_under_count_frame_ratio": round(ratio(under_count, len(raw_ball_counts)), 4),
+            "raw_ball_exact_count_frame_ratio": round(ratio(exact_count, len(raw_ball_counts)), 4),
+            "false_ball_frame_ratio": round(ratio(false_positive_count, len(raw_ball_counts)), 4),
+            "multi_ball_frame_ratio": round(ratio(multi_ball_count, len(raw_ball_counts)), 4),
+        })
+    elif expected_balls_min is not None and expected_balls_max is not None:
+        min_balls = int(expected_balls_min)
+        max_balls = int(expected_balls_max)
+        in_range_count = sum(
+            1 for count in raw_ball_counts if min_balls <= count <= max_balls)
+        under_count = sum(1 for count in raw_ball_counts if count < min_balls)
+        over_count = sum(1 for count in raw_ball_counts if count > max_balls)
+        stats.update({
+            "raw_ball_in_expected_range_frame_ratio": round(
+                ratio(in_range_count, len(raw_ball_counts)), 4),
+            "raw_ball_under_count_frame_ratio": round(
+                ratio(under_count, len(raw_ball_counts)), 4),
+            "raw_ball_over_count_frame_ratio": round(
+                ratio(over_count, len(raw_ball_counts)), 4),
+        })
+
+    if expected_persons_min is not None and expected_persons_max is not None:
+        min_persons = int(expected_persons_min)
+        max_persons = int(expected_persons_max)
+        in_range_count = sum(
+            1 for count in raw_person_counts
+            if min_persons <= count <= max_persons
+        )
+        under_count = sum(1 for count in raw_person_counts if count < min_persons)
+        over_count = sum(1 for count in raw_person_counts if count > max_persons)
+        stats.update({
+            "raw_person_in_expected_range_frame_ratio": round(
+                ratio(in_range_count, len(raw_person_counts)), 4),
+            "raw_person_under_count_frame_ratio": round(
+                ratio(under_count, len(raw_person_counts)), 4),
+            "raw_person_over_count_frame_ratio": round(
+                ratio(over_count, len(raw_person_counts)), 4),
+        })
+    return stats
+
+
 def compute_quality_score(
     frame_stats: dict[str, Any],
     person_tracks: dict[str, Any],
     keypoints: dict[str, Any],
     balls: dict[str, Any],
-) -> dict[str, float]:
-    # 质量分是无标注粗评分，用于横向比较视频/参数配置，不等价于真实准确率。
+    labels: dict[str, Any],
+) -> dict[str, Any]:
+    # 质量分用于横向比较视频/参数配置；有 label 时优先按 GT 约束足球/人数数量。
     keypoint_score = clamp(keypoints["avg_confidence"] * 100.0)
-    person_score = clamp((1.0 - person_tracks["short_track_ratio"]) * 100.0)
-    ball_score = clamp(balls["ball_present_frame_ratio"] * 100.0)
+    track_score = clamp((1.0 - person_tracks["short_track_ratio"]) * 100.0)
+    person_count_score = label_person_count_score(labels)
+    if person_count_score is None:
+        person_score = track_score
+    else:
+        person_score = clamp(0.7 * track_score + 0.3 * person_count_score)
+    ball_score = label_ball_score(labels)
+    if ball_score is None:
+        ball_score = clamp(balls["ball_present_frame_ratio"] * 100.0)
     stability_score = clamp(100.0 - keypoints["motion_px_per_frame_p95"] * 2.0)
     total = (
         0.35 * keypoint_score +
@@ -331,23 +459,65 @@ def compute_quality_score(
         "person_tracking": round(person_score, 2),
         "ball_tracking": round(ball_score, 2),
         "stability": round(stability_score, 2),
+        "person_count": round(person_count_score, 2) if person_count_score is not None else None,
+        "person_track_continuity": round(track_score, 2),
     }
+
+
+def label_ball_score(labels: dict[str, Any]) -> float | None:
+    expected_balls = labels.get("expected_balls")
+    if expected_balls is None:
+        range_ratio = labels.get("raw_ball_in_expected_range_frame_ratio")
+        if range_ratio is not None:
+            return clamp(float(range_ratio) * 100.0)
+        return None
+    expected = int(expected_balls)
+    if expected == 0:
+        return clamp((1.0 - labels["false_ball_frame_ratio"]) * 100.0)
+    return clamp(labels["raw_ball_exact_count_frame_ratio"] * 100.0)
+
+
+def label_person_count_score(labels: dict[str, Any]) -> float | None:
+    ratio_value = labels.get("raw_person_in_expected_range_frame_ratio")
+    if ratio_value is None:
+        return None
+    return clamp(float(ratio_value) * 100.0)
 
 
 def select_review_frames(
     frames: list[dict[str, Any]],
     low_conf: float,
     limit: int,
+    labels: dict[str, Any],
 ) -> list[dict[str, Any]]:
     review = []
+    expected_balls = labels.get("expected_balls")
+    expected_balls_min = labels.get("expected_balls_min")
+    expected_balls_max = labels.get("expected_balls_max")
     for frame in frames:
         reasons = []
         persons = frame.get("persons", [])
         balls = frame.get("balls", [])
         if not persons:
             reasons.append("no_person")
-        if not balls:
+        raw_ball_count = int(frame.get("raw_detection_counts", {}).get("ball", len(balls)))
+        if expected_balls == 0 and raw_ball_count > 0:
+            reasons.append("unexpected_ball")
+        elif expected_balls is None and not balls:
             reasons.append("no_ball")
+        elif expected_balls is not None:
+            expected = int(expected_balls)
+            if raw_ball_count < expected:
+                reasons.append("no_ball")
+            elif raw_ball_count > expected:
+                reasons.append("multi_ball")
+        elif expected_balls_min is not None and expected_balls_max is not None:
+            min_balls = int(expected_balls_min)
+            max_balls = int(expected_balls_max)
+            if raw_ball_count < min_balls:
+                reasons.append("no_ball")
+            elif raw_ball_count > max_balls:
+                reasons.append("multi_ball")
 
         confidences = [
             float(keypoint.get("confidence", 0.0))
@@ -411,6 +581,7 @@ def render_markdown(report: dict[str, Any]) -> str:
     person_tracks = report["person_tracks"]
     keypoints = report["keypoints"]
     balls = report["balls"]
+    labels = report.get("labels", {})
     score = report["quality_score"]
     video = report["metadata"]["video"]
 
@@ -438,6 +609,8 @@ def render_markdown(report: dict[str, Any]) -> str:
         "| --- | ---: |",
         f"| keypoint | {score['keypoint']} |",
         f"| person tracking | {score['person_tracking']} |",
+        f"| person count | {score.get('person_count')} |",
+        f"| person track continuity | {score.get('person_track_continuity')} |",
         f"| ball tracking | {score['ball_tracking']} |",
         f"| stability | {score['stability']} |",
         "",
@@ -473,6 +646,20 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- max missing streak: `{balls['max_missing_streak']}`",
         f"- speed p95 px/s: `{balls['speed_px_s_p95']}`",
         f"- state counts: `{balls['state_counts']}`",
+        "",
+        "## Label Check",
+        "",
+        f"- expected balls: `{labels.get('expected_balls')}`",
+        f"- expected balls range: `{labels.get('expected_balls_min')}` - `{labels.get('expected_balls_max')}`",
+        f"- ball exact count ratio: `{labels.get('raw_ball_exact_count_frame_ratio')}`",
+        f"- ball in range ratio: `{labels.get('raw_ball_in_expected_range_frame_ratio')}`",
+        f"- avg raw balls/frame: `{labels.get('avg_raw_balls_per_frame')}`",
+        f"- max raw balls/frame: `{labels.get('max_raw_balls_per_frame')}`",
+        f"- multi ball frame ratio: `{labels.get('multi_ball_frame_ratio')}`",
+        f"- false ball frame ratio: `{labels.get('false_ball_frame_ratio')}`",
+        f"- expected persons range: `{labels.get('expected_persons_min')}` - `{labels.get('expected_persons_max')}`",
+        f"- person in range ratio: `{labels.get('raw_person_in_expected_range_frame_ratio')}`",
+        f"- avg raw persons/frame: `{labels.get('avg_raw_persons_per_frame')}`",
         "",
         "## Frames To Review",
         "",

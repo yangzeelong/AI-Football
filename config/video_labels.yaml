@@ -1,0 +1,77 @@
+videos:
+  "传球-720p60.mov":
+    ignore: false
+    has_ball: true
+    expected_balls: 1
+    expected_persons_min: 4
+    expected_persons_max: 9
+    expected_active_persons: null
+    scenario: pass
+    primary_subject: football
+    quality_focus:
+      - ball_recall
+      - ball_track_continuity
+      - multi_person_pose
+    notes: "传球场景，预期画面中有 1 个足球。"
+  "带球-720p60.mov":
+    ignore: false
+    has_ball: true
+    expected_balls: 1
+    expected_persons_min: 5
+    expected_persons_max: 10
+    expected_active_persons: 1
+    scenario: dribble
+    primary_subject: football
+    quality_focus:
+      - ball_recall
+      - multi_ball_false_positive
+      - ball_track_switch
+      - player_pose
+    notes: "带球场景，预期画面中有 1 个足球；重点检查多球误检。"
+  "射门1-1080p60.mov":
+    ignore: true
+    ignore_reason: "场景复杂，足球数量随时间变化；先不纳入固定球数评估。"
+    has_ball: true
+    expected_balls: null
+    expected_balls_min: 3
+    expected_balls_max: 5
+    variable_ball_count: true
+    expected_persons_min: null
+    expected_persons_max: null
+    expected_active_persons: null
+    scenario: shot
+    primary_subject: football
+    quality_focus:
+      - fast_ball_motion
+      - ball_missing_streak
+      - shooter_pose
+    notes: "射门场景，预期画面中有 1 个足球；高速运动和远距离阶段可能漏检。"
+  "单脚跳-左脚-720p60.mov":
+    ignore: false
+    has_ball: false
+    expected_balls: 0
+    expected_persons_min: 6
+    expected_persons_max: 8
+    expected_active_persons: 1
+    scenario: single_leg_hop
+    primary_subject: athlete
+    quality_focus:
+      - single_person_pose
+      - lower_limb_keypoints
+      - false_ball_detection
+    notes: "单脚跳动作，无足球；重点检查人体关键点和足球误检。"
+  "折返跑2-4.4m-7.7m-720p60.mov":
+    ignore: false
+    has_ball: false
+    expected_balls: 0
+    expected_persons_min: 5
+    expected_persons_max: 9
+    expected_active_persons: 1
+    scenario: shuttle_run
+    primary_subject: athlete
+    quality_focus:
+      - fast_person_motion
+      - track_continuity
+      - lower_limb_keypoints
+      - false_ball_detection
+    notes: "折返跑动作，无足球；重点检查快速运动下的人体 track 和关键点稳定性。"

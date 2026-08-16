@@ -63,7 +63,8 @@ class RoiConfig:
 
 class FrameAnalyzer(Protocol):
 
-    def update(self, frame: VideoFrame, detections: Sequence[Detection]) -> None:
+    def update(self, frame: VideoFrame,
+               detections: Sequence[Detection]) -> None:
         ...
 
     def draw(self, image: np.ndarray) -> None:
@@ -86,6 +87,9 @@ class VideoReader:
         self.frame_count = int(self._cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
         self.width = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
         self.height = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+        logger.info(
+            f"video info: total_frames={self.frame_count} fps={self.fps} process_frames={self.frame_count // self.stride}({self.frame_count} // {self.stride})"
+        )
 
     def frames(self, max_frames: int | None = None) -> Iterator[VideoFrame]:
         yielded = 0
@@ -393,6 +397,7 @@ class RfdetrDetector:
         self.class_names = set(class_names or ["person", "sports ball"])
         self.device = device
         self.coco_classes = getattr(self.model, "class_names", COCO_CLASSES)
+        self.person_tracker = self._build_person_tracker()
 
     def detect(self, frame: VideoFrame) -> list[Detection]:
         rgb_image = cv2.cvtColor(frame.image, cv2.COLOR_BGR2RGB)
@@ -403,8 +408,8 @@ class RfdetrDetector:
               frame: VideoFrame,
               tracker: str = "botsort.yaml",
               persist: bool = True) -> list[Detection]:
-        # RF-DETR 只负责检测；track_id 后续由外部 tracker 接入。
-        return self.detect(frame)
+        detections = self.detect(frame)
+        return self._track_persons(detections)
 
     def _parse_predictions(self, frame: VideoFrame,
                            predictions) -> list[Detection]:
@@ -413,15 +418,16 @@ class RfdetrDetector:
         confidences = getattr(predictions, "confidence", [])
         class_ids = getattr(predictions, "class_id", [])
         data = getattr(predictions, "data", {}) or {}
-        class_names = data.get("class_name") if isinstance(data, dict) else None
+        class_names = data.get("class_name") if isinstance(data,
+                                                           dict) else None
 
         for index, box in enumerate(xyxy):
             class_id = int(class_ids[index]) if index < len(class_ids) else -1
             label = self._label_for(class_id, class_names, index)
             if self.class_names and label not in self.class_names:
                 continue
-            confidence = float(confidences[index]) if index < len(
-                confidences) else 0.0
+            confidence = float(
+                confidences[index]) if index < len(confidences) else 0.0
             x1, y1, x2, y2 = [float(value) for value in box]
             detections.append(
                 Detection(
@@ -457,8 +463,79 @@ class RfdetrDetector:
             return weights_path
         raise FileNotFoundError(
             f"RF-DETR weights not found: {weights_path}. Download from {url} "
-            f"and save as {weights_path}."
+            f"and save as {weights_path}.")
+
+    def _build_person_tracker(self):
+        try:
+            import supervision as sv
+        except ImportError as exc:
+            raise RuntimeError(
+                "supervision is required for RF-DETR person tracking."
+            ) from exc
+        return sv.ByteTrack(
+            track_activation_threshold=self.confidence,
+            lost_track_buffer=30,
+            minimum_matching_threshold=0.8,
+            frame_rate=60,
+            minimum_consecutive_frames=1,
         )
+
+    def _track_persons(self,
+                       detections: Sequence[Detection]) -> list[Detection]:
+        try:
+            import supervision as sv
+        except ImportError as exc:
+            raise RuntimeError(
+                "supervision is required for RF-DETR person tracking."
+            ) from exc
+
+        persons = [
+            detection for detection in detections
+            if detection.label == "person"
+        ]
+        others = [
+            detection for detection in detections
+            if detection.label != "person"
+        ]
+        if not persons:
+            self.person_tracker.update_with_detections(sv.Detections.empty())
+            return list(detections)
+
+        # RF-DETR 输出检测框，ByteTrack 在这里补齐任务1必需的单镜头 track_id。
+        tracked = self.person_tracker.update_with_detections(
+            sv.Detections(
+                xyxy=np.array([person.bbox for person in persons],
+                              dtype=np.float32),
+                confidence=np.array([person.confidence for person in persons],
+                                    dtype=np.float32),
+                class_id=np.array(
+                    [
+                        person.class_id if person.class_id is not None else -1
+                        for person in persons
+                    ],
+                    dtype=np.int32,
+                ),
+            ))
+        if tracked.tracker_id is None:
+            return list(detections)
+
+        tracked_persons: list[Detection] = []
+        for index, track_id in enumerate(tracked.tracker_id):
+            x1, y1, x2, y2 = [float(value) for value in tracked.xyxy[index]]
+            class_id = int(tracked.class_id[index]
+                           ) if tracked.class_id is not None else None
+            confidence = (float(tracked.confidence[index])
+                          if tracked.confidence is not None else 0.0)
+            tracked_persons.append(
+                Detection(
+                    frame_index=persons[0].frame_index,
+                    label="person",
+                    confidence=confidence,
+                    bbox=(x1, y1, x2, y2),
+                    class_id=class_id,
+                    track_id=int(track_id),
+                ))
+        return tracked_persons + others
 
 
 class ResultVideoWriter:

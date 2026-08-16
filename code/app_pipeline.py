@@ -118,6 +118,7 @@ def run_single_view_app(
                 detections = roi_manager.filter_detections(detections, roi)
                 # ROI 之后再做 YAML 阈值过滤，保证输出和可视化使用同一批观测。
                 detections = app_config.filter_detections(detections)
+                raw_detection_counts = _raw_detection_counts(detections)
 
                 person_boxes = person_detections(detections)
                 persons = _person_boxes_without_pose(person_boxes)
@@ -130,6 +131,7 @@ def run_single_view_app(
                     camera_id=camera_id,
                     persons=persons,
                     balls=balls,
+                    raw_detection_counts=raw_detection_counts,
                 )
                 observation_writer.write(observation)
 
@@ -179,6 +181,19 @@ def _person_boxes_without_pose(person_boxes) -> list[PersonObservation2D]:
             keypoints=empty_project_26(),
         ) for detection in person_boxes
     ]
+
+
+def _raw_detection_counts(detections) -> dict[str, int]:
+    person_count = sum(1 for detection in detections if detection.label == "person")
+    ball_count = sum(
+        1 for detection in detections
+        if detection.label in {"sports ball", "ball", "football", "soccer ball"}
+    )
+    return {
+        "total": len(detections),
+        "person": person_count,
+        "ball": ball_count,
+    }
 
 
 def _draw_person_keypoints(image, persons) -> None:
