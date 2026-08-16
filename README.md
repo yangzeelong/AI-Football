@@ -71,24 +71,26 @@ python code/app.py --video data/素材/射门1-1080p60.mov --draw-roi --roi-conf
 
 这个步骤会完成：
 
-- YOLO 检测
+- RF-DETR small 检测
 - BoT-SORT 单镜头跟踪
 - MMPose 26 keypoints
 - 足球跟踪
 - 输出 JSONL 观测文件
 
 ```bash
-python code/app.py --video data/素材/射门1-1080p60.mov \
-  --detector yolo \
-  --model models/yolo/yolov8n.pt \
+python code/app.py --video data/素材/传球-720p60.mov \
+  --detector rfdetr \
+  --rfdetr-size small \
+  --model-dir models/rfdetr \
   --device cuda:0 \
   --pose-device cuda:0 \
-  --output-observations tmp/C1_observations.jsonl \
+  --output-observations tmp/C1_传球-720p60.jsonl \
   --pose-config models/mmpose/configs/wholebody_2d_keypoint/rtmpose/coco-wholebody/rtmpose-m_8xb64-270e_coco-wholebody-256x192.py \
   --pose-checkpoint models/mmpose/rtmpose-wholebody/rtmpose-m_simcc-coco-wholebody_pt-aic-coco_270e-256x192-cd5e845c_20230123.pth \
   --use-roi \
   --app-config config/app.yaml \
-  --roi-config config/roi.json
+  --roi-config config/roi.json \
+  --output-video tmp/C1_传球-720p60.mp4
 ```
 
 ### 3. 生成评估报告

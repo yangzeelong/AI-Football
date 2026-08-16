@@ -9,10 +9,10 @@ labels:
 
 filters:
   person:
-    min_confidence: 0.25
+    min_confidence: 0.68
     min_width_px: 8
     min_height_px: 24
   ball:
-    min_confidence: 0.1
+    min_confidence: 0.4
     min_width_px: 2
     min_height_px: 2
