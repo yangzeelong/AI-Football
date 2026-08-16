@@ -58,6 +58,10 @@ def parse_args() -> argparse.Namespace:
                         default=640,
                         help="YOLO image size.")
     parser.add_argument("--device", default="cuda:0", help="Detector device.")
+    parser.add_argument("--pose-model",
+                        choices=["rtmpose-m", "hrnet-w32", "hrnet-w48-dark"],
+                        default="rtmpose-m",
+                        help="MMPose preset used by code/app.py.")
     parser.add_argument("--pose-device", default=None, help="MMPose device.")
     parser.add_argument("--stride", type=int, default=1, help="Frame stride.")
     parser.add_argument("--max-frames",
@@ -211,6 +215,8 @@ def build_run(
         args.device,
         "--stride",
         str(args.stride),
+        "--pose-model",
+        args.pose_model,
         "--output-observations",
         str(observation_path),
         "--app-config",

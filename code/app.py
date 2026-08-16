@@ -28,6 +28,24 @@ DEFAULT_POSE_CHECKPOINT = (
     "models/mmpose/rtmpose-wholebody/"
     "rtmpose-m_simcc-coco-wholebody_pt-aic-coco_270e-256x192-cd5e845c_20230123.pth"
 )
+POSE_PRESETS = {
+    "rtmpose-m": (
+        DEFAULT_POSE_CONFIG,
+        DEFAULT_POSE_CHECKPOINT,
+    ),
+    "hrnet-w32": (
+        "models/mmpose/configs/wholebody_2d_keypoint/topdown_heatmap/"
+        "coco-wholebody/td-hm_hrnet-w32_8xb64-210e_coco-wholebody-256x192.py",
+        "models/mmpose/hrnet/"
+        "hrnet_w32_coco_wholebody_256x192-853765cd_20200918.pth",
+    ),
+    "hrnet-w48-dark": (
+        "models/mmpose/configs/wholebody_2d_keypoint/topdown_heatmap/"
+        "coco-wholebody/td-hm_hrnet-w48_dark-8xb32-210e_coco-wholebody-384x288.py",
+        "models/mmpose/hrnet/"
+        "hrnet_w48_coco_wholebody_384x288_dark-f5726563_20200918.pth",
+    ),
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -111,12 +129,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tracker",
                         default="botsort.yaml",
                         help="Ultralytics tracker config, e.g. botsort.yaml.")
+    parser.add_argument("--pose-model",
+                        choices=sorted(POSE_PRESETS),
+                        default="rtmpose-m",
+                        help="Named MMPose preset. Explicit --pose-config or "
+                        "--pose-checkpoint values override this preset.")
     parser.add_argument("--pose-config",
-                        default=DEFAULT_POSE_CONFIG,
-                        help="MMPose RTMPose/WholeBody config path.")
+                        default=None,
+                        help="MMPose config path override.")
     parser.add_argument("--pose-checkpoint",
-                        default=DEFAULT_POSE_CHECKPOINT,
-                        help="MMPose RTMPose/WholeBody checkpoint path.")
+                        default=None,
+                        help="MMPose checkpoint path override.")
     parser.add_argument("--pose-device",
                         default=None,
                         help="MMPose device. Defaults to --device.")
@@ -138,9 +161,10 @@ def main() -> None:
     detector = build_detector(args)
     if args.output_observations:
         app_config = AppConfig.from_yaml(args.app_config)
+        pose_config, pose_checkpoint = resolve_pose_paths(args)
         pose_estimator = MMPoseTopDownEstimator(
-            config_path=args.pose_config,
-            checkpoint_path=args.pose_checkpoint,
+            config_path=pose_config,
+            checkpoint_path=pose_checkpoint,
             device=args.pose_device or args.device,
         )
         run_single_view_app(
@@ -198,6 +222,15 @@ def build_detector(args: argparse.Namespace):
         class_names=args.classes,
         device=args.device,
     )
+
+
+def resolve_pose_paths(args: argparse.Namespace) -> tuple[str, str]:
+    preset_config, preset_checkpoint = POSE_PRESETS[args.pose_model]
+    pose_config = args.pose_config or preset_config
+    pose_checkpoint = args.pose_checkpoint or preset_checkpoint
+    logger.info("loading pose model: preset={} config={} checkpoint={}",
+                args.pose_model, pose_config, pose_checkpoint)
+    return pose_config, pose_checkpoint
 
 
 if __name__ == "__main__":

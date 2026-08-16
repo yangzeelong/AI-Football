@@ -77,6 +77,14 @@ python code/app.py --video data/素材/射门1-1080p60.mov --draw-roi --roi-conf
 - 足球跟踪
 - 输出 JSONL 观测文件
 
+默认姿态模型是 `rtmpose-m`。如果要用 HRNet 对照关键点质量，先下载权重：
+
+```bash
+python scripts/download_hrnet_pose_models.py --model hrnet-w32
+```
+
+然后在运行命令中追加 `--pose-model hrnet-w32`。更高精度但更慢的对照模型可以用 `--model hrnet-w48-dark` 下载，并在推理时传 `--pose-model hrnet-w48-dark`。
+
 ```bash
 python code/app.py --video data/素材/传球-720p60.mov \
   --detector rfdetr \
@@ -84,9 +92,8 @@ python code/app.py --video data/素材/传球-720p60.mov \
   --model-dir models/rfdetr \
   --device cuda:0 \
   --pose-device cuda:0 \
+  --pose-model rtmpose-m \
   --output-observations tmp/C1_传球-720p60.jsonl \
-  --pose-config models/mmpose/configs/wholebody_2d_keypoint/rtmpose/coco-wholebody/rtmpose-m_8xb64-270e_coco-wholebody-256x192.py \
-  --pose-checkpoint models/mmpose/rtmpose-wholebody/rtmpose-m_simcc-coco-wholebody_pt-aic-coco_270e-256x192-cd5e845c_20230123.pth \
   --use-roi \
   --app-config config/app.yaml \
   --roi-config config/roi.json \
@@ -132,7 +139,7 @@ python code/replay_observations.py \
 - `output_report`：结构化质量报告
 - `output_report_md`：可读版质量报告
 
-脚本里的检测、姿态配置和权重都放在本地 `models/`，暂不纳入 git。
+脚本里的检测、姿态配置和权重都放在本地 `models/`。配置文件纳入 git，`.pt/.pth` 权重文件不纳入 git。
 
 ## 关键参数
 
@@ -147,8 +154,9 @@ python code/replay_observations.py \
 | `--output-video` | 输出渲染视频 |
 | `--show` | 直接显示窗口 |
 | `--use-roi` | 启用 ROI 过滤 |
-| `--pose-config` | MMPose 配置文件 |
-| `--pose-checkpoint` | MMPose 权重文件 |
+| `--pose-model` | MMPose 预设：`rtmpose-m`、`hrnet-w32`、`hrnet-w48-dark` |
+| `--pose-config` | MMPose 配置文件覆盖 |
+| `--pose-checkpoint` | MMPose 权重文件覆盖 |
 | `--pose-device` | MMPose 运行设备 |
 
 ### `code/replay_observations.py`

@@ -52,6 +52,9 @@ models/**/*
 !models/**/
 !models/**/.gitkeep
 !models/**/*.md
+!models/mmpose/configs/**/*.py
+!models/mmpose/configs/**/*.yml
+!models/mmpose/configs/**/*.yaml
 reports/
 tmp/
 tmp/*.mp4

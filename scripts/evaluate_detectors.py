@@ -73,6 +73,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--device", default="cuda:0", help="Detector device.")
     parser.add_argument(
+        "--pose-model",
+        choices=["rtmpose-m", "hrnet-w32", "hrnet-w48-dark"],
+        default="rtmpose-m",
+        help="MMPose preset used by code/app.py.",
+    )
+    parser.add_argument(
         "--pose-config",
         default=None,
         help="Optional MMPose config override. App default is used if omitted.",
@@ -149,6 +155,8 @@ def build_run(
         args.device,
         "--stride",
         str(args.stride),
+        "--pose-model",
+        args.pose_model,
         "--camera-id",
         args.camera_id,
         "--output-observations",
