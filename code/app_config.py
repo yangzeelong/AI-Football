@@ -15,11 +15,31 @@ class BoxFilterConfig:
 
 
 @dataclass(frozen=True)
+class KeypointSmoothingConfig:
+    enabled: bool = False
+    method: str = "one_euro"
+    static_window: int = 8
+    static_motion_px: float = 2.5
+    deadband_px: float = 1.5
+    low_confidence: float = 0.3
+    low_confidence_alpha: float = 0.12
+    min_cutoff: float = 0.8
+    beta: float = 0.03
+    d_cutoff: float = 1.0
+    static_alpha: float = 0.15
+    moving_alpha: float = 0.55
+    jitter_alpha: float = 0.08
+    max_static_jump_px: float = 8.0
+    sensitive_keypoints: set[str] = frozenset()
+
+
+@dataclass(frozen=True)
 class AppConfig:
     person_labels: set[str]
     ball_labels: set[str]
     person_filter: BoxFilterConfig
     ball_filter: BoxFilterConfig
+    keypoint_smoothing: KeypointSmoothingConfig
 
     @classmethod
     def default(cls) -> "AppConfig":
@@ -36,6 +56,7 @@ class AppConfig:
                 min_width_px=3.0,
                 min_height_px=3.0,
             ),
+            keypoint_smoothing=KeypointSmoothingConfig(),
         )
 
     @classmethod
@@ -60,7 +81,8 @@ class AppConfig:
             raise ValueError(f"App config must be a YAML mapping: {path}")
 
         # 配置采用严格字段校验，字段名拼错时立刻报错，不静默使用默认值。
-        _require_exact_keys(raw, {"labels", "filters"}, "app config")
+        _require_exact_keys(raw, {"labels", "filters", "keypoint_smoothing"},
+                            "app config")
         labels = raw["labels"]
         filters = raw["filters"]
         _require_exact_keys(labels, {"person", "ball"}, "labels")
@@ -75,6 +97,10 @@ class AppConfig:
             ball_filter=_box_filter_from_raw(
                 filters["ball"],
                 "filters.ball",
+            ),
+            keypoint_smoothing=_keypoint_smoothing_from_raw(
+                raw["keypoint_smoothing"],
+                "keypoint_smoothing",
             ),
         )
 
@@ -116,6 +142,57 @@ def _box_filter_from_raw(raw: dict, section: str) -> BoxFilterConfig:
         min_confidence=float(raw["min_confidence"]),
         min_width_px=float(raw["min_width_px"]),
         min_height_px=float(raw["min_height_px"]),
+    )
+
+
+def _keypoint_smoothing_from_raw(
+    raw: dict,
+    section: str,
+) -> KeypointSmoothingConfig:
+    _require_exact_keys(
+        raw,
+        {
+            "enabled",
+            "method",
+            "static_window",
+            "static_motion_px",
+            "deadband_px",
+            "low_confidence",
+            "low_confidence_alpha",
+            "min_cutoff",
+            "beta",
+            "d_cutoff",
+            "static_alpha",
+            "moving_alpha",
+            "jitter_alpha",
+            "max_static_jump_px",
+            "sensitive_keypoints",
+        },
+        section,
+    )
+    method = str(raw["method"])
+    if method not in {"ema", "one_euro"}:
+        raise ValueError(
+            f"keypoint_smoothing.method must be 'ema' or 'one_euro': {method}")
+    return KeypointSmoothingConfig(
+        enabled=bool(raw["enabled"]),
+        method=method,
+        static_window=int(raw["static_window"]),
+        static_motion_px=float(raw["static_motion_px"]),
+        deadband_px=float(raw["deadband_px"]),
+        low_confidence=float(raw["low_confidence"]),
+        low_confidence_alpha=float(raw["low_confidence_alpha"]),
+        min_cutoff=float(raw["min_cutoff"]),
+        beta=float(raw["beta"]),
+        d_cutoff=float(raw["d_cutoff"]),
+        static_alpha=float(raw["static_alpha"]),
+        moving_alpha=float(raw["moving_alpha"]),
+        jitter_alpha=float(raw["jitter_alpha"]),
+        max_static_jump_px=float(raw["max_static_jump_px"]),
+        sensitive_keypoints=_string_set(
+            raw["sensitive_keypoints"],
+            "keypoint_smoothing.sensitive_keypoints",
+        ),
     )
 
 

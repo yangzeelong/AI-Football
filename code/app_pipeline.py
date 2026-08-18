@@ -23,6 +23,7 @@ from observations import (
     frame_observation,
 )
 from app_config import AppConfig
+from keypoint_smoothing import KeypointTemporalSmoother
 from pose_estimation import MMPoseTopDownEstimator, person_detections
 from tracking import FootballTracker
 
@@ -84,6 +85,11 @@ def run_single_view_app(
         )
         observation_writer = JsonlObservationWriter(output_observations,
                                                     metadata)
+        output_fps = reader.fps / reader.stride if reader.fps > 0 else 30.0
+        keypoint_smoother = KeypointTemporalSmoother(
+            app_config.keypoint_smoothing,
+            sample_fps=output_fps,
+        )
         logger.info(
             "single-view app loaded: path={} camera={} size={}x{} fps={:.2f} frames={} stride={}",
             video_path,
@@ -98,7 +104,6 @@ def run_single_view_app(
         viewer = VideoShow(fps=reader.fps,
                            display_width=display_width,
                            display_height=display_height) if show else None
-        output_fps = reader.fps / reader.stride if reader.fps > 0 else 30.0
         writer = ResultVideoWriter(
             output_video,
             fps=output_fps,
@@ -124,6 +129,7 @@ def run_single_view_app(
                 persons = _person_boxes_without_pose(person_boxes)
                 if pose_estimator:
                     persons = pose_estimator.estimate(frame, person_boxes)
+                    persons = keypoint_smoother.update(persons)
                 balls = football_tracker.update(frame, detections)
 
                 observation = frame_observation(

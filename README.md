@@ -92,12 +92,26 @@ python code/app.py --video data/素材/传球-720p60.mov \
   --model-dir models/rfdetr \
   --device cuda:0 \
   --pose-device cuda:0 \
-  --pose-model rtmpose-m \
-  --output-observations tmp/C1_传球-720p60.jsonl \
+  --pose-model hrnet-w32 \
+  --output-observations tmp/C1_hrnet_w32_smooth.jsonl \
   --use-roi \
   --app-config config/app.yaml \
   --roi-config config/roi.json \
-  --output-video tmp/C1_传球-720p60.mp4
+  --output-video tmp/C1_hrnet_w32_smooth.mp4
+
+python code/app.py \
+  --video data/素材/传球-720p60.mov \
+  --detector rfdetr \
+  --rfdetr-size small \
+  --model-dir models/rfdetr \
+  --device cuda:0 \
+  --pose-device cuda:0 \
+  --pose-model rtmpose-m \
+  --use-roi \
+  --app-config config/app.yaml \
+  --roi-config config/roi.json \
+  --output-observations tmp/test.jsonl \
+  --output-video tmp/test.mp4
 ```
 
 ### 3. 生成评估报告

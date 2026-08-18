@@ -16,3 +16,30 @@ filters:
     min_confidence: 0.4
     min_width_px: 2
     min_height_px: 2
+
+keypoint_smoothing:
+  enabled: true
+  method: one_euro
+  static_window: 8
+  static_motion_px: 2.5
+  deadband_px: 0.8
+  low_confidence: 0.3
+  low_confidence_alpha: 0.12
+  min_cutoff: 0.5
+  beta: 0.02
+  d_cutoff: 1.0
+  static_alpha: 0.25
+  moving_alpha: 0.65
+  jitter_alpha: 0.08
+  max_static_jump_px: 10
+  sensitive_keypoints:
+    - left_wrist
+    - right_wrist
+    - left_ankle
+    - right_ankle
+    - left_big_toe
+    - left_small_toe
+    - left_heel
+    - right_big_toe
+    - right_small_toe
+    - right_heel
