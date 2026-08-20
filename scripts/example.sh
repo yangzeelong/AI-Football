@@ -9,7 +9,7 @@ output_report_md="reports/$tmp_file_quality_report.md"
 # 运行视频获取分析结果
 python code/app.py --video "$input_video" --detector rfdetr --rfdetr-size small --model-dir models/rfdetr \
     --device cuda:0 --pose-device cuda:0 --output-observations "$output_observations" \
-    --pose-model rtmpose-m \
+    --pose-model hrnet-w48-dark \
     --use-roi --roi-config config/roi.json --app-config config/app.yaml
 
 # 根据结果出粗版评估报告

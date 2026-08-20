@@ -77,13 +77,11 @@ python code/app.py --video data/素材/射门1-1080p60.mov --draw-roi --roi-conf
 - 足球跟踪
 - 输出 JSONL 观测文件
 
-默认姿态模型是 `rtmpose-m`。如果要用 HRNet 对照关键点质量，先下载权重：
+默认姿态模型是 `hrnet-w48-dark`。如果要换成更轻的模型，可以显式传 `--pose-model rtmpose-m`。如需手动下载 HRNet 权重：
 
 ```bash
-python scripts/download_hrnet_pose_models.py --model hrnet-w32
+python scripts/download_hrnet_pose_models.py --model hrnet-w48-dark
 ```
-
-然后在运行命令中追加 `--pose-model hrnet-w32`。更高精度但更慢的对照模型可以用 `--model hrnet-w48-dark` 下载，并在推理时传 `--pose-model hrnet-w48-dark`。
 
 ```bash
 python code/app.py --video data/素材/传球-720p60.mov \
@@ -92,12 +90,12 @@ python code/app.py --video data/素材/传球-720p60.mov \
   --model-dir models/rfdetr \
   --device cuda:0 \
   --pose-device cuda:0 \
-  --pose-model hrnet-w32 \
-  --output-observations tmp/C1_hrnet_w32_smooth.jsonl \
+  --pose-model hrnet-w48-dark \
+  --output-observations tmp/C1_hrnet_w48_dark_smooth.jsonl \
   --use-roi \
   --app-config config/app.yaml \
   --roi-config config/roi.json \
-  --output-video tmp/C1_hrnet_w32_smooth.mp4
+  --output-video tmp/C1_hrnet_w48_dark_smooth.mp4
 
 python code/app.py \
   --video data/素材/传球-720p60.mov \
@@ -106,12 +104,12 @@ python code/app.py \
   --model-dir models/rfdetr \
   --device cuda:0 \
   --pose-device cuda:0 \
-  --pose-model rtmpose-m \
+  --pose-model hrnet-w48-dark \
   --use-roi \
   --app-config config/app.yaml \
   --roi-config config/roi.json \
-  --output-observations tmp/test.jsonl \
-  --output-video tmp/test.mp4
+  --output-observations tmp/test_hrnet_w48_dark.jsonl \
+  --output-video tmp/test_hrnet_w48_dark.mp4
 ```
 
 ### 3. 生成评估报告
@@ -168,7 +166,7 @@ python code/replay_observations.py \
 | `--output-video` | 输出渲染视频 |
 | `--show` | 直接显示窗口 |
 | `--use-roi` | 启用 ROI 过滤 |
-| `--pose-model` | MMPose 预设：`rtmpose-m`、`hrnet-w32`、`hrnet-w48-dark` |
+| `--pose-model` | MMPose 预设：`hrnet-w48-dark`、`hrnet-w32`、`rtmpose-m` |
 | `--pose-config` | MMPose 配置文件覆盖 |
 | `--pose-checkpoint` | MMPose 权重文件覆盖 |
 | `--pose-device` | MMPose 运行设备 |

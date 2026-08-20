@@ -60,7 +60,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="cuda:0", help="Detector device.")
     parser.add_argument("--pose-model",
                         choices=["rtmpose-m", "hrnet-w32", "hrnet-w48-dark"],
-                        default="rtmpose-m",
+                        default="hrnet-w48-dark",
                         help="MMPose preset used by code/app.py.")
     parser.add_argument("--pose-device", default=None, help="MMPose device.")
     parser.add_argument("--stride", type=int, default=1, help="Frame stride.")

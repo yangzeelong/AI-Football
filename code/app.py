@@ -131,7 +131,7 @@ def parse_args() -> argparse.Namespace:
                         help="Ultralytics tracker config, e.g. botsort.yaml.")
     parser.add_argument("--pose-model",
                         choices=sorted(POSE_PRESETS),
-                        default="rtmpose-m",
+                        default="hrnet-w48-dark",
                         help="Named MMPose preset. Explicit --pose-config or "
                         "--pose-checkpoint values override this preset.")
     parser.add_argument("--pose-config",

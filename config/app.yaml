@@ -18,7 +18,7 @@ filters:
     min_height_px: 2
 
 keypoint_smoothing:
-  enabled: true
+  enabled: false
   method: one_euro
   static_window: 8
   static_motion_px: 2.5

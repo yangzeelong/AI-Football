@@ -36,7 +36,7 @@ def parse_args() -> argparse.Namespace:
         description="Download HRNet COCO-WholeBody pose checkpoints.")
     parser.add_argument("--model",
                         choices=[*MODELS, "all"],
-                        default="hrnet-w32",
+                        default="hrnet-w48-dark",
                         help="HRNet checkpoint to download.")
     parser.add_argument("--dry-run",
                         action="store_true",
