@@ -18,8 +18,8 @@ filters:
     min_height_px: 2
 
 keypoint_smoothing:
-  enabled: false
-  method: one_euro
+  enabled: true
+  method: skeleton
   static_window: 8
   static_motion_px: 2.5
   deadband_px: 0.8
@@ -32,6 +32,11 @@ keypoint_smoothing:
   moving_alpha: 0.65
   jitter_alpha: 0.08
   max_static_jump_px: 10
+  skeleton_anchor_alpha: 0.35
+  skeleton_endpoint_alpha: 0.12
+  skeleton_moving_endpoint_alpha: 0.45
+  skeleton_max_static_step_px: 2.5
+  skeleton_limb_tolerance: 0.25
   sensitive_keypoints:
     - left_wrist
     - right_wrist

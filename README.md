@@ -110,6 +110,20 @@ python code/app.py \
   --roi-config config/roi.json \
   --output-observations tmp/test_hrnet_w48_dark.jsonl \
   --output-video tmp/test_hrnet_w48_dark.mp4
+
+
+python code/app.py \
+  --video data/素材/传球-720p60.mov \
+  --detector rfdetr \
+  --rfdetr-size small \
+  --model-dir models/rfdetr \
+  --device cuda:0 \
+  --pose-device cuda:0 \
+  --use-roi \
+  --app-config config/app.yaml \
+  --roi-config config/roi.json \
+  --output-observations tmp/test_hrnet_w48_dark_skeleton_full.jsonl \
+  --output-video tmp/test_hrnet_w48_dark_skeleton_full.mp4
 ```
 
 ### 3. 生成评估报告

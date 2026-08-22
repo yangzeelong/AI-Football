@@ -10,6 +10,36 @@ from observations import Keypoint2D, PersonObservation2D
 
 
 VIRTUAL_KEYPOINTS = {"neck", "pelvis", "thorax"}
+ANCHOR_KEYPOINTS = {
+    "left_shoulder",
+    "right_shoulder",
+    "left_hip",
+    "right_hip",
+}
+ENDPOINT_KEYPOINTS = {
+    "left_wrist",
+    "right_wrist",
+    "left_ankle",
+    "right_ankle",
+    "left_big_toe",
+    "left_small_toe",
+    "left_heel",
+    "right_big_toe",
+    "right_small_toe",
+    "right_heel",
+}
+LIMB_SEGMENTS = (
+    ("left_shoulder", "left_elbow", "left_wrist"),
+    ("right_shoulder", "right_elbow", "right_wrist"),
+    ("left_hip", "left_knee", "left_ankle"),
+    ("right_hip", "right_knee", "right_ankle"),
+)
+BODY_SEGMENTS = (
+    ("left_shoulder", "right_shoulder"),
+    ("left_shoulder", "left_hip"),
+    ("right_shoulder", "right_hip"),
+    ("left_hip", "right_hip"),
+)
 
 
 @dataclass
@@ -88,6 +118,9 @@ class KeypointTemporalSmoother:
         history: _TrackHistory,
         is_static: bool,
     ) -> list[Keypoint2D]:
+        if self.config.method == "skeleton":
+            return self._smooth_keypoints_skeleton(keypoints, history,
+                                                   is_static)
         smoothed_by_name: dict[str, Keypoint2D] = {}
         for keypoint in keypoints:
             if keypoint.name in VIRTUAL_KEYPOINTS:
@@ -109,6 +142,123 @@ class KeypointTemporalSmoother:
         ]
         history.keypoints = {keypoint.name: keypoint for keypoint in ordered}
         return ordered
+
+    def _smooth_keypoints_skeleton(
+        self,
+        keypoints: list[Keypoint2D],
+        history: _TrackHistory,
+        is_static: bool,
+    ) -> list[Keypoint2D]:
+        observed = {keypoint.name: keypoint for keypoint in keypoints}
+        previous = history.keypoints
+        smoothed: dict[str, Keypoint2D] = {}
+
+        for name in observed:
+            if name in VIRTUAL_KEYPOINTS:
+                continue
+            current = observed[name]
+            prev = previous.get(name)
+            if prev is None:
+                smoothed[name] = current
+                continue
+            if current.x is None or current.y is None:
+                smoothed[name] = _copy_position(prev, current, "predicted")
+                continue
+            if prev.x is None or prev.y is None:
+                smoothed[name] = current
+                continue
+            smoothed[name] = self._blend_by_role(prev, current, is_static, name)
+
+        self._apply_skeleton_constraints(smoothed, previous, is_static)
+        _set_virtual_midpoint(smoothed, "neck", "left_shoulder",
+                              "right_shoulder")
+        _set_virtual_midpoint(smoothed, "pelvis", "left_hip", "right_hip")
+        _set_virtual_midpoint(smoothed, "thorax", "neck", "pelvis")
+
+        ordered = [smoothed.get(keypoint.name, keypoint) for keypoint in keypoints]
+        history.keypoints = {keypoint.name: keypoint for keypoint in ordered}
+        return ordered
+
+    def _blend_by_role(
+        self,
+        previous: Keypoint2D,
+        current: Keypoint2D,
+        is_static: bool,
+        name: str,
+    ) -> Keypoint2D:
+        if name in ANCHOR_KEYPOINTS:
+            alpha = self.config.skeleton_anchor_alpha
+        elif name in ENDPOINT_KEYPOINTS:
+            alpha = (self.config.skeleton_endpoint_alpha
+                     if is_static else self.config.skeleton_moving_endpoint_alpha)
+        else:
+            alpha = self.config.static_alpha if is_static else self.config.moving_alpha
+        return _blend_position(previous, current, alpha, "smoothed")
+
+    def _apply_skeleton_constraints(
+        self,
+        current: dict[str, Keypoint2D],
+        previous: dict[str, Keypoint2D],
+        is_static: bool,
+    ) -> None:
+        if is_static:
+            self._limit_static_motion(current, previous)
+        self._limit_limb_lengths(current, previous)
+
+    def _limit_static_motion(
+        self,
+        current: dict[str, Keypoint2D],
+        previous: dict[str, Keypoint2D],
+    ) -> None:
+        for name, point in list(current.items()):
+            prev = previous.get(name)
+            if prev is None or prev.x is None or prev.y is None:
+                continue
+            if point.x is None or point.y is None:
+                continue
+            if name not in ENDPOINT_KEYPOINTS:
+                continue
+            distance = hypot(point.x - prev.x, point.y - prev.y)
+            if distance <= self.config.skeleton_max_static_step_px:
+                continue
+            alpha = self.config.skeleton_endpoint_alpha
+            current[name] = _blend_position(prev, point, alpha, "smoothed")
+
+    def _limit_limb_lengths(
+        self,
+        current: dict[str, Keypoint2D],
+        previous: dict[str, Keypoint2D],
+    ) -> None:
+        for anchor_name, mid_name, tip_name in LIMB_SEGMENTS:
+            anchor = current.get(anchor_name) or previous.get(anchor_name)
+            mid = current.get(mid_name) or previous.get(mid_name)
+            tip = current.get(tip_name) or previous.get(tip_name)
+            if anchor is None or mid is None or tip is None:
+                continue
+            prev_mid = previous.get(mid_name)
+            prev_tip = previous.get(tip_name)
+            if prev_mid is None or prev_tip is None:
+                continue
+            if not _is_valid_point(anchor) or not _is_valid_point(mid) or not _is_valid_point(tip):
+                continue
+            if not _is_valid_point(prev_mid) or not _is_valid_point(prev_tip):
+                continue
+            current_length = hypot(tip.x - mid.x, tip.y - mid.y)
+            previous_length = hypot(prev_tip.x - prev_mid.x,
+                                    prev_tip.y - prev_mid.y)
+            if previous_length <= 1.0:
+                continue
+            length_change = abs(current_length - previous_length) / previous_length
+            if length_change <= self.config.skeleton_limb_tolerance:
+                continue
+            # 末端点回退到上一帧附近，避免前臂/小腿长度在静止段突然变化。
+            current[tip_name] = _blend_position(
+                prev_tip,
+                tip,
+                self.config.skeleton_endpoint_alpha,
+                "smoothed",
+            )
+
 
     def _smooth_one(
         self,
@@ -290,6 +440,10 @@ def _smoothing_alpha(cutoff: float, dt: float) -> float:
 
 def _exponential_smooth(value: float, previous: float, alpha: float) -> float:
     return alpha * value + (1.0 - alpha) * previous
+
+
+def _is_valid_point(point: Keypoint2D) -> bool:
+    return point.x is not None and point.y is not None
 
 
 def _set_virtual_midpoint(

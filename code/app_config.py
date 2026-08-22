@@ -30,6 +30,11 @@ class KeypointSmoothingConfig:
     moving_alpha: float = 0.55
     jitter_alpha: float = 0.08
     max_static_jump_px: float = 8.0
+    skeleton_anchor_alpha: float = 0.35
+    skeleton_endpoint_alpha: float = 0.12
+    skeleton_moving_endpoint_alpha: float = 0.45
+    skeleton_max_static_step_px: float = 2.5
+    skeleton_limb_tolerance: float = 0.25
     sensitive_keypoints: set[str] = frozenset()
 
 
@@ -166,14 +171,20 @@ def _keypoint_smoothing_from_raw(
             "moving_alpha",
             "jitter_alpha",
             "max_static_jump_px",
+            "skeleton_anchor_alpha",
+            "skeleton_endpoint_alpha",
+            "skeleton_moving_endpoint_alpha",
+            "skeleton_max_static_step_px",
+            "skeleton_limb_tolerance",
             "sensitive_keypoints",
         },
         section,
     )
     method = str(raw["method"])
-    if method not in {"ema", "one_euro"}:
+    if method not in {"ema", "one_euro", "skeleton"}:
         raise ValueError(
-            f"keypoint_smoothing.method must be 'ema' or 'one_euro': {method}")
+            "keypoint_smoothing.method must be 'ema', 'one_euro', "
+            f"or 'skeleton': {method}")
     return KeypointSmoothingConfig(
         enabled=bool(raw["enabled"]),
         method=method,
@@ -189,6 +200,12 @@ def _keypoint_smoothing_from_raw(
         moving_alpha=float(raw["moving_alpha"]),
         jitter_alpha=float(raw["jitter_alpha"]),
         max_static_jump_px=float(raw["max_static_jump_px"]),
+        skeleton_anchor_alpha=float(raw["skeleton_anchor_alpha"]),
+        skeleton_endpoint_alpha=float(raw["skeleton_endpoint_alpha"]),
+        skeleton_moving_endpoint_alpha=float(
+            raw["skeleton_moving_endpoint_alpha"]),
+        skeleton_max_static_step_px=float(raw["skeleton_max_static_step_px"]),
+        skeleton_limb_tolerance=float(raw["skeleton_limb_tolerance"]),
         sensitive_keypoints=_string_set(
             raw["sensitive_keypoints"],
             "keypoint_smoothing.sensitive_keypoints",
