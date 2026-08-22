@@ -33,6 +33,9 @@ class KeypointSmoothingConfig:
     skeleton_anchor_alpha: float = 0.35
     skeleton_endpoint_alpha: float = 0.12
     skeleton_moving_endpoint_alpha: float = 0.45
+    skeleton_fast_endpoint_alpha: float = 0.22
+    skeleton_fast_moving_endpoint_alpha: float = 0.62
+    skeleton_fast_static_step_px: float = 5.0
     skeleton_max_static_step_px: float = 2.5
     skeleton_limb_tolerance: float = 0.25
     sensitive_keypoints: set[str] = frozenset()
@@ -174,6 +177,9 @@ def _keypoint_smoothing_from_raw(
             "skeleton_anchor_alpha",
             "skeleton_endpoint_alpha",
             "skeleton_moving_endpoint_alpha",
+            "skeleton_fast_endpoint_alpha",
+            "skeleton_fast_moving_endpoint_alpha",
+            "skeleton_fast_static_step_px",
             "skeleton_max_static_step_px",
             "skeleton_limb_tolerance",
             "sensitive_keypoints",
@@ -204,6 +210,10 @@ def _keypoint_smoothing_from_raw(
         skeleton_endpoint_alpha=float(raw["skeleton_endpoint_alpha"]),
         skeleton_moving_endpoint_alpha=float(
             raw["skeleton_moving_endpoint_alpha"]),
+        skeleton_fast_endpoint_alpha=float(raw["skeleton_fast_endpoint_alpha"]),
+        skeleton_fast_moving_endpoint_alpha=float(
+            raw["skeleton_fast_moving_endpoint_alpha"]),
+        skeleton_fast_static_step_px=float(raw["skeleton_fast_static_step_px"]),
         skeleton_max_static_step_px=float(raw["skeleton_max_static_step_px"]),
         skeleton_limb_tolerance=float(raw["skeleton_limb_tolerance"]),
         sensitive_keypoints=_string_set(

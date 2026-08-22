@@ -28,6 +28,12 @@ ENDPOINT_KEYPOINTS = {
     "right_small_toe",
     "right_heel",
 }
+FAST_ENDPOINT_KEYPOINTS = {
+    "left_wrist",
+    "right_wrist",
+    "left_ankle",
+    "right_ankle",
+}
 LIMB_SEGMENTS = (
     ("left_shoulder", "left_elbow", "left_wrist"),
     ("right_shoulder", "right_elbow", "right_wrist"),
@@ -188,6 +194,9 @@ class KeypointTemporalSmoother:
     ) -> Keypoint2D:
         if name in ANCHOR_KEYPOINTS:
             alpha = self.config.skeleton_anchor_alpha
+        elif name in FAST_ENDPOINT_KEYPOINTS:
+            alpha = (self.config.skeleton_fast_endpoint_alpha
+                     if is_static else self.config.skeleton_fast_moving_endpoint_alpha)
         elif name in ENDPOINT_KEYPOINTS:
             alpha = (self.config.skeleton_endpoint_alpha
                      if is_static else self.config.skeleton_moving_endpoint_alpha)
@@ -203,7 +212,7 @@ class KeypointTemporalSmoother:
     ) -> None:
         if is_static:
             self._limit_static_motion(current, previous)
-        self._limit_limb_lengths(current, previous)
+            self._limit_limb_lengths(current, previous)
 
     def _limit_static_motion(
         self,
@@ -219,9 +228,14 @@ class KeypointTemporalSmoother:
             if name not in ENDPOINT_KEYPOINTS:
                 continue
             distance = hypot(point.x - prev.x, point.y - prev.y)
-            if distance <= self.config.skeleton_max_static_step_px:
+            max_step = (self.config.skeleton_fast_static_step_px
+                        if name in FAST_ENDPOINT_KEYPOINTS
+                        else self.config.skeleton_max_static_step_px)
+            if distance <= max_step:
                 continue
-            alpha = self.config.skeleton_endpoint_alpha
+            alpha = (self.config.skeleton_fast_endpoint_alpha
+                     if name in FAST_ENDPOINT_KEYPOINTS
+                     else self.config.skeleton_endpoint_alpha)
             current[name] = _blend_position(prev, point, alpha, "smoothed")
 
     def _limit_limb_lengths(

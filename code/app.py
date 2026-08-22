@@ -115,6 +115,10 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument("--stride", type=int, default=1, help="Process every Nth frame.")
+    parser.add_argument("--target-fps",
+                        type=float,
+                        default=None,
+                        help="Desired processing fps; stride will be inferred from source fps when set.")
     parser.add_argument("--max-frames",
                         type=int,
                         default=None,
@@ -176,6 +180,7 @@ def main() -> None:
             use_roi=args.use_roi,
             show=args.show,
             stride=args.stride,
+            target_fps=args.target_fps,
             max_frames=args.max_frames,
             display_width=args.display_width,
             display_height=args.display_height,
@@ -193,6 +198,7 @@ def main() -> None:
         use_roi=args.use_roi,
         show=args.show,
         stride=args.stride,
+        target_fps=args.target_fps,
         max_frames=args.max_frames,
         display_width=args.display_width,
         display_height=args.display_height,

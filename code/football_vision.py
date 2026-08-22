@@ -76,19 +76,33 @@ class FrameAnalyzer(Protocol):
 
 class VideoReader:
 
-    def __init__(self, video_path: str | Path, stride: int = 1) -> None:
+    def __init__(
+        self,
+        video_path: str | Path,
+        stride: int = 1,
+        target_fps: float | None = None,
+    ) -> None:
         self.video_path = Path(video_path)
-        self.stride = max(1, stride)
         self._cap = cv2.VideoCapture(str(self.video_path))
         if not self._cap.isOpened():
             raise FileNotFoundError(f"Cannot open video: {self.video_path}")
 
         self.fps = float(self._cap.get(cv2.CAP_PROP_FPS) or 0.0)
+        self.stride = _resolve_stride(stride, target_fps, self.fps)
+        self.target_fps = target_fps
         self.frame_count = int(self._cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
         self.width = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
         self.height = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
         logger.info(
-            f"video info: total_frames={self.frame_count} fps={self.fps} process_frames={self.frame_count // self.stride}({self.frame_count} // {self.stride})"
+            "video info: total_frames={} fps={} target_fps={} stride={} "
+            "process_frames={}({} // {})",
+            self.frame_count,
+            self.fps,
+            self.target_fps,
+            self.stride,
+            self.frame_count // self.stride,
+            self.frame_count,
+            self.stride,
         )
 
     def frames(self, max_frames: int | None = None) -> Iterator[VideoFrame]:
@@ -132,6 +146,23 @@ class VideoReader:
 
     def __exit__(self, *_) -> None:
         self.release()
+
+
+def _resolve_stride(
+    stride: int,
+    target_fps: float | None,
+    source_fps: float,
+) -> int:
+    if target_fps is None:
+        return max(1, stride)
+    if target_fps <= 0:
+        raise ValueError(f"target_fps must be positive: {target_fps}")
+    if source_fps <= 0:
+        logger.warning(
+            "source fps is unavailable; fallback to explicit stride={}",
+            stride)
+        return max(1, stride)
+    return max(1, int(round(source_fps / target_fps)))
 
 
 class RoiManager:
@@ -705,6 +736,7 @@ def run_detection_preview(
     use_roi: bool,
     show: bool,
     stride: int = 1,
+    target_fps: float | None = None,
     max_frames: int | None = None,
     display_width: int = 1920,
     display_height: int = 1080,
@@ -713,7 +745,7 @@ def run_detection_preview(
     output_video: str | Path | None = None,
     analyzer: FrameAnalyzer | None = None,
 ) -> None:
-    with VideoReader(video_path, stride=stride) as reader:
+    with VideoReader(video_path, stride=stride, target_fps=target_fps) as reader:
         logger.info(
             "video loaded: path={} size={}x{} fps={:.2f} frames={} stride={}",
             video_path,

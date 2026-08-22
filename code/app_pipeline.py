@@ -61,6 +61,7 @@ def run_single_view_app(
     use_roi: bool = False,
     show: bool = False,
     stride: int = 1,
+    target_fps: float | None = None,
     max_frames: int | None = None,
     display_width: int = 1920,
     display_height: int = 1080,
@@ -72,7 +73,7 @@ def run_single_view_app(
     football_tracker = FootballTracker()
     app_config = app_config or AppConfig.default()
 
-    with VideoReader(video_path, stride=stride) as reader:
+    with VideoReader(video_path, stride=stride, target_fps=target_fps) as reader:
         # JSONL 自带视频信息，回放和质量评估脚本无需再额外传 video 参数。
         metadata = VideoObservationMetadata(
             video_path=str(video_path),
