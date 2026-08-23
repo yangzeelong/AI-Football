@@ -8,6 +8,7 @@ from tqdm import tqdm
 
 from football_vision import (
     Color,
+    draw_debug_panel,
     ResultVideoWriter,
     RoiManager,
     VideoReader,
@@ -69,6 +70,7 @@ def run_single_view_app(
     tracker: str = "botsort.yaml",
     pose_estimator: MMPoseTopDownEstimator | None = None,
     app_config: AppConfig | None = None,
+    debug: bool = False,
 ) -> None:
     football_tracker = FootballTracker()
     app_config = app_config or AppConfig.default()
@@ -121,9 +123,14 @@ def run_single_view_app(
                               desc="processing",
                               unit="frame"):
                 detections = detector.track(frame, tracker=tracker)
+                detector_ball_count = _ball_detection_count(detections)
+
                 detections = roi_manager.filter_detections(detections, roi)
+                roi_ball_count = _ball_detection_count(detections)
                 # ROI 之后再做 YAML 阈值过滤，保证输出和可视化使用同一批观测。
-                detections = app_config.filter_detections(detections)
+                filter_result = app_config.filter_detections_with_details(detections)
+                detections = filter_result.kept
+                filtered_ball_count = _ball_detection_count(detections)
                 raw_detection_counts = _raw_detection_counts(detections)
 
                 person_boxes = person_detections(detections)
@@ -149,6 +156,20 @@ def run_single_view_app(
                                                       reader.fps)
                     _draw_person_keypoints(rendered, persons)
                     _draw_tracked_balls(rendered, balls)
+                    if debug:
+                        _draw_filtered_detections(rendered, filter_result.rejected)
+                    if debug:
+                        ball_state = balls[0].state if balls else "missing"
+                        draw_debug_panel(
+                            rendered,
+                            [
+                                f"ball detected: {'yes' if detector_ball_count > 0 else 'no'} raw={detector_ball_count}",
+                                f"roi kept: {'yes' if roi_ball_count > 0 else 'no'} roi_filtered={'yes' if detector_ball_count != roi_ball_count else 'no'}",
+                                f"config filtered: conf={filter_result.confidence_filtered_count} area={filter_result.size_filtered_count} kept={len(detections)}",
+                                f"final ball: {filtered_ball_count} filtered={filter_result.filtered_count}",
+                                f"tracked: {'yes' if bool(balls) else 'no'} state={ball_state} tracks={len(balls)}",
+                            ],
+                        )
 
                 if viewer and rendered is not None:
                     should_continue = viewer.show(rendered)
@@ -203,6 +224,13 @@ def _raw_detection_counts(detections) -> dict[str, int]:
     }
 
 
+def _ball_detection_count(detections) -> int:
+    return sum(
+        1 for detection in detections
+        if detection.label in {"sports ball", "ball", "football", "soccer ball"}
+    )
+
+
 def _draw_person_keypoints(image, persons) -> None:
     for person in persons:
         points = {keypoint.name: keypoint for keypoint in person.keypoints}
@@ -236,6 +264,34 @@ def _draw_tracked_balls(image, balls) -> None:
             image,
             f"ball id={ball.track_id} {ball.state}",
             (center[0] + 10, center[1] - 10),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            color,
+            2,
+        )
+
+
+def _draw_filtered_detections(image, filtered_detections) -> None:
+    for item in filtered_detections:
+        detection = item.detection
+        x1, y1, x2, y2 = [int(value) for value in detection.bbox]
+        if item.failed_confidence and item.failed_size:
+            color = Color.PURPLE.value
+            reason = "conf+area"
+        elif item.failed_confidence:
+            color = Color.RED.value
+            reason = "conf"
+        else:
+            color = Color.MAGENTA.value
+            reason = "area"
+        cv2.rectangle(image, (x1, y1), (x2, y2), color, 2)
+        label = f"{detection.label} {detection.confidence:.2f} filtered({reason})"
+        if detection.track_id is not None:
+            label = f"{label} id={detection.track_id}"
+        cv2.putText(
+            image,
+            label,
+            (x1, max(24, y1 - 8)),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.6,
             color,

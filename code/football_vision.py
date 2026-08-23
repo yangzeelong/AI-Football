@@ -729,6 +729,50 @@ def render_detection_frame(frame: VideoFrame,
     return canvas
 
 
+def draw_debug_panel(
+    image: np.ndarray,
+    lines: Sequence[str],
+    origin: tuple[int, int] = (24, 110),
+) -> None:
+    if not lines:
+        return
+
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.55
+    thickness = 1
+    line_gap = 8
+    padding = 10
+    text_sizes = [
+        cv2.getTextSize(line, font, font_scale, thickness)[0] for line in lines
+    ]
+    width = max(size[0] for size in text_sizes)
+    height = sum(size[1] for size in text_sizes) + line_gap * (len(lines) - 1)
+
+    x, y = origin
+    overlay = image.copy()
+    cv2.rectangle(
+        overlay,
+        (x - padding, y - padding),
+        (x + width + padding, y + height + padding),
+        Color.BLACK.value,
+        -1,
+    )
+    cv2.addWeighted(overlay, 0.65, image, 0.35, 0, image)
+
+    text_y = y
+    for line, (text_width, text_height) in zip(lines, text_sizes):
+        cv2.putText(
+            image,
+            line,
+            (x, text_y + text_height),
+            font,
+            font_scale,
+            Color.WHITE.value,
+            thickness,
+        )
+        text_y += text_height + line_gap
+
+
 def run_detection_preview(
     video_path: str | Path,
     detector: YoloDetector,
@@ -743,6 +787,7 @@ def run_detection_preview(
     perf_log: bool = False,
     perf_every: int = 30,
     output_video: str | Path | None = None,
+    debug: bool = False,
     analyzer: FrameAnalyzer | None = None,
 ) -> None:
     with VideoReader(video_path, stride=stride, target_fps=target_fps) as reader:
@@ -793,10 +838,12 @@ def run_detection_preview(
                 infer_started = perf_counter()
                 detections = detector.detect(frame)
                 infer_ms = (perf_counter() - infer_started) * 1000
+                detector_ball_count = _ball_detection_count(detections)
 
                 roi_started = perf_counter()
                 detections = roi_manager.filter_detections(detections, roi)
                 roi_ms = (perf_counter() - roi_started) * 1000
+                roi_ball_count = _ball_detection_count(detections)
 
                 analysis_started = perf_counter()
                 if analyzer:
@@ -813,6 +860,14 @@ def run_detection_preview(
                     render_started = perf_counter()
                     rendered = render_detection_frame(frame, detections, roi,
                                                       reader.fps)
+                    if debug:
+                        draw_debug_panel(
+                            rendered,
+                            [
+                                f"ball detected: {'yes' if detector_ball_count > 0 else 'no'} raw={detector_ball_count}",
+                                f"roi kept: {'yes' if roi_ball_count > 0 else 'no'} roi_filtered={'yes' if detector_ball_count != roi_ball_count else 'no'}",
+                            ],
+                        )
                     if analyzer:
                         analyzer.draw(rendered)
                     render_ms = (perf_counter() - render_started) * 1000
@@ -865,3 +920,10 @@ def _processed_frame_total(frame_count: int, stride: int,
     if max_frames is not None:
         total = min(total, max_frames)
     return total
+
+
+def _ball_detection_count(detections) -> int:
+    return sum(
+        1 for detection in detections
+        if detection.label in {"sports ball", "ball", "football", "soccer ball"}
+    )

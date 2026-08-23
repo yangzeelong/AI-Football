@@ -133,6 +133,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tracker",
                         default="botsort.yaml",
                         help="Ultralytics tracker config, e.g. botsort.yaml.")
+    parser.add_argument("--debug",
+                        action="store_true",
+                        help="Overlay per-frame debug details on the rendered video.")
     parser.add_argument("--pose-model",
                         choices=sorted(POSE_PRESETS),
                         default="hrnet-w48-dark",
@@ -188,6 +191,7 @@ def main() -> None:
             tracker=args.tracker,
             pose_estimator=pose_estimator,
             app_config=app_config,
+            debug=args.debug,
         )
         return
 
@@ -205,6 +209,7 @@ def main() -> None:
         perf_log=args.perf_log,
         perf_every=args.perf_every,
         output_video=args.output_video,
+        debug=args.debug,
     )
 
 

@@ -120,6 +120,7 @@ python code/app.py \
   --device cuda:0 \
   --pose-device cuda:0 \
   --use-roi \
+  --debug \
   --app-config config/app.yaml \
   --roi-config config/roi.json \
   --output-observations tmp/test_hrnet_w48_dark_skeleton_full.jsonl \

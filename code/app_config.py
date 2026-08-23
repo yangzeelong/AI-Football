@@ -15,6 +15,25 @@ class BoxFilterConfig:
 
 
 @dataclass(frozen=True)
+class DetectionFilterDetail:
+    detection: Detection
+    failed_confidence: bool
+    failed_size: bool
+
+
+@dataclass(frozen=True)
+class DetectionFilterResult:
+    kept: list[Detection]
+    rejected: list[DetectionFilterDetail]
+    confidence_filtered_count: int
+    size_filtered_count: int
+
+    @property
+    def filtered_count(self) -> int:
+        return len(self.rejected)
+
+
+@dataclass(frozen=True)
 class KeypointSmoothingConfig:
     enabled: bool = False
     method: str = "one_euro"
@@ -116,24 +135,61 @@ class AppConfig:
         self,
         detections: Sequence[Detection],
     ) -> list[Detection]:
+        return self.filter_detections_with_details(detections).kept
+
+    def filter_detections_with_details(
+        self,
+        detections: Sequence[Detection],
+    ) -> DetectionFilterResult:
         kept: list[Detection] = []
+        rejected: list[DetectionFilterDetail] = []
+        confidence_filtered_count = 0
+        size_filtered_count = 0
         for detection in detections:
             # 只对关心的 person/ball 做阈值过滤，其他类别保留给上游 class filter 决定。
             filter_config = self._filter_for_label(detection.label)
             if filter_config is None:
                 kept.append(detection)
                 continue
-            if self.passes_box(detection.label, detection.confidence,
-                               detection.bbox):
+
+            failed_confidence, failed_size = _evaluate_box_filter(
+                detection.confidence,
+                detection.bbox,
+                filter_config,
+            )
+            if not failed_confidence and not failed_size:
                 kept.append(detection)
-        return kept
+                continue
+
+            rejected.append(
+                DetectionFilterDetail(
+                    detection=detection,
+                    failed_confidence=failed_confidence,
+                    failed_size=failed_size,
+                ))
+            if failed_confidence:
+                confidence_filtered_count += 1
+            if failed_size:
+                size_filtered_count += 1
+
+        return DetectionFilterResult(
+            kept=kept,
+            rejected=rejected,
+            confidence_filtered_count=confidence_filtered_count,
+            size_filtered_count=size_filtered_count,
+        )
 
     def passes_box(self, label: str, confidence: float,
                    bbox: tuple[float, float, float, float]) -> bool:
         filter_config = self._filter_for_label(label)
         if filter_config is None:
             return True
-        return _passes_box_filter(confidence, bbox, filter_config)
+        failed_confidence, failed_size = _evaluate_box_filter(
+            confidence,
+            bbox,
+            filter_config,
+        )
+        return not failed_confidence and not failed_size
 
     def _filter_for_label(self, label: str) -> BoxFilterConfig | None:
         if label in self.person_labels:
@@ -242,14 +298,15 @@ def _string_set(value, section: str) -> set[str]:
     return set(value)
 
 
-def _passes_box_filter(confidence: float,
-                       bbox: tuple[float, float, float, float],
-                       filter_config: BoxFilterConfig) -> bool:
+def _evaluate_box_filter(
+    confidence: float,
+    bbox: tuple[float, float, float, float],
+    filter_config: BoxFilterConfig,
+) -> tuple[bool, bool]:
     x1, y1, x2, y2 = bbox
     width = x2 - x1
     height = y2 - y1
-    return (
-        confidence >= filter_config.min_confidence
-        and width >= filter_config.min_width_px
-        and height >= filter_config.min_height_px
-    )
+    failed_confidence = confidence < filter_config.min_confidence
+    failed_size = (width < filter_config.min_width_px
+                   or height < filter_config.min_height_px)
+    return failed_confidence, failed_size
