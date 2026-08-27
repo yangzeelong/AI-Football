@@ -17,6 +17,19 @@ filters:
     min_width_px: 2
     min_height_px: 2
 
+box_smoothing:
+  enabled: false
+  static_alpha: 0.15
+  moving_alpha: 0.45
+  static_distance_px: 8
+  ttl_frames: 60
+
+pose_box_expansion:
+  enabled: true
+  x_pad_ratio: 0.15
+  y_pad_ratio: 0.25
+  min_pad_px: 12
+
 keypoint_smoothing:
   enabled: true
   method: skeleton

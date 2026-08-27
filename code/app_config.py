@@ -15,6 +15,23 @@ class BoxFilterConfig:
 
 
 @dataclass(frozen=True)
+class BoxSmoothingConfig:
+    enabled: bool = True
+    static_alpha: float = 0.15
+    moving_alpha: float = 0.45
+    static_distance_px: float = 8.0
+    ttl_frames: int = 60
+
+
+@dataclass(frozen=True)
+class PoseBoxExpansionConfig:
+    enabled: bool = True
+    x_pad_ratio: float = 0.15
+    y_pad_ratio: float = 0.25
+    min_pad_px: float = 12.0
+
+
+@dataclass(frozen=True)
 class DetectionFilterDetail:
     detection: Detection
     failed_confidence: bool
@@ -66,6 +83,8 @@ class AppConfig:
     ball_labels: set[str]
     person_filter: BoxFilterConfig
     ball_filter: BoxFilterConfig
+    box_smoothing: BoxSmoothingConfig
+    pose_box_expansion: PoseBoxExpansionConfig
     keypoint_smoothing: KeypointSmoothingConfig
 
     @classmethod
@@ -83,6 +102,8 @@ class AppConfig:
                 min_width_px=3.0,
                 min_height_px=3.0,
             ),
+            box_smoothing=BoxSmoothingConfig(),
+            pose_box_expansion=PoseBoxExpansionConfig(),
             keypoint_smoothing=KeypointSmoothingConfig(),
         )
 
@@ -108,10 +129,19 @@ class AppConfig:
             raise ValueError(f"App config must be a YAML mapping: {path}")
 
         # 配置采用严格字段校验，字段名拼错时立刻报错，不静默使用默认值。
-        _require_exact_keys(raw, {"labels", "filters", "keypoint_smoothing"},
+        _require_exact_keys(raw,
+                            {
+                                "labels",
+                                "filters",
+                                "box_smoothing",
+                                "pose_box_expansion",
+                                "keypoint_smoothing",
+                            },
                             "app config")
         labels = raw["labels"]
         filters = raw["filters"]
+        box_smoothing = raw["box_smoothing"]
+        pose_box_expansion = raw["pose_box_expansion"]
         _require_exact_keys(labels, {"person", "ball"}, "labels")
         _require_exact_keys(filters, {"person", "ball"}, "filters")
         return cls(
@@ -124,6 +154,14 @@ class AppConfig:
             ball_filter=_box_filter_from_raw(
                 filters["ball"],
                 "filters.ball",
+            ),
+            box_smoothing=_box_smoothing_from_raw(
+                box_smoothing,
+                "box_smoothing",
+            ),
+            pose_box_expansion=_pose_box_expansion_from_raw(
+                pose_box_expansion,
+                "pose_box_expansion",
             ),
             keypoint_smoothing=_keypoint_smoothing_from_raw(
                 raw["keypoint_smoothing"],
@@ -206,6 +244,35 @@ def _box_filter_from_raw(raw: dict, section: str) -> BoxFilterConfig:
         min_confidence=float(raw["min_confidence"]),
         min_width_px=float(raw["min_width_px"]),
         min_height_px=float(raw["min_height_px"]),
+    )
+
+
+def _box_smoothing_from_raw(raw: dict, section: str) -> BoxSmoothingConfig:
+    _require_exact_keys(
+        raw,
+        {"enabled", "static_alpha", "moving_alpha", "static_distance_px", "ttl_frames"},
+        section,
+    )
+    return BoxSmoothingConfig(
+        enabled=bool(raw["enabled"]),
+        static_alpha=float(raw["static_alpha"]),
+        moving_alpha=float(raw["moving_alpha"]),
+        static_distance_px=float(raw["static_distance_px"]),
+        ttl_frames=int(raw["ttl_frames"]),
+    )
+
+
+def _pose_box_expansion_from_raw(
+    raw: dict,
+    section: str,
+) -> PoseBoxExpansionConfig:
+    _require_exact_keys(raw, {"enabled", "x_pad_ratio", "y_pad_ratio", "min_pad_px"},
+                        section)
+    return PoseBoxExpansionConfig(
+        enabled=bool(raw["enabled"]),
+        x_pad_ratio=float(raw["x_pad_ratio"]),
+        y_pad_ratio=float(raw["y_pad_ratio"]),
+        min_pad_px=float(raw["min_pad_px"]),
     )
 
 

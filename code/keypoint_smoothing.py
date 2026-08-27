@@ -173,7 +173,9 @@ class KeypointTemporalSmoother:
             if prev.x is None or prev.y is None:
                 smoothed[name] = current
                 continue
-            smoothed[name] = self._blend_by_role(prev, current, is_static, name)
+            distance = hypot(current.x - prev.x, current.y - prev.y)
+            smoothed[name] = self._blend_by_role(prev, current, is_static, name,
+                                                 distance)
 
         self._apply_skeleton_constraints(smoothed, previous, is_static)
         _set_virtual_midpoint(smoothed, "neck", "left_shoulder",
@@ -191,13 +193,18 @@ class KeypointTemporalSmoother:
         current: Keypoint2D,
         is_static: bool,
         name: str,
+        distance: float,
     ) -> Keypoint2D:
         if name in ANCHOR_KEYPOINTS:
             alpha = self.config.skeleton_anchor_alpha
         elif name in FAST_ENDPOINT_KEYPOINTS:
+            if distance <= self.config.skeleton_fast_static_step_px:
+                return _copy_position(previous, current, "held")
             alpha = (self.config.skeleton_fast_endpoint_alpha
                      if is_static else self.config.skeleton_fast_moving_endpoint_alpha)
         elif name in ENDPOINT_KEYPOINTS:
+            if distance <= self.config.skeleton_max_static_step_px:
+                return _copy_position(previous, current, "held")
             alpha = (self.config.skeleton_endpoint_alpha
                      if is_static else self.config.skeleton_moving_endpoint_alpha)
         else:

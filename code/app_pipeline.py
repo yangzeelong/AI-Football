@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from math import hypot
 from pathlib import Path
 
 import cv2
@@ -8,6 +10,7 @@ from tqdm import tqdm
 
 from football_vision import (
     Color,
+    Detection,
     draw_debug_panel,
     ResultVideoWriter,
     RoiManager,
@@ -27,6 +30,84 @@ from app_config import AppConfig
 from keypoint_smoothing import KeypointTemporalSmoother
 from pose_estimation import MMPoseTopDownEstimator, person_detections
 from tracking import FootballTracker
+
+
+@dataclass
+class _BoxTrackState:
+    bbox: tuple[float, float, float, float]
+    last_frame_index: int
+
+
+class _TrackedBoxSmoother:
+
+    def __init__(
+        self,
+        static_alpha: float = 0.15,
+        moving_alpha: float = 0.45,
+        static_distance_px: float = 8.0,
+        ttl_frames: int = 60,
+    ) -> None:
+        self.static_alpha = static_alpha
+        self.moving_alpha = moving_alpha
+        self.static_distance_px = static_distance_px
+        self.ttl_frames = ttl_frames
+        self._tracks: dict[int, _BoxTrackState] = {}
+
+    def update(
+        self,
+        detections: list[Detection],
+        frame_index: int,
+    ) -> list[Detection]:
+        smoothed: list[Detection] = []
+        active_ids: set[int] = set()
+        for detection in detections:
+            if detection.label != "person" or detection.track_id is None:
+                smoothed.append(detection)
+                continue
+
+            active_ids.add(detection.track_id)
+            previous = self._tracks.get(detection.track_id)
+            if previous is None:
+                self._tracks[detection.track_id] = _BoxTrackState(
+                    bbox=detection.bbox,
+                    last_frame_index=frame_index,
+                )
+                smoothed.append(detection)
+                continue
+
+            prev_center = _bbox_center(previous.bbox)
+            current_center = _bbox_center(detection.bbox)
+            distance = hypot(current_center[0] - prev_center[0],
+                             current_center[1] - prev_center[1])
+            alpha = (self.static_alpha
+                     if distance <= self.static_distance_px else self.moving_alpha)
+            bbox = _blend_bbox(previous.bbox, detection.bbox, alpha)
+            smoothed_detection = Detection(
+                frame_index=detection.frame_index,
+                label=detection.label,
+                confidence=detection.confidence,
+                bbox=bbox,
+                class_id=detection.class_id,
+                track_id=detection.track_id,
+            )
+            self._tracks[detection.track_id] = _BoxTrackState(
+                bbox=bbox,
+                last_frame_index=frame_index,
+            )
+            smoothed.append(smoothed_detection)
+
+        self._evict_old_tracks(frame_index, active_ids)
+        return smoothed
+
+    def _evict_old_tracks(self, frame_index: int,
+                          active_ids: set[int]) -> None:
+        expired = [
+            track_id for track_id, state in self._tracks.items()
+            if frame_index - state.last_frame_index > self.ttl_frames
+            and track_id not in active_ids
+        ]
+        for track_id in expired:
+            self._tracks.pop(track_id, None)
 
 
 SKELETON_26: tuple[tuple[str, str], ...] = (
@@ -74,6 +155,12 @@ def run_single_view_app(
 ) -> None:
     football_tracker = FootballTracker()
     app_config = app_config or AppConfig.default()
+    box_smoother = _TrackedBoxSmoother(
+        static_alpha=app_config.box_smoothing.static_alpha,
+        moving_alpha=app_config.box_smoothing.moving_alpha,
+        static_distance_px=app_config.box_smoothing.static_distance_px,
+        ttl_frames=app_config.box_smoothing.ttl_frames,
+    )
 
     with VideoReader(video_path, stride=stride, target_fps=target_fps) as reader:
         # JSONL 自带视频信息，回放和质量评估脚本无需再额外传 video 参数。
@@ -136,7 +223,16 @@ def run_single_view_app(
                 person_boxes = person_detections(detections)
                 persons = _person_boxes_without_pose(person_boxes)
                 if pose_estimator:
-                    persons = pose_estimator.estimate(frame, person_boxes)
+                    pose_boxes = _expand_person_boxes(
+                        person_boxes,
+                        reader.width,
+                        reader.height,
+                        app_config.pose_box_expansion.enabled,
+                        app_config.pose_box_expansion.x_pad_ratio,
+                        app_config.pose_box_expansion.y_pad_ratio,
+                        app_config.pose_box_expansion.min_pad_px,
+                    )
+                    persons = pose_estimator.estimate(frame, pose_boxes)
                     persons = keypoint_smoother.update(persons)
                 balls = football_tracker.update(frame, detections)
 
@@ -211,6 +307,39 @@ def _person_boxes_without_pose(person_boxes) -> list[PersonObservation2D]:
     ]
 
 
+def _expand_person_boxes(
+    person_boxes,
+    image_width: int,
+    image_height: int,
+    enabled: bool,
+    x_pad_ratio: float,
+    y_pad_ratio: float,
+    min_pad_px: float,
+) -> list[Detection]:
+    if not enabled:
+        return list(person_boxes)
+
+    expanded: list[Detection] = []
+    for detection in person_boxes:
+        expanded.append(
+            Detection(
+                frame_index=detection.frame_index,
+                label=detection.label,
+                confidence=detection.confidence,
+                bbox=_expand_bbox(
+                    detection.bbox,
+                    image_width,
+                    image_height,
+                    x_pad_ratio,
+                    y_pad_ratio,
+                    min_pad_px,
+                ),
+                class_id=detection.class_id,
+                track_id=detection.track_id,
+            ))
+    return expanded
+
+
 def _raw_detection_counts(detections) -> dict[str, int]:
     person_count = sum(1 for detection in detections if detection.label == "person")
     ball_count = sum(
@@ -228,6 +357,27 @@ def _ball_detection_count(detections) -> int:
     return sum(
         1 for detection in detections
         if detection.label in {"sports ball", "ball", "football", "soccer ball"}
+    )
+
+
+def _expand_bbox(
+    bbox: tuple[float, float, float, float],
+    image_width: int,
+    image_height: int,
+    x_pad_ratio: float,
+    y_pad_ratio: float,
+    min_pad_px: float,
+) -> tuple[float, float, float, float]:
+    x1, y1, x2, y2 = bbox
+    width = x2 - x1
+    height = y2 - y1
+    x_pad = max(width * x_pad_ratio, min_pad_px)
+    y_pad = max(height * y_pad_ratio, min_pad_px)
+    return (
+        max(0.0, x1 - x_pad),
+        max(0.0, y1 - y_pad),
+        min(float(image_width), x2 + x_pad),
+        min(float(image_height), y2 + y_pad),
     )
 
 
