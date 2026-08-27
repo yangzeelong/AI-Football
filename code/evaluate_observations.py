@@ -11,7 +11,7 @@ from typing import Any
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Evaluate single-view 2D observation quality without ground truth."
+        description="Evaluate 2D observation quality without ground truth."
     )
     parser.add_argument("--input", required=True, help="Input observation JSONL.")
     parser.add_argument("--output", required=True, help="Output JSON report path.")

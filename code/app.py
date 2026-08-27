@@ -13,7 +13,7 @@ from football_vision import (
     run_detection_preview,
 )
 from app_config import AppConfig
-from app_pipeline import run_single_view_app
+from app_pipeline import run_video_app
 from pose_estimation import MMPoseTopDownEstimator
 
 
@@ -80,7 +80,7 @@ def parse_args() -> argparse.Namespace:
                         help="Save rendered detection result to a video file.")
     parser.add_argument("--output-observations",
                         default=None,
-                        help="Save single-view 2D observations to JSONL.")
+                        help="Save 2D observations to JSONL.")
     parser.add_argument("--camera-id",
                         default="C1",
                         help="Camera ID stored in observation output.")
@@ -174,7 +174,7 @@ def main() -> None:
             checkpoint_path=pose_checkpoint,
             device=args.pose_device or args.device,
         )
-        run_single_view_app(
+        run_video_app(
             video_path=video_path,
             detector=detector,
             roi_manager=roi_manager,

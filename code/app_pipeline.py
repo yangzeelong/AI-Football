@@ -134,7 +134,7 @@ SKELETON_26: tuple[tuple[str, str], ...] = (
 )
 
 
-def run_single_view_app(
+def run_video_app(
     video_path: str | Path,
     detector: YoloDetector,
     roi_manager: RoiManager,
@@ -181,7 +181,7 @@ def run_single_view_app(
             sample_fps=output_fps,
         )
         logger.info(
-            "single-view app loaded: path={} camera={} size={}x{} fps={:.2f} frames={} stride={}",
+            "video app loaded: path={} camera={} size={}x{} fps={:.2f} frames={} stride={}",
             video_path,
             camera_id,
             reader.width,
