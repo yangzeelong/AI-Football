@@ -7,7 +7,7 @@
 整体链路：
 
 ```text
-视频输入 -> RF-DETR/YOLO 人球检测 -> 人体跟踪 -> RTMPose/WholeBody 26点骨骼 -> 关键点稳定 -> 足球专用跟踪 -> JSONL输出 -> 质量评估
+视频输入 -> RF-DETR 人球检测 -> 人体跟踪 -> MMPose WholeBody 26点骨骼 -> 关键点稳定 -> 足球专用跟踪 -> JSONL输出 -> 质量评估
 ```
 
 ## 周会后优先级调整
@@ -24,7 +24,6 @@
 
 已完成：
 
-- YOLO 检测
 - RF-DETR 检测
 - BoT-SORT track id
 - RTMPose WholeBody 权重
@@ -34,7 +33,7 @@
 - 保存可视化视频
 - 统计每帧人数、足球检测、关键点数量
 - label-aware 质量报告
-- 检测器评估、阈值 sweep、全量运行脚本
+- 基于 label 的质量报告
 
 交付物：
 
@@ -101,7 +100,7 @@
 
 重点：
 
-- RF-DETR/YOLO 足球检测效果评估
+- RF-DETR 足球检测效果评估
 - 基于 label 的阈值 sweep，降低无球误检和单球多检
 - 足球候选打分：置信度、尺寸、ROI、轨迹预测距离、脚部关键点邻近关系
 - 足球 tracker 参数调优

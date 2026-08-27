@@ -4,13 +4,12 @@ import json
 from time import perf_counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Iterator, Protocol, Sequence
+from typing import Iterator, Sequence
 from enum import Enum
 
 import cv2
 import numpy as np
 from loguru import logger
-from tqdm import tqdm
 
 Point = tuple[int, int]
 BBox = tuple[float, float, float, float]
@@ -59,19 +58,6 @@ class RoiConfig:
     width: int
     height: int
     points: list[Point]
-
-
-class FrameAnalyzer(Protocol):
-
-    def update(self, frame: VideoFrame,
-               detections: Sequence[Detection]) -> None:
-        ...
-
-    def draw(self, image: np.ndarray) -> None:
-        ...
-
-    def summary(self) -> dict:
-        ...
 
 
 class VideoReader:
@@ -283,81 +269,6 @@ class RoiAnnotator:
         cv2.putText(canvas, help_text, (24, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.8,
                     Color.GREEN.value, 2)
         return canvas
-
-
-class YoloDetector:
-
-    def __init__(
-        self,
-        model_path: str | Path = "yolov8n.pt",
-        confidence: float = 0.25,
-        image_size: int = 640,
-        class_names: Sequence[str] | None = None,
-        device: str | None = None,
-    ) -> None:
-        try:
-            from ultralytics import YOLO
-        except ImportError as exc:
-            raise RuntimeError(
-                "ultralytics is not installed. Install it with: pip install ultralytics"
-            ) from exc
-
-        self.model = YOLO(str(model_path))
-        self.confidence = confidence
-        self.image_size = image_size
-        self.class_names = set(class_names or ["person", "sports ball"])
-        self.device = device
-
-    def detect(self, frame: VideoFrame) -> list[Detection]:
-        results = self.model.predict(
-            frame.image,
-            conf=self.confidence,
-            imgsz=self.image_size,
-            device=self.device,
-            verbose=False,
-        )
-        return self._parse_results(frame, results)
-
-    def track(self,
-              frame: VideoFrame,
-              tracker: str = "botsort.yaml",
-              persist: bool = True) -> list[Detection]:
-        results = self.model.track(
-            frame.image,
-            conf=self.confidence,
-            imgsz=self.image_size,
-            device=self.device,
-            tracker=tracker,
-            persist=persist,
-            verbose=False,
-        )
-        return self._parse_results(frame, results)
-
-    def _parse_results(self, frame: VideoFrame, results) -> list[Detection]:
-        detections: list[Detection] = []
-        if not results:
-            return detections
-
-        result = results[0]
-        names = result.names
-        for box in result.boxes:
-            class_id = int(box.cls[0].item())
-            label = str(names[class_id])
-            if self.class_names and label not in self.class_names:
-                continue
-            confidence = float(box.conf[0].item())
-            x1, y1, x2, y2 = box.xyxy[0].tolist()
-            track_id = int(box.id[0].item()) if box.id is not None else None
-            detections.append(
-                Detection(
-                    frame_index=frame.index,
-                    label=label,
-                    confidence=confidence,
-                    bbox=(float(x1), float(y1), float(x2), float(y2)),
-                    class_id=class_id,
-                    track_id=track_id,
-                ))
-        return detections
 
 
 class RfdetrDetector:
@@ -772,158 +683,3 @@ def draw_debug_panel(
         )
         text_y += text_height + line_gap
 
-
-def run_detection_preview(
-    video_path: str | Path,
-    detector: YoloDetector,
-    roi_manager: RoiManager,
-    use_roi: bool,
-    show: bool,
-    stride: int = 1,
-    target_fps: float | None = None,
-    max_frames: int | None = None,
-    display_width: int = 1920,
-    display_height: int = 1080,
-    perf_log: bool = False,
-    perf_every: int = 30,
-    output_video: str | Path | None = None,
-    debug: bool = False,
-    analyzer: FrameAnalyzer | None = None,
-) -> None:
-    with VideoReader(video_path, stride=stride, target_fps=target_fps) as reader:
-        logger.info(
-            "video loaded: path={} size={}x{} fps={:.2f} frames={} stride={}",
-            video_path,
-            reader.width,
-            reader.height,
-            reader.fps,
-            reader.frame_count,
-            reader.stride,
-        )
-        roi = roi_manager.get(video_path) if use_roi else None
-        if use_roi and roi is None:
-            raise ValueError(
-                f"No ROI config found for {Path(video_path).name}. Run with --draw-roi first."
-            )
-        if roi and (roi.width != reader.width or roi.height != reader.height):
-            raise ValueError(
-                "ROI resolution does not match video resolution: "
-                f"roi={roi.width}x{roi.height}, video={reader.width}x{reader.height}. "
-                "Re-run --draw-roi for this video.")
-        if roi:
-            logger.info("roi loaded: video={} points={}", roi.video_key,
-                        len(roi.points))
-
-        viewer = VideoShow(fps=reader.fps,
-                           display_width=display_width,
-                           display_height=display_height) if show else None
-        output_fps = reader.fps / reader.stride if reader.fps > 0 else 30.0
-        writer = ResultVideoWriter(
-            output_video,
-            fps=output_fps,
-            frame_size=(reader.width, reader.height),
-        ) if output_video else None
-        processed = 0
-        perf_every = max(1, perf_every)
-        total_frames = _processed_frame_total(reader.frame_count,
-                                              reader.stride, max_frames)
-        try:
-            # 普通检测预览也显示进度，和单视角感知流程保持一致。
-            for frame in tqdm(reader.frames(max_frames=max_frames),
-                              total=total_frames,
-                              desc="processing",
-                              unit="frame"):
-                total_started = perf_counter()
-
-                infer_started = perf_counter()
-                detections = detector.detect(frame)
-                infer_ms = (perf_counter() - infer_started) * 1000
-                detector_ball_count = _ball_detection_count(detections)
-
-                roi_started = perf_counter()
-                detections = roi_manager.filter_detections(detections, roi)
-                roi_ms = (perf_counter() - roi_started) * 1000
-                roi_ball_count = _ball_detection_count(detections)
-
-                analysis_started = perf_counter()
-                if analyzer:
-                    analyzer.update(frame, detections)
-                analysis_ms = (perf_counter() - analysis_started) * 1000
-
-                processed += 1
-                render_ms = 0.0
-                display_ms = 0.0
-                write_ms = 0.0
-                should_continue = True
-                rendered = None
-                if viewer or writer:
-                    render_started = perf_counter()
-                    rendered = render_detection_frame(frame, detections, roi,
-                                                      reader.fps)
-                    if debug:
-                        draw_debug_panel(
-                            rendered,
-                            [
-                                f"ball detected: {'yes' if detector_ball_count > 0 else 'no'} raw={detector_ball_count}",
-                                f"roi kept: {'yes' if roi_ball_count > 0 else 'no'} roi_filtered={'yes' if detector_ball_count != roi_ball_count else 'no'}",
-                            ],
-                        )
-                    if analyzer:
-                        analyzer.draw(rendered)
-                    render_ms = (perf_counter() - render_started) * 1000
-
-                if viewer and rendered is not None:
-                    display_started = perf_counter()
-                    should_continue = viewer.show(rendered)
-                    display_ms = (perf_counter() - display_started) * 1000
-
-                if writer and rendered is not None:
-                    write_started = perf_counter()
-                    writer.write(rendered)
-                    write_ms = (perf_counter() - write_started) * 1000
-
-                total_ms = (perf_counter() - total_started) * 1000
-                if perf_log and processed % perf_every == 0:
-                    logger.info(
-                        "perf frame={} processed={} read={:.1f}ms infer={:.1f}ms roi={:.1f}ms analysis={:.1f}ms render={:.1f}ms display={:.1f}ms write={:.1f}ms total={:.1f}ms det={}",
-                        frame.index,
-                        processed,
-                        frame.read_ms,
-                        infer_ms,
-                        roi_ms,
-                        analysis_ms,
-                        render_ms,
-                        display_ms,
-                        write_ms,
-                        total_ms,
-                        len(detections),
-                    )
-
-                if not should_continue:
-                    break
-        finally:
-            if viewer:
-                viewer.close()
-            if writer:
-                writer.close()
-
-        if analyzer:
-            logger.info("analysis summary: {}", analyzer.summary())
-        logger.info("processed {} frames from {}", processed, video_path)
-
-
-def _processed_frame_total(frame_count: int, stride: int,
-                           max_frames: int | None) -> int | None:
-    if frame_count <= 0:
-        return max_frames
-    total = (frame_count + stride - 1) // stride
-    if max_frames is not None:
-        total = min(total, max_frames)
-    return total
-
-
-def _ball_detection_count(detections) -> int:
-    return sum(
-        1 for detection in detections
-        if detection.label in {"sports ball", "ball", "football", "soccer ball"}
-    )

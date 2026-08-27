@@ -7,6 +7,20 @@ from typing import Sequence
 from football_vision import Detection
 
 
+DEFAULT_POSE_CONFIG = (
+    "models/mmpose/configs/wholebody_2d_keypoint/rtmpose/coco-wholebody/"
+    "rtmpose-m_8xb64-270e_coco-wholebody-256x192.py"
+)
+DEFAULT_POSE_CHECKPOINT = (
+    "models/mmpose/rtmpose-wholebody/"
+    "rtmpose-m_simcc-coco-wholebody_pt-aic-coco_270e-256x192-cd5e845c_20230123.pth"
+)
+DEFAULT_DETECTOR_CLASSES = frozenset({"person", "sports ball"})
+DEFAULT_RFDETR_SIZE = "small"
+DEFAULT_RFDETR_MODEL_DIR = "models/rfdetr"
+DEFAULT_TRACKER_CONFIG = "botsort.yaml"
+
+
 @dataclass(frozen=True)
 class BoxFilterConfig:
     min_confidence: float = 0.0
@@ -78,6 +92,26 @@ class KeypointSmoothingConfig:
 
 
 @dataclass(frozen=True)
+class DetectorConfig:
+    confidence: float = 0.25
+    class_names: set[str] = DEFAULT_DETECTOR_CLASSES
+    rfdetr_size: str = DEFAULT_RFDETR_SIZE
+    rfdetr_model_dir: str = DEFAULT_RFDETR_MODEL_DIR
+
+
+@dataclass(frozen=True)
+class PoseModelConfig:
+    preset: str = "rtmpose-m"
+    config_path: str = DEFAULT_POSE_CONFIG
+    checkpoint_path: str = DEFAULT_POSE_CHECKPOINT
+
+
+@dataclass(frozen=True)
+class RuntimeConfig:
+    tracker: str = DEFAULT_TRACKER_CONFIG
+
+
+@dataclass(frozen=True)
 class AppConfig:
     person_labels: set[str]
     ball_labels: set[str]
@@ -86,6 +120,9 @@ class AppConfig:
     box_smoothing: BoxSmoothingConfig
     pose_box_expansion: PoseBoxExpansionConfig
     keypoint_smoothing: KeypointSmoothingConfig
+    detector: DetectorConfig
+    pose: PoseModelConfig
+    runtime: RuntimeConfig
 
     @classmethod
     def default(cls) -> "AppConfig":
@@ -105,6 +142,9 @@ class AppConfig:
             box_smoothing=BoxSmoothingConfig(),
             pose_box_expansion=PoseBoxExpansionConfig(),
             keypoint_smoothing=KeypointSmoothingConfig(),
+            detector=DetectorConfig(),
+            pose=PoseModelConfig(),
+            runtime=RuntimeConfig(),
         )
 
     @classmethod
@@ -136,14 +176,17 @@ class AppConfig:
                                 "box_smoothing",
                                 "pose_box_expansion",
                                 "keypoint_smoothing",
+                                "models",
                             },
                             "app config")
         labels = raw["labels"]
         filters = raw["filters"]
         box_smoothing = raw["box_smoothing"]
         pose_box_expansion = raw["pose_box_expansion"]
+        models = raw["models"]
         _require_exact_keys(labels, {"person", "ball"}, "labels")
         _require_exact_keys(filters, {"person", "ball"}, "filters")
+        _require_exact_keys(models, {"detector", "pose", "runtime"}, "models")
         return cls(
             person_labels=_string_set(labels["person"], "labels.person"),
             ball_labels=_string_set(labels["ball"], "labels.ball"),
@@ -166,6 +209,18 @@ class AppConfig:
             keypoint_smoothing=_keypoint_smoothing_from_raw(
                 raw["keypoint_smoothing"],
                 "keypoint_smoothing",
+            ),
+            detector=_detector_from_raw(
+                models["detector"],
+                "models.detector",
+            ),
+            pose=_pose_model_from_raw(
+                models["pose"],
+                "models.pose",
+            ),
+            runtime=_runtime_from_raw(
+                models["runtime"],
+                "models.runtime",
             ),
         )
 
@@ -344,6 +399,40 @@ def _keypoint_smoothing_from_raw(
             "keypoint_smoothing.sensitive_keypoints",
         ),
     )
+
+
+def _detector_from_raw(raw: dict, section: str) -> DetectorConfig:
+    _require_exact_keys(
+        raw,
+        {
+            "confidence",
+            "class_names",
+            "rfdetr_size",
+            "rfdetr_model_dir",
+        },
+        section,
+    )
+    return DetectorConfig(
+        confidence=float(raw["confidence"]),
+        class_names=_string_set(raw["class_names"], f"{section}.class_names"),
+        rfdetr_size=str(raw["rfdetr_size"]),
+        rfdetr_model_dir=str(raw["rfdetr_model_dir"]),
+    )
+
+
+def _pose_model_from_raw(raw: dict, section: str) -> PoseModelConfig:
+    _require_exact_keys(raw, {"preset", "config_path", "checkpoint_path"},
+                        section)
+    return PoseModelConfig(
+        preset=str(raw["preset"]),
+        config_path=str(raw["config_path"]),
+        checkpoint_path=str(raw["checkpoint_path"]),
+    )
+
+
+def _runtime_from_raw(raw: dict, section: str) -> RuntimeConfig:
+    _require_exact_keys(raw, {"tracker"}, section)
+    return RuntimeConfig(tracker=str(raw["tracker"]))
 
 
 def _require_exact_keys(data: dict, expected: set[str], section: str) -> None:

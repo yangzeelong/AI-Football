@@ -2,7 +2,7 @@
 
 This MVP generates per-frame 2D observations for task 1:
 
-- RF-DETR detects people and footballs. YOLO remains available for comparison.
+- RF-DETR detects people and footballs.
 - RF-DETR person detections are assigned single-camera track IDs with ByteTrack.
 - MMPose RTMPose/WholeBody projects body keypoints into the project 26-point schema.
 - A lightweight football tracker keeps one ball track and short missing-frame predictions.
@@ -13,17 +13,14 @@ This MVP generates per-frame 2D observations for task 1:
 ```bash
 python code/app.py ^
   --video data/sample.mov ^
-  --detector rfdetr ^
-  --rfdetr-size nano ^
-  --classes person "sports ball" ^
-  --output-observations tmp/C1_observations.jsonl ^
+  --output-dir tmp/C1_sample ^
   --camera-id C1 ^
-  --tracker botsort.yaml ^
-  --show
+  --show ^
+  --config config/app.yaml
 ```
 
 Task 1 requires person landmarks. JSONL export loads MMPose by default from
-`models/mmpose`; if the config or checkpoint is missing, the app fails fast
+`config/app.yaml`; if the config or checkpoint is missing, the app fails fast
 instead of writing observations without 26 keypoints.
 
 ## Project 26 Keypoints

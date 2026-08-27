@@ -39,7 +39,7 @@ class MMPoseTopDownEstimator:
             from mmpose.apis import init_model, inference_topdown
         except ImportError as exc:
             raise RuntimeError(
-                "mmpose is required for pose estimation. Install MMPose and pass --pose-config/--pose-checkpoint."
+                "mmpose is required for pose estimation. Install MMPose and configure the pose model in config/app.yaml."
             ) from exc
         from mmengine import Config
 

@@ -12,11 +12,11 @@ from football_vision import (
     Color,
     Detection,
     draw_debug_panel,
+    RfdetrDetector,
     ResultVideoWriter,
     RoiManager,
     VideoReader,
     VideoShow,
-    YoloDetector,
     render_detection_frame,
 )
 from observations import (
@@ -136,7 +136,7 @@ SKELETON_26: tuple[tuple[str, str], ...] = (
 
 def run_video_app(
     video_path: str | Path,
-    detector: YoloDetector,
+    detector: RfdetrDetector,
     roi_manager: RoiManager,
     output_observations: str | Path,
     camera_id: str = "C1",

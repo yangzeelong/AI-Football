@@ -21,11 +21,11 @@ models/mmpose/
     hrnet_w48_coco_wholebody_384x288_dark-f5726563_20200918.pth
 ```
 
-Current default app paths:
+Current default app paths are configured in `config/app.yaml`:
 
 ```powershell
---pose-config models/mmpose/configs/wholebody_2d_keypoint/rtmpose/coco-wholebody/rtmpose-m_8xb64-270e_coco-wholebody-256x192.py
---pose-checkpoint models/mmpose/rtmpose-wholebody/rtmpose-m_simcc-coco-wholebody_pt-aic-coco_270e-256x192-cd5e845c_20230123.pth
+models.pose.config_path: models/mmpose/configs/wholebody_2d_keypoint/rtmpose/coco-wholebody/rtmpose-m_8xb64-270e_coco-wholebody-256x192.py
+models.pose.checkpoint_path: models/mmpose/rtmpose-wholebody/rtmpose-m_simcc-coco-wholebody_pt-aic-coco_270e-256x192-cd5e845c_20230123.pth
 ```
 
 Download HRNet checkpoints:

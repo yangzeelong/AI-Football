@@ -6,10 +6,11 @@ import json
 import subprocess
 import sys
 import time
-from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from app_config_utils import deep_update, load_yaml, merge_yaml, pose_model_config
 
 
 def parse_args() -> argparse.Namespace:
@@ -65,14 +66,7 @@ def load_config(path: str | Path) -> dict[str, Any]:
     config_path = Path(path)
     if not config_path.exists():
         raise FileNotFoundError(f"Experiment config not found: {config_path}")
-    try:
-        import yaml
-    except ImportError as exc:
-        raise RuntimeError("PyYAML is required to read experiment config.") from exc
-    data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    if not isinstance(data, dict):
-        raise ValueError(f"Experiment config must be a mapping: {config_path}")
-    return data
+    return load_yaml(config_path)
 
 
 def build_run(
@@ -91,21 +85,18 @@ def build_run(
     observation_path = run_dir / "observations.jsonl"
     report_json_path = run_dir / "quality_report.json"
     report_md_path = run_dir / "quality_report.md"
-    output_video = bool(experiment.get("output_video",
-                                       defaults.get("output_video", True)))
-    rendered_video_path = run_dir / "rendered.mp4" if output_video else None
+    rendered_video_path = run_dir / "rendered.mp4"
     app_config_path = run_dir / "app.yaml"
     command_path = run_dir / "command.txt"
 
-    merged_app_config = merge_app_config(
+    app_overrides = build_app_overrides(defaults, experiment)
+    merged_app_config = merge_yaml(
         base_app_config,
-        experiment.get("app_overrides", {}),
         app_config_path,
+        app_overrides,
     )
     app_cmd = build_app_cmd(
         video=video,
-        observation_path=observation_path,
-        rendered_video_path=rendered_video_path,
         app_config=app_config_path,
         roi_config=roi_config,
         defaults=defaults,
@@ -143,25 +134,41 @@ def build_run(
         "app_cmd": app_cmd,
         "report_cmd": report_cmd,
         "pose_model": experiment["pose_model"],
-        "stride": experiment["stride"],
+        "stride": experiment.get("stride"),
         "target_fps": experiment.get("target_fps"),
         "max_frames": experiment.get("max_frames"),
     }
 
 
-def merge_app_config(base_app_config: str, overrides: dict[str, Any],
-                     output_path: Path) -> dict[str, Any]:
-    base = load_config(base_app_config)
-    merged = deepcopy(base)
-    deep_update(merged, overrides)
-    write_yaml(merged, output_path)
-    return merged
+def build_app_overrides(
+    defaults: dict[str, Any],
+    experiment: dict[str, Any],
+) -> dict[str, Any]:
+    overrides: dict[str, Any] = {}
+
+    detector_keys = {
+        "confidence": "confidence",
+        "rfdetr_size": "rfdetr_size",
+        "rfdetr_model_dir": "rfdetr_model_dir",
+    }
+    detector_overrides = {}
+    for source_key, config_key in detector_keys.items():
+        value = experiment.get(source_key, defaults.get(source_key))
+        if value is not None:
+            detector_overrides[config_key] = value
+    if detector_overrides:
+        deep_update(overrides, {"models": {"detector": detector_overrides}})
+
+    pose_model = str(experiment.get("pose_model"))
+    deep_update(overrides, {"models": {"pose": pose_model_config(pose_model)}})
+
+    # app_overrides 用于实验真正关心的业务配置，例如 keypoint_smoothing。
+    deep_update(overrides, experiment.get("app_overrides", {}))
+    return overrides
 
 
 def build_app_cmd(
     video: Path,
-    observation_path: Path,
-    rendered_video_path: Path,
     app_config: Path,
     roi_config: str,
     defaults: dict[str, Any],
@@ -172,50 +179,23 @@ def build_app_cmd(
         "code/app.py",
         "--video",
         str(video),
-        "--detector",
-        str(experiment.get("detector", defaults.get("detector", "rfdetr"))),
-        "--conf",
-        str(experiment.get("conf", defaults.get("conf", 0.25))),
-        "--device",
-        str(experiment.get("device", defaults.get("device", "cuda:0"))),
-        "--stride",
-        str(experiment["stride"]),
-        "--pose-model",
-        str(experiment["pose_model"]),
-        "--output-observations",
-        str(observation_path),
-        "--app-config",
+        "--output-dir",
+        str(app_config.parent),
+        "--config",
         str(app_config),
         "--roi-config",
         str(roi_config),
+        "--device",
+        str(experiment.get("device", defaults.get("device", "cuda:0"))),
     ]
     if experiment.get("target_fps") is not None:
         cmd.extend(["--target-fps", str(experiment["target_fps"])])
-    if rendered_video_path is not None:
-        cmd.extend(["--output-video", str(rendered_video_path)])
+    else:
+        cmd.extend(["--stride", str(experiment["stride"])])
     if experiment.get("use_roi", defaults.get("use_roi", True)):
         cmd.append("--use-roi")
     if experiment.get("max_frames") is not None:
         cmd.extend(["--max-frames", str(experiment["max_frames"])])
-    pose_device = experiment.get("pose_device", defaults.get("pose_device"))
-    if pose_device:
-        cmd.extend(["--pose-device", str(pose_device)])
-
-    detector = str(experiment.get("detector", defaults.get("detector", "rfdetr")))
-    if detector == "rfdetr":
-        cmd.extend([
-            "--rfdetr-size",
-            str(experiment.get("rfdetr_size", defaults.get("rfdetr_size", "small"))),
-            "--model-dir",
-            str(experiment.get("model_dir", defaults.get("model_dir", "models/rfdetr"))),
-        ])
-    else:
-        cmd.extend([
-            "--model",
-            str(experiment.get("yolo_model", defaults.get("yolo_model", "models/yolo/yolov8n.pt"))),
-            "--imgsz",
-            str(experiment.get("imgsz", defaults.get("imgsz", 640))),
-        ])
     return cmd
 
 
@@ -332,24 +312,6 @@ def write_summary(run_root: Path, rows: list[dict[str, Any]]) -> None:
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"[done] summary: {csv_path}")
     print(f"[done] markdown: {md_path}")
-
-
-def deep_update(target: dict[str, Any], updates: dict[str, Any]) -> None:
-    for key, value in updates.items():
-        if isinstance(value, dict) and isinstance(target.get(key), dict):
-            deep_update(target[key], value)
-        else:
-            target[key] = value
-
-
-def write_yaml(data: dict[str, Any], path: Path) -> None:
-    try:
-        import yaml
-    except ImportError as exc:
-        raise RuntimeError("PyYAML is required to write experiment config.") from exc
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
-                    encoding="utf-8")
 
 
 def print_run(run: dict[str, Any]) -> None:

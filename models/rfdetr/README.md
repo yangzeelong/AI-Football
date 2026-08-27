@@ -14,5 +14,7 @@ Put RF-DETR checkpoint files in this directory. The app reads weights from
 Example:
 
 ```powershell
-python code/app.py --video "data\素材\传球-720p60.mov" --detector rfdetr --rfdetr-size nano
+python code/app.py --video "data\素材\传球-720p60.mov" --output-dir tmp\rfdetr_smoke --config config\app.yaml
 ```
+
+RF-DETR size and weight directory are configured in `config/app.yaml`.

@@ -30,7 +30,7 @@
 ## 目录说明
 
 - `code`：核心代码
-- `config`：ROI 和 app 过滤配置
+- `config`：ROI、模型路径和 app 过滤配置
 - `doc`：任务说明、路线图和方案文档
 - `scripts`：可直接参考的示例脚本
 - `data`：输入视频和素材
@@ -55,7 +55,7 @@ pip install -r requirements.txt
 2. 准备输入视频，例如 `data/素材/射门1-1080p60.mov`
 3. 如需 26 keypoints，准备本地 MMPose 配置和对应权重
 4. 如需 ROI 过滤，先完成 ROI 标定，配置保存在 `config/roi.json`
-5. app 过滤阈值保存在 `config/app.yaml`
+5. 模型路径、检测阈值、过滤阈值和关键点平滑配置保存在 `config/app.yaml`
 
 ## 推荐流程
 
@@ -77,7 +77,7 @@ python code/app.py --video data/素材/射门1-1080p60.mov --draw-roi --roi-conf
 - 足球跟踪
 - 输出 JSONL 观测文件
 
-默认姿态模型是 `hrnet-w48-dark`。如果要换成更轻的模型，可以显式传 `--pose-model rtmpose-m`。如需手动下载 HRNet 权重：
+模型路径统一由 `config/app.yaml` 管理。如需手动下载 HRNet 权重：
 
 ```bash
 python scripts/download_hrnet_pose_models.py --model hrnet-w48-dark
@@ -85,46 +85,29 @@ python scripts/download_hrnet_pose_models.py --model hrnet-w48-dark
 
 ```bash
 python code/app.py --video data/素材/传球-720p60.mov \
-  --detector rfdetr \
-  --rfdetr-size small \
-  --model-dir models/rfdetr \
+  --output-dir tmp/C1_hrnet_w48_dark_smooth \
   --device cuda:0 \
-  --pose-device cuda:0 \
-  --pose-model hrnet-w48-dark \
-  --output-observations tmp/C1_hrnet_w48_dark_smooth.jsonl \
   --use-roi \
-  --app-config config/app.yaml \
-  --roi-config config/roi.json \
-  --output-video tmp/C1_hrnet_w48_dark_smooth.mp4
+  --config config/app.yaml \
+  --roi-config config/roi.json
 
 python code/app.py \
   --video data/素材/传球-720p60.mov \
-  --detector rfdetr \
-  --rfdetr-size small \
-  --model-dir models/rfdetr \
+  --output-dir tmp/test_hrnet_w48_dark \
   --device cuda:0 \
-  --pose-device cuda:0 \
-  --pose-model hrnet-w48-dark \
   --use-roi \
-  --app-config config/app.yaml \
-  --roi-config config/roi.json \
-  --output-observations tmp/test_hrnet_w48_dark.jsonl \
-  --output-video tmp/test_hrnet_w48_dark.mp4
+  --config config/app.yaml \
+  --roi-config config/roi.json
 
 
 python code/app.py \
   --video data/素材/传球-720p60.mov \
-  --detector rfdetr \
-  --rfdetr-size small \
-  --model-dir models/rfdetr \
+  --output-dir tmp/test_hrnet_w48_dark_skeleton_full \
   --device cuda:0 \
-  --pose-device cuda:0 \
   --use-roi \
   --debug \
-  --app-config config/app.yaml \
-  --roi-config config/roi.json \
-  --output-observations tmp/test_hrnet_w48_dark_skeleton_full.jsonl \
-  --output-video tmp/test_hrnet_w48_dark_skeleton_full.mp4
+  --config config/app.yaml \
+  --roi-config config/roi.json
 ```
 
 ### 3. 生成评估报告
@@ -133,7 +116,7 @@ python code/app.py \
 
 ```bash
 python code/evaluate_observations.py \
-  --input tmp/C1_observations.jsonl \
+  --input tmp/C1_hrnet_w48_dark_smooth/observations.jsonl \
   --output reports/C1_observations_quality_report.json \
   --markdown reports/C1_observations_quality_report.md
 ```
@@ -144,7 +127,7 @@ python code/evaluate_observations.py \
 
 ```bash
 python code/replay_observations.py \
-  --observations tmp/C1_observations.jsonl \
+  --observations tmp/C1_hrnet_w48_dark_smooth/observations.jsonl \
   --show \
   --app-config config/app.yaml
 ```
@@ -153,7 +136,7 @@ python code/replay_observations.py \
 
 `scripts/example.sh` 把上面的流程串起来了。它做的事情依次是：
 
-1. 定义输入视频和输出文件名
+1. 定义输入视频和输出目录
 2. 调用 `code/app.py` 生成观测 JSONL
 3. 调用 `code/evaluate_observations.py` 输出 JSON 和 Markdown 报告
 4. 调用 `code/replay_observations.py` 回放结果
@@ -161,8 +144,7 @@ python code/replay_observations.py \
 脚本中的变量含义如下：
 
 - `input_video`：输入视频路径
-- `tmp_file`：输出文件名前缀
-- `output_observations`：观测 JSONL
+- `output_dir`：观测 JSONL、渲染视频和运行元信息目录
 - `output_report`：结构化质量报告
 - `output_report_md`：可读版质量报告
 
@@ -176,15 +158,12 @@ python code/replay_observations.py \
 | --- | --- |
 | `--video` | 输入视频 |
 | `--roi-config` | ROI 配置 |
-| `--app-config` | 人体/足球过滤配置 |
-| `--output-observations` | 输出 JSONL |
-| `--output-video` | 输出渲染视频 |
+| `--config` | 模型路径、检测阈值、过滤阈值和关键点平滑配置 |
+| `--output-dir` | 输出目录，固定写入 `observations.jsonl`、`rendered.mp4`、`run_args.json` 和 `app_config.yaml` |
 | `--show` | 直接显示窗口 |
 | `--use-roi` | 启用 ROI 过滤 |
-| `--pose-model` | MMPose 预设：`hrnet-w48-dark`、`hrnet-w32`、`rtmpose-m` |
-| `--pose-config` | MMPose 配置文件覆盖 |
-| `--pose-checkpoint` | MMPose 权重文件覆盖 |
-| `--pose-device` | MMPose 运行设备 |
+| `--stride` | 按固定帧间隔抽帧；和 `--target-fps` 互斥 |
+| `--target-fps` | 按目标 FPS 自动推导抽帧间隔；和 `--stride` 互斥 |
 
 ### `code/replay_observations.py`
 
@@ -197,7 +176,9 @@ python code/replay_observations.py \
 
 ## 输出说明
 
-- `tmp/*.jsonl`：单视角观测结果，第一条记录是视频元信息
+- `tmp/<run>/observations.jsonl`：单视角观测结果，第一条记录是视频元信息
+- `tmp/<run>/rendered.mp4`：带检测框、关键点和 debug 信息的渲染视频
+- `tmp/<run>/run_args.json`：本次运行的 CLI 参数和解析后的输出路径
+- `tmp/<run>/app_config.yaml`：本次运行使用的配置快照
 - `reports/*_quality_report.json`：质量评估结果
 - `reports/*_quality_report.md`：质量评估的 Markdown 版本
-- `tmp/*.mp4`：如果指定了 `--output-video`，会生成对应视频

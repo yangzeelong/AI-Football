@@ -6,17 +6,8 @@ base_app_config: config/app.yaml
 video_labels: config/video_labels.yaml
 
 defaults:
-  detector: rfdetr
-  rfdetr_size: small
-  model_dir: models/rfdetr
-  yolo_model: models/yolo/yolov8n.pt
-  imgsz: 640
-  conf: 0.25
   device: cuda:0
-  pose_device: cuda:0
   use_roi: true
-  output_video: true
-  evaluate: true
 
 experiments:
   - name: hrnet_w48_skeleton_stride1
