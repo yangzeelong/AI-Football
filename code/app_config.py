@@ -97,6 +97,7 @@ class DetectorConfig:
     class_names: set[str] = DEFAULT_DETECTOR_CLASSES
     rfdetr_size: str = DEFAULT_RFDETR_SIZE
     rfdetr_model_dir: str = DEFAULT_RFDETR_MODEL_DIR
+    input_resolution: int | None = None
 
 
 @dataclass(frozen=True)
@@ -409,6 +410,7 @@ def _detector_from_raw(raw: dict, section: str) -> DetectorConfig:
             "class_names",
             "rfdetr_size",
             "rfdetr_model_dir",
+            "input_resolution",
         },
         section,
     )
@@ -417,6 +419,9 @@ def _detector_from_raw(raw: dict, section: str) -> DetectorConfig:
         class_names=_string_set(raw["class_names"], f"{section}.class_names"),
         rfdetr_size=str(raw["rfdetr_size"]),
         rfdetr_model_dir=str(raw["rfdetr_model_dir"]),
+        input_resolution=(
+            None if raw["input_resolution"] is None else int(raw["input_resolution"])
+        ),
     )
 
 

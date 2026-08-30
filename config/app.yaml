@@ -73,6 +73,7 @@ models:
       - sports ball
     rfdetr_size: small
     rfdetr_model_dir: models/rfdetr
+    input_resolution: null
   pose:
     preset: rtmpose-m
     config_path: models/mmpose/configs/wholebody_2d_keypoint/rtmpose/coco-wholebody/rtmpose-m_8xb64-270e_coco-wholebody-256x192.py

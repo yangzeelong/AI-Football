@@ -140,8 +140,9 @@ def build_detector(app_config: AppConfig, device: str):
     size = detector_cfg.rfdetr_size
     model_dir = detector_cfg.rfdetr_model_dir
     logger.info(
-        "loading RF-DETR detector: size={} conf={} model_dir={} device={}",
+        "loading RF-DETR detector: size={} resolution={} conf={} model_dir={} device={}",
         size,
+        detector_cfg.input_resolution,
         confidence,
         model_dir,
         device,
@@ -150,6 +151,7 @@ def build_detector(app_config: AppConfig, device: str):
         confidence=confidence,
         class_names=class_names,
         size=size,
+        resolution=detector_cfg.input_resolution,
         device=device,
         model_dir=model_dir,
     )

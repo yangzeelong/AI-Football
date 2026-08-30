@@ -102,7 +102,7 @@ python code/app.py \
 
 python code/app.py \
   --video data/素材/传球-720p60.mov \
-  --output-dir tmp/test_hrnet_w48_dark_skeleton_full \
+  --output-dir tmp/C1 \
   --device cuda:0 \
   --use-roi \
   --debug \
