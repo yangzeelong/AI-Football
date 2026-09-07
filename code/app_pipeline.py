@@ -26,10 +26,10 @@ from observations import (
     empty_project_26,
     frame_observation,
 )
-from app_config import AppConfig
+from app_config import AppConfig, DetectionFilterDetail
 from keypoint_smoothing import KeypointTemporalSmoother
 from pose_estimation import MMPoseTopDownEstimator, person_detections
-from tracking import FootballTracker
+from tracking import FootballTracker, ball_support_score
 
 
 @dataclass
@@ -218,7 +218,6 @@ def run_video_app(
                 filter_result = app_config.filter_detections_with_details(detections)
                 detections = filter_result.kept
                 filtered_ball_count = _ball_detection_count(detections)
-                raw_detection_counts = _raw_detection_counts(detections)
 
                 person_boxes = person_detections(detections)
                 persons = _person_boxes_without_pose(person_boxes)
@@ -234,7 +233,14 @@ def run_video_app(
                     )
                     persons = pose_estimator.estimate(frame, pose_boxes)
                     persons = keypoint_smoother.update(persons)
-                balls = football_tracker.update(frame, detections)
+                rescued_balls = _rescue_ball_detections(filter_result.rejected,
+                                                        persons, reader.width,
+                                                        reader.height)
+                if rescued_balls:
+                    detections = [*detections, *rescued_balls]
+                raw_detection_counts = _raw_detection_counts(detections)
+
+                balls = football_tracker.update(frame, detections, persons)
 
                 observation = frame_observation(
                     frame=frame,
@@ -259,11 +265,9 @@ def run_video_app(
                         draw_debug_panel(
                             rendered,
                             [
-                                f"ball detected: {'yes' if detector_ball_count > 0 else 'no'} raw={detector_ball_count}",
-                                f"roi kept: {'yes' if roi_ball_count > 0 else 'no'} roi_filtered={'yes' if detector_ball_count != roi_ball_count else 'no'}",
-                                f"config filtered: conf={filter_result.confidence_filtered_count} area={filter_result.size_filtered_count} kept={len(detections)}",
-                                f"final ball: {filtered_ball_count} filtered={filter_result.filtered_count}",
-                                f"tracked: {'yes' if bool(balls) else 'no'} state={ball_state} tracks={len(balls)}",
+                                f"ball: raw={detector_ball_count} roi={roi_ball_count} kept={filtered_ball_count} rescued={len(rescued_balls)} tracked={len(balls)} state={ball_state}",
+                                f"filter: conf={filter_result.confidence_filtered_count} size={filter_result.size_filtered_count} total={filter_result.filtered_count}",
+                                f"persons: det={len(person_boxes)} track={len(persons)}",
                             ],
                         )
 
@@ -358,6 +362,45 @@ def _ball_detection_count(detections) -> int:
         1 for detection in detections
         if detection.label in {"sports ball", "ball", "football", "soccer ball"}
     )
+
+
+def _rescue_ball_detections(
+    rejected: list[DetectionFilterDetail],
+    persons: list[PersonObservation2D],
+    image_width: int,
+    image_height: int,
+) -> list[Detection]:
+    rescued: list[Detection] = []
+    for detail in rejected:
+        detection = detail.detection
+        if detection.label not in {"sports ball", "ball", "football", "soccer ball"}:
+            continue
+        if detection.confidence < 0.05:
+            continue
+        if not _is_ball_rescue_supported(detection, persons, image_width,
+                                         image_height):
+            continue
+        rescued.append(detection)
+    return rescued
+
+
+def _is_ball_rescue_supported(
+    detection: Detection,
+    persons: list[PersonObservation2D],
+    image_width: int,
+    image_height: int,
+) -> bool:
+    support = ball_support_score(detection.center, persons, image_width,
+                                 image_height)
+    if support < 0.35:
+        return False
+
+    x1, y1, x2, y2 = detection.bbox
+    width = x2 - x1
+    height = y2 - y1
+    if max(width, height) > min(image_width, image_height) * 0.18:
+        return False
+    return True
 
 
 def _expand_bbox(

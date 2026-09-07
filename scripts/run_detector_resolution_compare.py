@@ -201,8 +201,6 @@ def build_app_cmd(
         str(app_config.parent),
         "--config",
         str(app_config),
-        "--roi-config",
-        str(roi_config),
         "--device",
         str(device),
         "--use-roi",
