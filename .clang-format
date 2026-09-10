@@ -1,87 +1,169 @@
 ---
 Language: Cpp
-# BasedOnStyle:  Google
+BasedOnStyle: Google
+
+# --- Indentation & width ---
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 120
+ContinuationIndentWidth: 4
+ConstructorInitializerIndentWidth: 4
+NamespaceIndentation: None
 AccessModifierOffset: -4
+
+# --- Alignment ---
 AlignAfterOpenBracket: Align
-AlignConsecutiveMacros: true
-AlignConsecutiveAssignments: false
+AlignConsecutiveAssignments:
+  Enabled: true
+  AcrossEmptyLines: false
+  AcrossComments: false
+  PadOperators: true
 AlignConsecutiveDeclarations: false
+AlignConsecutiveMacros: true
 AlignEscapedNewlines: Left
 AlignOperands: true
-AlignTrailingComments: false
-AllowAllArgumentsOnNextLine: true
-AllowAllConstructorInitializersOnNextLine: true
-AllowAllParametersOfDeclarationOnNextLine: true
-AllowShortBlocksOnASingleLine: Never
-AllowShortCaseLabelsOnASingleLine: true
-AllowShortFunctionsOnASingleLine: All
-AllowShortLambdasOnASingleLine: All
-AllowShortIfStatementsOnASingleLine: WithoutElse
-AllowShortLoopsOnASingleLine: true
-AlwaysBreakAfterDefinitionReturnType: None
-AlwaysBreakAfterReturnType: None
-AlwaysBreakBeforeMultilineStrings: true
-AlwaysBreakTemplateDeclarations: Yes
-BinPackArguments: true
-BinPackParameters: true
+AlignTrailingComments: true
+
+# --- Braces (Attach / K&R) ---
+BreakBeforeBraces: Custom
 BraceWrapping:
   AfterCaseLabel: false
   AfterClass: false
-  AfterControlStatement: false
+  AfterControlStatement: Never
   AfterEnum: false
   AfterFunction: false
   AfterNamespace: false
-  AfterObjCDeclaration: false
   AfterStruct: false
   AfterUnion: false
   AfterExternBlock: false
   BeforeCatch: false
   BeforeElse: false
+  BeforeLambdaBody: false
+  BeforeWhile: false
   IndentBraces: false
   SplitEmptyFunction: true
   SplitEmptyRecord: true
   SplitEmptyNamespace: true
+
+# --- Short statements on single line ---
+AllowShortBlocksOnASingleLine: Never
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortEnumsOnASingleLine: true
+AllowShortFunctionsOnASingleLine: All
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLambdasOnASingleLine: All
+AllowShortLoopsOnASingleLine: true
+
+# --- All-on-one-line options ---
+AllowAllArgumentsOnNextLine: true
+AllowAllParametersOfDeclarationOnNextLine: true
+
+# --- Binary & ternary operators ---
 BreakBeforeBinaryOperators: None
-BreakBeforeBraces: Attach
-BreakBeforeInheritanceComma: false
-BreakInheritanceList: BeforeColon
 BreakBeforeTernaryOperators: true
-BreakConstructorInitializersBeforeComma: false
+SpaceBeforeAssignmentOperators: true
+
+# --- Templates ---
+AlwaysBreakTemplateDeclarations: Yes
+SpaceAfterTemplateKeyword: true
+
+# --- Constructor initializers ---
 BreakConstructorInitializers: BeforeColon
-BreakAfterJavaFieldAnnotations: false
-BreakStringLiterals: true
-ColumnLimit: 135
-CommentPragmas: "^ IWYU pragma:"
-CompactNamespaces: true
+BreakInheritanceList: BeforeColon
 ConstructorInitializerAllOnOneLineOrOnePerLine: true
-ConstructorInitializerIndentWidth: 4
-ContinuationIndentWidth: 4
-Cpp11BracedListStyle: true
-DeriveLineEnding: true
-# DerivePointerAlignment: true
-DisableFormat: false
-ExperimentalAutoDetectBinPacking: false
+SpaceBeforeCtorInitializerColon: true
+SpaceBeforeInheritanceColon: true
+
+# --- Namespaces ---
+CompactNamespaces: false
 FixNamespaceComments: true
-ForEachMacros:
-  - foreach
-  - Q_FOREACH
-  - BOOST_FOREACH
+
+# --- Includes ---
+SortIncludes: CaseInsensitive
+IncludeBlocks: Regroup
+IncludeCategories:
+  # Own header (auto-detected by IncludeIsMainRegex)
+  - Regex: '^"[A-Z].*\.hpp"'
+    Priority: 0
+  # Project headers
+  - Regex: '^"(common|video|detector|tracker|pose|smoother|output|tensorrt)/'
+    Priority: 1
+  - Regex: '^".*\.hpp"'
+    Priority: 1
+  # Nexusflow framework
+  - Regex: '^<nexusflow/'
+    Priority: 2
+  # C system headers
+  - Regex: '^<[a-z_]+\.h>'
+    Priority: 3
+  # C++ standard library
+  - Regex: '^<[a-z_]+>'
+    Priority: 4
+  # Third-party / external headers
+  - Regex: '^<.*\.h>'
+    Priority: 3
+  - Regex: '^<.*>'
+    Priority: 5
+IncludeIsMainRegex: '([-_](test|unittest))?$'
+
+# --- Spacing ---
+SpaceAfterCStyleCast: false
+SpaceAfterLogicalNot: false
+SpaceBeforeParens: ControlStatements
+SpaceBeforeRangeBasedForLoopColon: true
+SpaceBeforeSquareBrackets: false
+SpaceInEmptyBlock: false
+SpaceInEmptyParentheses: false
+SpacesBeforeTrailingComments: 4
+SpacesInAngles: false
+SpacesInCStyleCastParentheses: false
+SpacesInConditionalStatement: false
+SpacesInContainerLiterals: false
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+
+# --- Pointer & reference ---
+PointerAlignment: Left
+DerivePointerAlignment: false
+
+# --- Packing ---
+BinPackArguments: true
+BinPackParameters: true
+
+# --- Misc ---
+Cpp11BracedListStyle: true
 IndentCaseLabels: true
 IndentGotoLabels: true
 IndentPPDirectives: None
-IndentWidth: 4
 IndentWrappedFunctionNames: false
-JavaScriptQuotes: Leave
-JavaScriptWrapImports: true
 KeepEmptyLinesAtTheStartOfBlocks: false
-MacroBlockBegin: ""
-MacroBlockEnd: ""
 MaxEmptyLinesToKeep: 1
-NamespaceIndentation: None
-ObjCBinPackProtocolList: Never
-ObjCBlockIndentWidth: 4
-ObjCSpaceAfterProperty: false
-ObjCSpaceBeforeProtocolList: true
+ReflowComments: true
+SortUsingDeclarations: true
+Standard: c++14
+StatementMacros:
+  - NEXUSFLOW_REGISTER_MODULE
+  - Q_UNUSED
+MacroBlockBegin: ''
+MacroBlockEnd: ''
+ForEachMacros:
+  - foreach
+  - Q_FOREACH
+
+# --- Comments ---
+CommentPragmas: '^ (IWYU pragma|NOLINT|clang-format)'
+
+# --- String literals ---
+AlwaysBreakBeforeMultilineStrings: true
+BreakStringLiterals: true
+
+# --- Return type ---
+AlwaysBreakAfterDefinitionReturnType: None
+AlwaysBreakAfterReturnType: None
+PenaltyReturnTypeOnItsOwnLine: 200
+
+# --- Penalties ---
 PenaltyBreakAssignment: 2
 PenaltyBreakBeforeFirstCallParameter: 1
 PenaltyBreakComment: 300
@@ -89,64 +171,8 @@ PenaltyBreakFirstLessLess: 120
 PenaltyBreakString: 1000
 PenaltyBreakTemplateDeclaration: 10
 PenaltyExcessCharacter: 1000000
-PenaltyReturnTypeOnItsOwnLine: 200
-PointerAlignment: Left
-RawStringFormats:
-  - Language: Cpp
-    Delimiters:
-      - cc
-      - CC
-      - cpp
-      - Cpp
-      - CPP
-      - "c++"
-      - "C++"
-    CanonicalDelimiter: ""
-    BasedOnStyle: google
-  - Language: TextProto
-    Delimiters:
-      - pb
-      - PB
-      - proto
-      - PROTO
-    EnclosingFunctions:
-      - EqualsProto
-      - EquivToProto
-      - PARSE_PARTIAL_TEXT_PROTO
-      - PARSE_TEST_PROTO
-      - PARSE_TEXT_PROTO
-      - ParseTextOrDie
-      - ParseTextProtoOrDie
-    CanonicalDelimiter: ""
-    BasedOnStyle: google
-ReflowComments: true
-SortIncludes: true
-SortUsingDeclarations: true
-SpaceAfterCStyleCast: false
-SpaceAfterLogicalNot: false
-SpaceAfterTemplateKeyword: true
-SpaceBeforeAssignmentOperators: true
-SpaceBeforeCpp11BracedList: false
-SpaceBeforeCtorInitializerColon: true
-SpaceBeforeInheritanceColon: true
-SpaceBeforeParens: ControlStatements
-SpaceBeforeRangeBasedForLoopColon: true
-SpaceInEmptyBlock: false
-SpaceInEmptyParentheses: false
-SpacesBeforeTrailingComments: 1
-SpacesInAngles: false
-SpacesInConditionalStatement: false
-SpacesInContainerLiterals: true
-SpacesInCStyleCastParentheses: false
-SpacesInParentheses: false
-SpacesInSquareBrackets: false
-SpaceBeforeSquareBrackets: false
-Standard: Auto
-StatementMacros:
-  - Q_UNUSED
-  - QT_REQUIRE_VERSION
-TabWidth: 4
-UseCRLF: false
-UseTab: Never
----
 
+# --- Line endings ---
+DeriveLineEnding: true
+UseCRLF: false
+...

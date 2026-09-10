@@ -146,8 +146,10 @@ std::unique_ptr<Graph> CreateGraphFromYaml(const std::string& configPath) {
                 LOG_ERROR("Duplicate module name found: {} in '{}'", nodeName, configPath);
                 return nullptr;
             }
+
+            LOG_INFO("Created node '{}' with class name '{}'.", nodeName, moduleClassName);
         }
-        LOG_INFO("Created {} nodes from 'modules' section.", tempNodeMap.size());
+        LOG_INFO("Final Created {} nodes from 'modules' section.", tempNodeMap.size());
 
         // 3. 创建边，并计算度
         std::unordered_map<std::string, int> inDegree;
@@ -170,12 +172,14 @@ std::unique_ptr<Graph> CreateGraphFromYaml(const std::string& configPath) {
                     return nullptr;
                 }
 
+                LOG_INFO("Creating connection from '{}' to '{}'.", fromName, toName);
+
                 // 假设 addEdge 会将节点添加到 Graph 的内部 m_nodeMap 中
                 graph->addEdge(srcIt->second, dstIt->second);
                 outDegree[fromName]++;
                 inDegree[toName]++;
             }
-            LOG_INFO("Created {} connections.", connections_yaml.size());
+            LOG_INFO("Final Created {} connections.", connections_yaml.size());
         }
 
         // TODO:

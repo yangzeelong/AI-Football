@@ -11,6 +11,7 @@ set(INSTALL_ROOT ${PROJECT_ROOT}/install)
 ### Define options
 option(WITH_TESTING "Enable testing" ON)
 option(WITH_BENCHMARK "Enable benchmark" ON)
+option(WITH_EXAMPLES "Enable examples" ON)
 
 if(NOT DEFINED CMAKE_BUILD_TYPE)
   message(STATUS "No build type specified, defaulting to Release")
@@ -32,7 +33,7 @@ set_property(GLOBAL PROPERTY GLOBAL_TEST_SOURCES "")
 message(STATUS "Initialized global test sources list.")
 
 add_subdirectory(src)
-add_subdirectory(examples)
+add_subdirectory(app)
 
 # 
 if(WITH_TESTING)
@@ -42,4 +43,8 @@ endif()
 
 if(WITH_BENCHMARK)
   add_subdirectory(benchmarks)
+endif()
+
+if (WITH_EXAMPLES)
+  add_subdirectory(examples)
 endif()

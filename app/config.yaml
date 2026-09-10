@@ -1,0 +1,137 @@
+graph:
+  name: AIFootball-TensorRT
+
+  modules:
+    - name: VideoReader
+      class: VideoReader
+      config:
+        videoPath: data/input.mp4
+        stride: 1
+
+    - name: VideoDecoder
+      class: VideoDecoder
+      config:
+        pixelFormat: rgb24
+
+    - name: Detector
+      class: RFDetrDetector
+      config:
+        enginePath: models/rfdetr-small.engine
+        inputBindingName: image
+        outputBindingName: detections    # baked [B,N,6]; auto-detected if absent
+        logitsBindingName: pred_logits   # raw format fallback
+        boxesBindingName: pred_boxes     # raw format fallback
+        inputSize: 336                   # small=336, base=448, medium=560, large=960
+        numClasses: 80
+        numQueries: 300
+        confidenceThreshold: 0.25
+        targetClasses: [0, 32]           # 0 = person, 32 = sports ball
+        # ImageNet normalization (applied after /255)
+        meanR: 0.485
+        meanG: 0.456
+        meanB: 0.406
+        stdR: 0.229
+        stdG: 0.224
+        stdB: 0.225
+        # Batching (1 = no batching, process immediately)
+        maxBatchSize: 1
+        batchTimeoutMs: 0                # 0 = no timeout, flush only when full or EOF
+        maxRetryNum: 0                   # 0 = disabled; >0 = force flush after N frames (anti-starvation)
+
+    - name: PersonTracker
+      class: ByteTracker
+      config:
+        trackActivationThreshold: 0.25
+        secondAssociationThreshold: 0.10
+        minimumMatchingThreshold: 0.80
+        lostTrackBuffer: 30
+        personClassId: 0
+        ballClassId: 32
+
+    - name: PoseEstimator
+      class: HRNetPoseEstimator
+      config:
+        enginePath: models/hrnet-w48-dark-wholebody.engine
+        inputBindingName: images
+        outputBindingName: heatmaps
+        inputWidth: 288                  # W
+        inputHeight: 384                 # H
+        heatmapWidth: 72                 # W/4
+        heatmapHeight: 96                # H/4
+        numKeypoints: 133                # COCO-WholeBody
+        stride: 4
+        useDark: true                    # DARK sub-pixel refinement
+        poseBoxExpansion: true
+        xPadRatio: 0.15
+        yPadRatio: 0.25
+        minPadPx: 12.0
+        maxBatch: 16
+        keypointConfThr: 0.05
+        # ImageNet normalization (0..255 scale)
+        meanR: 123.675
+        meanG: 116.28
+        meanB: 103.53
+        stdR: 58.395
+        stdG: 57.12
+        stdB: 57.375
+
+    - name: KeypointSmoother
+      class: KeypointSmoother
+      config:
+        enabled: true
+        method: skeleton
+        staticWindow: 8
+        staticMotionPx: 2.5
+        deadbandPx: 0.8
+        lowConfidence: 0.3
+        lowConfidenceAlpha: 0.12
+        staticAlpha: 0.25
+        movingAlpha: 0.65
+        skeletonAnchorAlpha: 0.35
+        skeletonEndpointAlpha: 0.12
+        skeletonMovingEndpointAlpha: 0.45
+        skeletonFastEndpointAlpha: 0.22
+        skeletonFastMovingEndpointAlpha: 0.62
+        skeletonFastStaticStepPx: 5.0
+        skeletonMaxStaticStepPx: 2.5
+        maxLimbStretchRatio: 1.35
+
+    - name: FootballTracker
+      class: FootballTracker
+      config:
+        maxMissedFrames: 12
+        maxAssociationDistancePx: 180.0
+        confidenceDecay: 0.75
+        ballClassId: 32
+
+    - name: ObservationWriter
+      class: ObservationWriter
+      config:
+        outputPath: output/observations.jsonl
+        cameraId: C1
+        videoPath: data/input.mp4
+        fps: 25.0
+        stride: 1
+
+    - name: AlarmPusher
+      class: AlarmPusher
+      config:
+        savePath: result.txt
+
+  connections:
+    - from: VideoReader
+      to: VideoDecoder
+    - from: VideoDecoder
+      to: Detector
+    - from: Detector
+      to: PersonTracker
+    - from: PersonTracker
+      to: PoseEstimator
+    - from: PoseEstimator
+      to: KeypointSmoother
+    - from: KeypointSmoother
+      to: FootballTracker
+    - from: FootballTracker
+      to: ObservationWriter
+    - from: FootballTracker
+      to: AlarmPusher
