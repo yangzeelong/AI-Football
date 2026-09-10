@@ -66,7 +66,7 @@ graph:
 #include "my_module/MockInputModule.hpp"    // Include your custom module headers
 #include "my_module/MockProcessModule.hpp"
 #include "my_module/MockOutputModule.hpp"
-#include "utils/logging.hpp"               // Your logging utility
+#include "nexusflow/Logging.hpp"               // Your logging utility
 
 #include <iostream>
 #include <chrono>

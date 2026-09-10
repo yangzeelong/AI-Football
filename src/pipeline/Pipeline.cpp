@@ -5,7 +5,7 @@
 #include "common/ViewPtr.hpp"
 #include "core/Worker.hpp"
 #include "dispatcher/Dispatcher.hpp"
-#include "utils/logging.hpp"
+#include "nexusflow/Logging.hpp"
 #include <nexusflow/ModuleFactory.hpp>
 
 #include "impl/PipelineImpl.hpp"

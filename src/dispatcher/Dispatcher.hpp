@@ -5,7 +5,7 @@
 #include "common/ViewPtr.hpp"
 #include "nexusflow/Config.hpp"
 #include "nexusflow/Message.hpp"
-#include "utils/logging.hpp"
+#include "nexusflow/Logging.hpp"
 
 #include <cstddef>
 #include <memory>

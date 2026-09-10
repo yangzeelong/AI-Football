@@ -1,7 +1,7 @@
 
 #include "MyHeadPersonFusionModule.hpp"
 #include "../MyMessage.hpp"
-#include "../src/utils/logging.hpp" // TODO: remove
+#include <nexusflow/Logging.hpp>
 #include "nexusflow/ErrorCode.hpp"
 #include "nexusflow/Message.hpp"
 #include <unordered_map>

@@ -1,6 +1,6 @@
 
 #include "MockOutputModule.hpp"
-#include "../src/utils/logging.hpp"
+#include  <nexusflow/Logging.hpp>
 #include "MyMessage.hpp"
 
 MockOutputModule::MockOutputModule(const std::string& name) : Module(name) {

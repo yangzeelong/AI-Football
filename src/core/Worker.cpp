@@ -1,7 +1,7 @@
 #include "Worker.hpp"
 #include "nexusflow/ErrorCode.hpp"
 #include "nexusflow/Message.hpp"
-#include "utils/logging.hpp"
+#include "nexusflow/Logging.hpp"
 #include <chrono>
 #include <memory>
 #include <string>

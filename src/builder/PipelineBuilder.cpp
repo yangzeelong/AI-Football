@@ -1,5 +1,5 @@
 #include "base/Graph.hpp" // Required to create the Graph object
-#include "utils/logging.hpp"
+#include "nexusflow/Logging.hpp"
 
 #include <nexusflow/Pipeline.hpp>
 #include <nexusflow/PipelineBuilder.hpp>

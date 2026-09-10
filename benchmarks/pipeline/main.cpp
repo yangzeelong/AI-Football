@@ -1,4 +1,4 @@
-#include "../src/utils/logging.hpp"
+#include  <nexusflow/Logging.hpp>
 #include "nexusflow/Message.hpp"
 #include "nexusflow/Module.hpp"
 #include "nexusflow/Pipeline.hpp"
@@ -74,7 +74,7 @@ private:
 // --- 3. The Main Benchmark Function ---
 
 int main() {
-    utils::logger::InitializeGlobalLogger({utils::logger::LogLevel::INFO});
+    logger::InitializeGlobalLogger({logger::LogLevel::INFO});
     LOG_INFO("--- NexusFlow Performance Benchmark ---");
 
     const int BENCHMARK_DURATION_S = 10;

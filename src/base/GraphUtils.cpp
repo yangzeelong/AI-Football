@@ -3,7 +3,7 @@
 #include "base/Graph.hpp"
 #include "nexusflow/Any.hpp"
 #include "nexusflow/Config.hpp"
-#include "utils/logging.hpp"
+#include "nexusflow/Logging.hpp"
 #include "yaml-cpp/node/node.h"
 #include "yaml-cpp/yaml.h"
 

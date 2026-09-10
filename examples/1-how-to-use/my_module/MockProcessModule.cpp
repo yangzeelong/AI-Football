@@ -1,7 +1,7 @@
 #include "MockProcessModule.hpp"
-#include "../src/utils/logging.hpp"
 #include "MyMessage.hpp"
 #include "nexusflow/Message.hpp"
+#include <nexusflow/Logging.hpp>
 
 MockProcessModule::MockProcessModule(const std::string& name) : Module(name) {
     LOG_TRACE("MockProcessModule constructor, name={}", name);

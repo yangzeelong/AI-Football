@@ -4,13 +4,12 @@
 #include "base/Define.hpp"
 #include "common/ViewPtr.hpp"
 #include "nexusflow/ErrorCode.hpp"
+#include "nexusflow/Logging.hpp"
 #include "nexusflow/Module.hpp"
-#include "utils/logging.hpp"
 
 #include <atomic>
 #include <chrono>
 #include <memory>
-#include <thread>
 #include <unordered_map>
 
 namespace nexusflow { namespace core {

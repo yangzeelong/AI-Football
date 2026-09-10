@@ -1,7 +1,7 @@
 
 #include "MyStreamPullerModule.hpp"
 #include "../MyMessage.hpp"
-#include "../src/utils/logging.hpp" // TODO: remove
+#include <nexusflow/Logging.hpp>
 #include "nexusflow/Message.hpp"
 #include <chrono>
 #include <thread>

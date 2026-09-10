@@ -3,7 +3,7 @@
 #include "nexusflow/Config.hpp"
 #include "nexusflow/ErrorCode.hpp"
 #include "nexusflow/Message.hpp"
-#include "utils/logging.hpp"
+#include "nexusflow/Logging.hpp"
 
 namespace nexusflow {
 

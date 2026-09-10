@@ -1,4 +1,4 @@
-#include "../src/utils/logging.hpp" // TODO: remove
+#include <nexusflow/Logging.hpp>
 #include <chrono>
 #include <iostream>
 
@@ -53,10 +53,10 @@ void runWithYamlConfig(const std::string& configPath) {
 }
 
 int main(int argc, char* argv[]) {
-    utils::logger::LoggerParam params;
-    // params.logLevel = utils::logger::LogLevel::DEBUG;
-    params.logLevel = utils::logger::LogLevel::INFO;
-    utils::logger::InitializeGlobalLogger(params);
+    logger::LoggerParam params;
+    // params.logLevel = logger::LogLevel::DEBUG;
+    params.logLevel = logger::LogLevel::INFO;
+    logger::InitializeGlobalLogger(params);
 
     if (argc < 2) {
         LOG_ERROR("Usage: {} <config.yaml>");

@@ -1,5 +1,5 @@
 #include "nexusflow/Config.hpp"
-#include "utils/logging.hpp" // Assuming you have a logger
+#include "nexusflow/Logging.hpp"
 #include <nexusflow/ModuleFactory.hpp>
 #include <unordered_map>
 
