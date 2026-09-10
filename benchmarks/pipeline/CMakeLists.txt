@@ -1,0 +1,2 @@
+add_executable(pipeline_benchmark main.cpp)
+target_link_libraries(pipeline_benchmark PRIVATE nexusflow)

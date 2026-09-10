@@ -1,0 +1,39 @@
+graph:
+  name: VideoAnalyticsPipeline
+
+  modules:
+    - name: StreamPuller
+      class: MyStreamPullerModule
+
+    - name: VideoDecoder
+      class: MyDecoderModule
+      config:
+        skipInterval: 25
+
+    - name: PersonDetector
+      class: MyPersonDetectorModule
+      config:
+        modelPath: your/path/to/model1
+
+    - name: BehaviorAnalyzer
+      class: MyBehaviorAnalyzerModule
+      config:
+        modelPath: your/path/to/model1
+
+    - name: AlarmPusher
+      class: MyAlarmPusherModule
+      config:
+        savePath: result.txt
+
+  connections:
+    - from: StreamPuller
+      to: VideoDecoder
+
+    - from: VideoDecoder
+      to: PersonDetector
+
+    - from: PersonDetector
+      to: BehaviorAnalyzer
+
+    - from: BehaviorAnalyzer
+      to: AlarmPusher

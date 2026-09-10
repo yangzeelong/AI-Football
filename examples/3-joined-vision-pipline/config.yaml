@@ -1,0 +1,58 @@
+graph:
+  name: VideoAnalyticsPipeline
+
+  modules:
+    - name: StreamPuller
+      class: MyStreamPullerModule
+
+    - name: VideoDecoder
+      class: MyDecoderModule
+      config:
+        skipInterval: 25
+
+    - name: PersonDetector
+      class: MyPersonDetectorModule
+      config:
+        modelPath: your/path/to/model1
+
+    - name: HeadDetector
+      class: MyHeadDetectorModule
+      config:
+        modelPath: your/path/to/model1
+
+    - name: HeadPersonFusion
+      class: MyHeadPersonFusionModule
+      config:
+        syncInputs: true # Sync all inputs, by `MessageMeta.messageId`
+
+    - name: BehaviorAnalyzer
+      class: MyBehaviorAnalyzerModule
+      config:
+        modelPath: your/path/to/model1
+
+    - name: AlarmPusher
+      class: MyAlarmPusherModule
+      config:
+        savePath: result.txt
+
+  connections:
+    - from: StreamPuller
+      to: VideoDecoder
+
+    - from: VideoDecoder
+      to: HeadDetector
+
+    - from: VideoDecoder
+      to: PersonDetector
+
+    - from: HeadDetector
+      to: HeadPersonFusion
+
+    - from: PersonDetector
+      to: HeadPersonFusion
+
+    - from: HeadPersonFusion
+      to: BehaviorAnalyzer
+
+    - from: BehaviorAnalyzer
+      to: AlarmPusher

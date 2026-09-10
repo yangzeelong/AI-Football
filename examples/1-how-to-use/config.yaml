@@ -1,0 +1,30 @@
+graph:
+  name: VideoAnalyticsPipeline
+
+  modules:
+    - name: InputNode # 模块的唯一实例名
+      class: MockInputModule # 在模块工厂中注册的类名
+      config:
+        send_interval_ms: 200 # 5fps
+
+    - name: ProcessNode1
+      class: MockProcessModule
+
+    - name: ProcessNode2
+      class: MockProcessModule
+
+    - name: OutputNode
+      class: MockOutputModule
+
+  connections:
+    - from: InputNode
+      to: ProcessNode1
+
+    - from: InputNode
+      to: ProcessNode2
+
+    - from: ProcessNode1
+      to: OutputNode
+
+    - from: ProcessNode2
+      to: OutputNode

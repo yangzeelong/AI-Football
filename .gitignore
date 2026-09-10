@@ -1,0 +1,9 @@
+.*
+build
+!README.md
+!.clang-format
+!.clangd
+!.gitignore
+!CMakeLists.txt
+
+
