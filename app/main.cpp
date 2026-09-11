@@ -1,3 +1,4 @@
+#include "module/common/CommandParser.hpp"
 #include "module/common/Module.hpp"
 #include "module/common/PipelineCompletionSignal.hpp"
 #include "nexusflow/Logging.hpp"
@@ -5,11 +6,7 @@
 #include <atomic>
 #include <chrono>
 #include <csignal>
-#include <cstdlib>
-#include <cstring>
-#include <iostream>
 #include <string>
-#include <thread>
 
 using namespace nexusflow;
 
@@ -31,7 +28,7 @@ static void installSignalHandlers() {
 }
 
 // ---------------------------------------------------------------------------
-// Helper Functions
+// Pipeline execution
 // ---------------------------------------------------------------------------
 
 void registerAllModules() {}
@@ -45,7 +42,6 @@ void executePipeline(Pipeline& pipeline, int maxSeconds) {
     LOG_INFO("Pipeline starting...");
     pipeline.Start();
 
-    // Register a callback so we can log the moment the terminal module fires.
     PipelineCompletionSignal::Instance().SetOnComplete([] {
         LOG_INFO("Pipeline completion signal received (EOF or SIGINT)");
     });
@@ -70,67 +66,70 @@ void executePipeline(Pipeline& pipeline, int maxSeconds) {
     pipeline.DeInit();
 }
 
-void runWithYamlConfig(const std::string& configPath, int maxSeconds) {
-    LOG_INFO("--- Running in Declarative Mode (from YAML) ---");
-    registerAllModules();
-    auto pipeline = Pipeline::CreateFromYaml(configPath);
-    if (pipeline == nullptr) {
-        throw std::runtime_error("Failed to create pipeline from YAML config.");
-    }
-    executePipeline(*pipeline, maxSeconds);
-}
-
 // ---------------------------------------------------------------------------
-// CLI parsing
+// main
 // ---------------------------------------------------------------------------
-
-static void printUsage(const char* prog) {
-    std::cerr << "Usage: " << prog << " <config.yaml> [--max-seconds N]\n"
-              << "  --max-seconds N   Cap the run time (default: wait for EOF indefinitely)\n"
-              << "  --help            Show this message\n";
-}
 
 int main(int argc, char* argv[]) {
-    logger::LoggerParam params;
-    params.logLevel = logger::LogLevel::INFO;
-    logger::InitializeGlobalLogger(params);
+    // --- CLI (Python argparse style) ---
+    app::CommandParser cli(argc, argv);
+    cli.AddPositional("config", "Path to config.yaml", true);
+    cli.AddArgument("--video_path",   "-v", "Override video path from config");
+    cli.AddArgument("--output_dir",   "-o", "Override output directory");
+    cli.AddArgument("--stop_frame",   "-s", "Stop after N frames (0 = no limit)", false, "0");
+    cli.AddArgument("--max_seconds",  "-t", "Cap run time in seconds (0 = wait for EOF)", false, "0");
+    cli.AddArgument("--stride",       "-S", "Process every Nth frame (1 = all frames)", false, "1");
+    cli.AddArgument("--target_fps",   "-f", "Target processing FPS (0 = native speed)", false, "0");
+    cli.AddArgument("--device",       "-d", "CUDA device id", false, "0");
+    cli.AddArgument("--verbose",      "-V", "Enable DEBUG-level logging", false, app::CommandParser::FlagMarker());
+    cli.AddArgument("--quiet",        "-q", "Suppress INFO-level logging", false, app::CommandParser::FlagMarker());
+
+    if (!cli.Parse()) {
+        cli.PrintHelp();
+        return -1;
+    }
+    if (cli.IsHelpRequested()) {
+        cli.PrintHelp();
+        return 0;
+    }
+
+    // --- Logger setup ---
+    logger::LoggerParam logParams;
+    if (cli.IsFlagSet("verbose"))     logParams.logLevel = logger::LogLevel::DEBUG;
+    else if (cli.IsFlagSet("quiet"))  logParams.logLevel = logger::LogLevel::WARN;
+    else                              logParams.logLevel = logger::LogLevel::INFO;
+    logger::InitializeGlobalLogger(logParams);
 
     installSignalHandlers();
 
-    if (argc < 2) {
-        printUsage(argv[0]);
-        return -1;
-    }
+    // --- Extract params ---
+    std::string configPath = cli.Get("config");
+    int maxSeconds  = cli.GetInt("max_seconds");
+    int stopFrame   = cli.GetInt("stop_frame");
+    int stride      = cli.GetInt("stride");
+    int targetFps   = cli.GetInt("target_fps");
+    int deviceId    = cli.GetInt("device");
+    std::string videoPath = cli.Get("video_path");
+    std::string outputDir = cli.Get("output_dir");
 
-    std::string yamlConfigPath;
-    int maxSeconds = 0;  // 0 => wait forever
+    LOG_INFO("=== AI-Football Pipeline ===");
+    LOG_INFO("  config:       {}", configPath);
+    if (!videoPath.empty())  LOG_INFO("  video_path:   {}", videoPath);
+    if (!outputDir.empty())  LOG_INFO("  output_dir:   {}", outputDir);
+    if (stopFrame > 0)       LOG_INFO("  stop_frame:   {}", stopFrame);
+    if (maxSeconds > 0)      LOG_INFO("  max_seconds:  {}", maxSeconds);
+    if (stride > 1)          LOG_INFO("  stride:       {}", stride);
+    if (targetFps > 0)       LOG_INFO("  target_fps:   {}", targetFps);
+    LOG_INFO("  device:       cuda:{}", deviceId);
 
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-        if (arg == "--help" || arg == "-h") {
-            printUsage(argv[0]);
-            return 0;
-        } else if (arg == "--max-seconds" && i + 1 < argc) {
-            maxSeconds = std::atoi(argv[++i]);
-        } else if (arg.rfind("--max-seconds=", 0) == 0) {
-            maxSeconds = std::atoi(arg.c_str() + std::strlen("--max-seconds="));
-        } else if (!arg.empty() && arg[0] != '-') {
-            yamlConfigPath = arg;
-        } else {
-            std::cerr << "Unknown argument: " << arg << "\n";
-            printUsage(argv[0]);
-            return -1;
-        }
-    }
-
-    if (yamlConfigPath.empty()) {
-        std::cerr << "Error: config.yaml path is required\n";
-        printUsage(argv[0]);
-        return -1;
-    }
-
+    // --- Run pipeline ---
     try {
-        runWithYamlConfig(yamlConfigPath, maxSeconds);
+        registerAllModules();
+        auto pipeline = Pipeline::CreateFromYaml(configPath);
+        if (pipeline == nullptr) {
+            throw std::runtime_error("Failed to create pipeline from YAML config.");
+        }
+        executePipeline(*pipeline, maxSeconds);
     } catch (const std::exception& e) {
         LOG_ERROR("Fatal: {}", e.what());
         return -2;
