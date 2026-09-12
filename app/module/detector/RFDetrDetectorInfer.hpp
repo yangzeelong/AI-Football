@@ -3,6 +3,7 @@
 #include "inference/IInferenceEngine.hpp"
 
 #include <memory>
+#include <cstdint>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -57,6 +58,7 @@ public:
         const uint8_t* rgb;
         int width;
         int height;
+        uint64_t frameId = 0;
     };
 
     bool InferBatch(const std::vector<FrameInput>& frames,
@@ -65,8 +67,9 @@ public:
 private:
     enum class OutputFormat { Baked, Raw };
 
-    struct LetterboxInfo {
-        float scale = 1.0f;
+    struct ResizeInfo {
+        float scaleX = 1.0f;
+        float scaleY = 1.0f;
         int   dx = 0, dy = 0;
     };
 
@@ -76,13 +79,13 @@ private:
         int   classId;
     };
 
-    static LetterboxInfo ComputeLetterbox(int srcW, int srcH, int dstW, int dstH);
+    static ResizeInfo ComputeResize(int srcW, int srcH, int dstW, int dstH);
     bool PreprocessToHost(const uint8_t* rgb, int srcW, int srcH,
-                          LetterboxInfo& lbOut, float* dstChw) const;
+                          ResizeInfo& resizeOut, float* dstChw) const;
     void DecodeBaked(const float* out, int numQueries, std::vector<RawBox>& boxesOut) const;
     void DecodeRaw(const float* logits, const float* boxes,
                    int numQueries, int numClassesPlus1, std::vector<RawBox>& boxesOut) const;
-    void Unletterbox(std::vector<RawBox>& boxes, const LetterboxInfo& lb,
+    void UndoResize(std::vector<RawBox>& boxes, const ResizeInfo& resize,
                      int origW, int origH) const;
 
     Param m_param;

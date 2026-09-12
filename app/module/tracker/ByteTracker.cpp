@@ -219,8 +219,8 @@ ns::ErrorCode ByteTracker::Configure(const ns::Config& config) {
     m_param.secondAssociationThreshold = config.GetValueOrDefault<float>("secondAssociationThreshold", 0.10f);
     m_param.minimumMatchingThreshold   = config.GetValueOrDefault<float>("minimumMatchingThreshold", 0.80f);
     m_param.lostTrackBuffer            = config.GetValueOrDefault<int>("lostTrackBuffer", 30);
-    m_param.personClassId              = config.GetValueOrDefault<int>("personClassId", 0);
-    m_param.ballClassId                = config.GetValueOrDefault<int>("ballClassId", 32);
+    m_param.personClassId              = config.GetValueOrDefault<int>("personClassId", 1);
+    m_param.ballClassId                = config.GetValueOrDefault<int>("ballClassId", 37);
     LOG_INFO("ByteTracker config: high>={}, low>={}, iouGate={}, lostBuf={}",
              m_param.trackActivationThreshold, m_param.secondAssociationThreshold,
              m_param.minimumMatchingThreshold, m_param.lostTrackBuffer);

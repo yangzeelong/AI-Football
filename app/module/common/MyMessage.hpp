@@ -103,14 +103,14 @@ struct FrameMessage {
 //
 // Uses float coordinates in the *original frame* space so that downstream
 // modules (tracker, pose estimator, ROI filter) do not need to know about
-// the letterbox / resize transform applied inside the detector.
+// the resize transform applied inside the detector.
 struct Detection {
     float x0 = 0.0f;
     float y0 = 0.0f;
     float x1 = 0.0f;
     float y1 = 0.0f;
     float score = 0.0f;
-    int   classId = -1;   // COCO class index (0 = person, 32 = sports ball, ...)
+    int   classId = -1;   // RF-DETR COCO index (1 = person, 37 = sports ball, ...)
     int   trackId = -1;   // Filled by tracker; -1 for raw detections
 
     float width()  const { return x1 - x0; }

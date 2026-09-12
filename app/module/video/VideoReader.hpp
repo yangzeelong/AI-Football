@@ -48,6 +48,7 @@ private:
     uint32_t m_packetIdx = 0;
     uint32_t m_sentIdx = 0;
     bool m_endOfFile = false;
+    bool m_eofSent = false;
     bool m_streamInfoSent = false;
 };
 

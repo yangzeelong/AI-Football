@@ -32,4 +32,5 @@
 
 // --- Output sinks ---
 #include "output/ObservationWriter.hpp"
+#include "output/VideoRenderer.hpp"
 #include "output/AlarmPusher.hpp"

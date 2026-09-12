@@ -41,7 +41,7 @@ private:
         int   maxMissedFrames = 12;
         float maxAssociationDistancePx = 180.0f;
         float confidenceDecay = 0.75f;
-        int   ballClassId = 32;
+        int   ballClassId = 37;
     } m_param;
 
     struct TrackState {

@@ -11,6 +11,7 @@ extern "C" {
 
 #include <chrono>
 #include <cstring>
+#include <thread>
 
 // ---------------------------------------------------------------------------
 
@@ -109,12 +110,18 @@ void VideoReader::Process(nexusflow::Message& inputMessage) {
 
     // EOF: send end marker once
     if (m_endOfFile) {
+        if (m_eofSent) {
+            // Source workers continue polling until Pipeline::Stop(). Avoid a
+            // hot loop after the single end marker has been delivered.
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            return;
+        }
         PacketMessage endMsg;
         endMsg.isEnd = true;
         endMsg.packetIndex = m_sentIdx;
         Broadcast(nexusflow::Message(std::move(endMsg)));
         LOG_INFO("VideoReader: EOF, sent end marker after {} packets", m_sentIdx);
-        m_endOfFile = false;
+        m_eofSent = true;
         return;
     }
 
@@ -199,5 +206,6 @@ void VideoReader::Cleanup() {
     m_packetIdx = 0;
     m_sentIdx = 0;
     m_endOfFile = false;
+    m_eofSent = false;
     m_streamInfoSent = false;
 }

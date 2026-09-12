@@ -186,11 +186,22 @@ bool TensorRTEngine::SetInputFromHost(const std::string& name,
     // Ensure device buffer is large enough.
     if (!EnsureInputBuffer(name, bytes)) return false;
 
-    // Set dynamic shape.
-    nvinfer1::Dims trtDims = ConvertToTrtDims(dims);
-    if (!m_context->setInputShape(name.c_str(), trtDims)) {
-        LOG_ERROR("TensorRTEngine: setInputShape failed for '{}'", name);
-        return false;
+    // Static ONNX inputs already carry their shape in the engine. Dynamic
+    // inputs need an execution-context shape before enqueueV3.
+    const nvinfer1::Dims engineDims = m_engine->getTensorShape(name.c_str());
+    bool dynamic = false;
+    for (int i = 0; i < engineDims.nbDims; ++i) {
+        if (engineDims.d[i] < 0) {
+            dynamic = true;
+            break;
+        }
+    }
+    if (dynamic) {
+        nvinfer1::Dims trtDims = ConvertToTrtDims(dims);
+        if (!m_context->setInputShape(name.c_str(), trtDims)) {
+            LOG_ERROR("TensorRTEngine: setInputShape failed for '{}'", name);
+            return false;
+        }
     }
 
     // H2D copy.

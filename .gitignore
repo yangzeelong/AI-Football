@@ -6,4 +6,9 @@ build
 !.gitignore
 !CMakeLists.txt
 
+# Runtime and conversion artifacts.
+output/
+tools/model_conversion/__pycache__/
 
+# Local test media.
+data/

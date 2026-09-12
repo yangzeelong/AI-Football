@@ -76,7 +76,7 @@ void Worker::WorkLoop() {
             if (isSourceModule) {
                 // Source Module Loop
                 Message emptyMessage;
-                m_modulePtr->Process(emptyMessage);
+                m_modulePtr->ProcessTimed(emptyMessage);
             } else {
                 // Sink or Filter/Transformer Module Loop
                 auto batchMessage = PullBatchMessage(kMaxBatchSize, kBatchTimeout);

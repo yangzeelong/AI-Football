@@ -5,6 +5,7 @@
 #include <chrono> // <-- [新增] 包含 <chrono> 头文件
 #include <cstdint>
 #include <memory>
+#include <map>
 #include <mutex>
 #include <sstream>
 #include <stdexcept> // for std::runtime_error
@@ -17,9 +18,10 @@
 namespace nexusflow {
 
 struct MessageMeta {
-    uint64_t messageId; // The unique identifier for the message
-    uint64_t timestamp; // The timestamp when the message was created
+    uint64_t messageId = 0; // The unique identifier for the message
+    uint64_t timestamp = 0; // The timestamp when the message was created
     std::string sourceName; // The name of the source of the message
+    std::map<std::string, double> moduleTimingMs;
 };
 
 /**

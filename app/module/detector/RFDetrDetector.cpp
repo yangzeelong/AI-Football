@@ -35,9 +35,16 @@ ns::ErrorCode RFDetrDetector::Configure(const ns::Config& config) {
     m_inferParam.stdG                = config.GetValueOrDefault<float>("stdG", 0.224f);
     m_inferParam.stdB                = config.GetValueOrDefault<float>("stdB", 0.225f);
 
-    auto classes = config.GetValueOrDefault<std::vector<int>>("targetClasses", std::vector<int>{});
+    // GraphUtils stores YAML sequences as vector<Any>. Convert the integer
+    // class ids explicitly instead of silently falling back to an empty set.
+    auto classValues = config.GetValueOrDefault<std::vector<nexusflow::Any>>(
+        "targetClasses", std::vector<nexusflow::Any>{});
     m_inferParam.targetClasses.clear();
-    for (int c : classes) m_inferParam.targetClasses.insert(c);
+    for (const auto& value : classValues) {
+        if (const auto* id = value.get<int>()) {
+            m_inferParam.targetClasses.insert(*id);
+        }
+    }
 
     // Batch params → used by this Module
     m_batchParam.maxBatchSize   = config.GetValueOrDefault<int>("maxBatchSize", 1);
@@ -47,6 +54,7 @@ ns::ErrorCode RFDetrDetector::Configure(const ns::Config& config) {
     LOG_INFO("RFDetrDetector: engine={}, inputSize={}, maxBatch={}, timeout={}ms, maxRetry={}",
              m_inferParam.enginePath, m_inferParam.inputSize,
              m_batchParam.maxBatchSize, m_batchParam.batchTimeoutMs, m_batchParam.maxRetryNum);
+    LOG_INFO("RFDetrDetector: targetClasses count={}", m_inferParam.targetClasses.size());
     return ns::ErrorCode::SUCCESS;
 }
 
@@ -109,12 +117,13 @@ void RFDetrDetector::FlushBatch() {
         inputs[i].rgb    = reinterpret_cast<const uint8_t*>(bf.videoFrame.frameData.data());
         inputs[i].width  = bf.videoFrame.width;
         inputs[i].height = bf.videoFrame.height;
+        inputs[i].frameId = bf.videoFrame.frameId;
         if (bf.videoFrame.frameData.empty() || bf.videoFrame.channels != 3) {
             inputs[i].rgb = nullptr;
         }
     }
 
-    // Run inference.
+    // Run inference, including host preprocessing and postprocessing.
     std::vector<std::vector<detector::Detection>> results;
     bool ok = m_infer && m_infer->IsReady() && m_infer->InferBatch(inputs, results);
 
@@ -138,8 +147,8 @@ void RFDetrDetector::FlushBatch() {
                 d.trackId = -1;
                 out.detections.push_back(d);
                 out.rawCounts.total++;
-                if (det.classId == 0) out.rawCounts.person++;
-                else if (det.classId == 32) out.rawCounts.ball++;
+                if (det.classId == 1) out.rawCounts.person++;
+                else if (det.classId == 37) out.rawCounts.ball++;
             }
         }
 

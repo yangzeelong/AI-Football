@@ -5,7 +5,7 @@ graph:
     - name: VideoReader
       class: VideoReader
       config:
-        videoPath: data/input.mp4
+        videoPath: data/射门1-1080p60.mov
         stride: 1
 
     - name: VideoDecoder
@@ -16,16 +16,16 @@ graph:
     - name: Detector
       class: RFDetrDetector
       config:
-        enginePath: models/rfdetr-small.engine
+        enginePath: /home/hx1/yzl/Work/AI-Football/models/rfdetr/rf-detr-small-960.engine
         inputBindingName: image
         outputBindingName: detections    # baked [B,N,6]; auto-detected if absent
         logitsBindingName: pred_logits   # raw format fallback
         boxesBindingName: pred_boxes     # raw format fallback
-        inputSize: 336                   # small=336, base=448, medium=560, large=960
+        inputSize: 960                   # Matches the resolution comparison experiment
         numClasses: 80
         numQueries: 300
         confidenceThreshold: 0.25
-        targetClasses: [0, 32]           # 0 = person, 32 = sports ball
+        targetClasses: [1, 37]           # RF-DETR COCO ids: 1 = person, 37 = sports ball
         # ImageNet normalization (applied after /255)
         meanR: 0.485
         meanG: 0.456
@@ -45,13 +45,13 @@ graph:
         secondAssociationThreshold: 0.10
         minimumMatchingThreshold: 0.80
         lostTrackBuffer: 30
-        personClassId: 0
-        ballClassId: 32
+        personClassId: 1
+        ballClassId: 37
 
     - name: PoseEstimator
       class: HRNetPoseEstimator
       config:
-        enginePath: models/hrnet-w48-dark-wholebody.engine
+        enginePath: /home/hx1/yzl/Work/AI-Football/models/mmpose/hrnet/hrnet-w48-dark.engine
         inputBindingName: images
         outputBindingName: heatmaps
         inputWidth: 288                  # W
@@ -102,15 +102,23 @@ graph:
         maxMissedFrames: 12
         maxAssociationDistancePx: 180.0
         confidenceDecay: 0.75
-        ballClassId: 32
+        ballClassId: 37
+
+    - name: VideoRenderer
+      class: VideoRenderer
+      config:
+        enabled: true
+        outputPath: output/rendered.mp4
+        fps: 60.0
+        stride: 1
 
     - name: ObservationWriter
       class: ObservationWriter
       config:
         outputPath: output/observations.jsonl
         cameraId: C1
-        videoPath: data/input.mp4
-        fps: 25.0
+        videoPath: data/射门1-1080p60.mov
+        fps: 60.0
         stride: 1
 
     - name: AlarmPusher
@@ -132,6 +140,8 @@ graph:
     - from: KeypointSmoother
       to: FootballTracker
     - from: FootballTracker
+      to: VideoRenderer
+    - from: VideoRenderer
       to: ObservationWriter
-    - from: FootballTracker
+    - from: VideoRenderer
       to: AlarmPusher

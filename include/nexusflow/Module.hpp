@@ -7,6 +7,8 @@
 #include <nexusflow/TypeTraits.hpp>
 
 #include <memory>
+#include <map>
+#include <vector>
 #include <unordered_map>
 
 // --- Forward Declarations ---
@@ -17,6 +19,7 @@ class Dispatcher;
 
 namespace nexusflow {
 class Pipeline;
+namespace core { class Worker; }
 }
 
 namespace nexusflow {
@@ -82,6 +85,15 @@ public:
      */
     virtual void ProcessBatch(std::vector<Message>& inputBatchMessages);
 
+    /**
+     * @brief Framework entry point that measures one module invocation.
+     *
+     * Workers must call this method instead of Process() directly. Outputs
+     * emitted during the invocation are held until Process() returns, then
+     * receive this module's elapsed time in MessageMeta::moduleTimingMs.
+     */
+    void ProcessTimed(Message& inputMessage);
+
     // --- Getter and Setter ---
 
     /**
@@ -108,6 +120,15 @@ protected:
 
 private:
     friend class ModuleActor;
+    friend class core::Worker;
+
+    struct PendingOutput {
+        bool named = false;
+        std::string outputName;
+        Message message;
+    };
+
+    void DispatchOutput(const PendingOutput& output, double elapsedMs);
 
     // A private setter for the internal handle, callable only by the Pipeline.
     void SetDispatcher(const std::shared_ptr<dispatcher::Dispatcher>& dispatcher);
@@ -116,6 +137,10 @@ private:
 
     // The internal dispatcher handle.
     std::shared_ptr<dispatcher::Dispatcher> m_dispatcherPtr;
+
+    bool m_processing = false;
+    std::map<std::string, double> m_activeInputTimingMs;
+    std::vector<PendingOutput> m_pendingOutputs;
 };
 
 } // namespace nexusflow

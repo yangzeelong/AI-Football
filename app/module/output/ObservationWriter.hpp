@@ -5,6 +5,7 @@
 #include "common/MyMessage.hpp"
 
 #include <fstream>
+#include <map>
 #include <string>
 
 namespace ns = nexusflow;
@@ -49,7 +50,8 @@ private:
     int  m_framesWritten = 0;
 
     void WriteMetadata();
-    void WriteFrame(const struct BallTrackMessage& msg);
+    void WriteFrame(const struct BallTrackMessage& msg,
+                    const std::map<std::string, double>& moduleTimingsMs);
 
     // Minimal JSON helpers (no external deps).
     static void JsonEscape(std::ostream& os, const std::string& s);

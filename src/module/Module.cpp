@@ -5,6 +5,8 @@
 #include "nexusflow/Message.hpp"
 #include "nexusflow/Logging.hpp"
 
+#include <chrono>
+
 namespace nexusflow {
 
 Module::Module(std::string name) : m_moduleName(std::move(name)) {
@@ -39,11 +41,65 @@ void Module::ProcessBatch(std::vector<Message>& inputBatchMessages) {
     // Process the batch of input messages.
     LOG_DEBUG("Module '{}' processing batch of {} messages.", m_moduleName, inputBatchMessages.size());
     for (auto& message : inputBatchMessages) {
-        Process(message);
+        ProcessTimed(message);
+    }
+}
+
+void Module::ProcessTimed(Message& inputMessage) {
+    m_pendingOutputs.clear();
+    m_activeInputTimingMs = inputMessage.GetMetaData().moduleTimingMs;
+    m_processing = true;
+    const auto started = std::chrono::steady_clock::now();
+
+    try {
+        Process(inputMessage);
+    } catch (...) {
+        m_processing = false;
+        m_pendingOutputs.clear();
+        m_activeInputTimingMs.clear();
+        throw;
+    }
+
+    const double elapsedMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - started).count();
+    m_processing = false;
+
+    auto pending = std::move(m_pendingOutputs);
+    m_pendingOutputs.clear();
+    for (const auto& output : pending) {
+        DispatchOutput(output, elapsedMs);
+    }
+    m_activeInputTimingMs.clear();
+
+    LOG_DEBUG("ModuleTiming: module='{}' elapsed_ms={:.3f}", m_moduleName, elapsedMs);
+}
+
+void Module::DispatchOutput(const PendingOutput& output, double elapsedMs) {
+    Message routed = output.message;
+    auto& timings = routed.MetaData().moduleTimingMs;
+    for (const auto& entry : m_activeInputTimingMs) {
+        if (timings.find(entry.first) == timings.end()) {
+            timings[entry.first] = entry.second;
+        }
+    }
+    timings[m_moduleName] = elapsedMs;
+
+    if (output.named) {
+        if (m_dispatcherPtr != nullptr) {
+            LOG_DEBUG("Module '{}' sending message to '{}'.", m_moduleName, output.outputName);
+            m_dispatcherPtr->SendTo(output.outputName, routed);
+        }
+    } else if (m_dispatcherPtr != nullptr) {
+        LOG_DEBUG("Module '{}' broadcasting message.", m_moduleName);
+        m_dispatcherPtr->Broadcast(routed);
     }
 }
 
 void Module::Broadcast(const Message& message) {
+    if (m_processing) {
+        m_pendingOutputs.push_back(PendingOutput{false, std::string(), message});
+        return;
+    }
     if (m_dispatcherPtr != nullptr) {
         LOG_DEBUG("Module '{}' broadcasting message.", m_moduleName);
         m_dispatcherPtr->Broadcast(message);
@@ -53,6 +109,10 @@ void Module::Broadcast(const Message& message) {
 }
 
 void Module::SendTo(const std::string& outputName, const Message& msg) {
+    if (m_processing) {
+        m_pendingOutputs.push_back(PendingOutput{true, outputName, msg});
+        return;
+    }
     if (m_dispatcherPtr != nullptr) {
         LOG_DEBUG("Module '{}' sending message to '{}'.", m_moduleName, outputName);
         m_dispatcherPtr->SendTo(outputName, msg);

@@ -20,6 +20,10 @@ The core idea of the framework is to decompose complex processing workflows into
 
 ## Quick Start
 
+Current AI-Football TensorRT integration results, performance measurements,
+known issues, and TODOs are documented in
+[`docs/AI_FOOTBALL_INTEGRATION_STATUS.md`](docs/AI_FOOTBALL_INTEGRATION_STATUS.md).
+
 The following example demonstrates how to build a pipeline with four modules: one input node distributes data to two parallel processing nodes, and one output node gathers the results.
 
 ### Option 1: Declarative Build via YAML (Recommended)

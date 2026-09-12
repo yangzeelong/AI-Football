@@ -20,7 +20,7 @@ ns::ErrorCode FootballTracker::Configure(const ns::Config& config) {
     m_param.maxMissedFrames = config.GetValueOrDefault<int>("maxMissedFrames", 12);
     m_param.maxAssociationDistancePx = config.GetValueOrDefault<float>("maxAssociationDistancePx", 180.0f);
     m_param.confidenceDecay = config.GetValueOrDefault<float>("confidenceDecay", 0.75f);
-    m_param.ballClassId = config.GetValueOrDefault<int>("ballClassId", 32);
+    m_param.ballClassId = config.GetValueOrDefault<int>("ballClassId", 37);
     LOG_INFO("FootballTracker config: maxMissed={}, maxAssocDist={}px, decay={}",
              m_param.maxMissedFrames, m_param.maxAssociationDistancePx, m_param.confidenceDecay);
     return ns::ErrorCode::SUCCESS;

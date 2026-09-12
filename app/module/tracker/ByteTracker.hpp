@@ -41,8 +41,8 @@ private:
         float secondAssociationThreshold = 0.10f; // low-score threshold
         float minimumMatchingThreshold   = 0.80f; // IoU gate for 1st assoc
         int   lostTrackBuffer            = 30;    // frames before removing lost track
-        int   personClassId              = 0;
-        int   ballClassId                = 32;
+        int   personClassId              = 1;
+        int   ballClassId                = 37;
     } m_param;
 
     enum class State : int { New = 0, Tracked = 1, Lost = 2, Removed = 3 };

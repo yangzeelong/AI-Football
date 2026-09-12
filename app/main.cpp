@@ -31,7 +31,24 @@ static void installSignalHandlers() {
 // Pipeline execution
 // ---------------------------------------------------------------------------
 
-void registerAllModules() {}
+void registerAllModules() {
+    // Register explicitly from the executable. Header-level static
+    // registration is convenient for examples, but can be discarded or
+    // reordered when application modules are linked into a large target.
+    auto& factory = ModuleFactory::GetInstance();
+#ifdef WITH_FFMPEG
+    factory.Register<VideoReader>("VideoReader");
+    factory.Register<VideoDecoder>("VideoDecoder");
+#endif
+    factory.Register<RFDetrDetector>("RFDetrDetector");
+    factory.Register<ByteTracker>("ByteTracker");
+    factory.Register<HRNetPoseEstimator>("HRNetPoseEstimator");
+    factory.Register<KeypointSmoother>("KeypointSmoother");
+    factory.Register<FootballTracker>("FootballTracker");
+    factory.Register<VideoRenderer>("VideoRenderer");
+    factory.Register<ObservationWriter>("ObservationWriter");
+    factory.Register<AlarmPusher>("AlarmPusher");
+}
 
 void executePipeline(Pipeline& pipeline, int maxSeconds) {
     LOG_INFO("Initializing pipeline...");

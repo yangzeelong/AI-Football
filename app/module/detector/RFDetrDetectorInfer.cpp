@@ -6,6 +6,23 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
+
+namespace {
+
+float Sigmoid(float value) {
+    if (value >= 0.0f) {
+        return 1.0f / (1.0f + std::exp(-value));
+    }
+    const float e = std::exp(value);
+    return e / (1.0f + e);
+}
+
+bool ShouldLogDetectorFrame(uint64_t frameId) {
+    return frameId < 5 || (frameId % 60) == 0;
+}
+
+} // namespace
 
 namespace detector {
 
@@ -77,7 +94,9 @@ bool RFDetrDetectorInfer::Init(const Param& param) {
             m_param.boxesBindingName  = boxesName;
             m_param.numQueries = (logitsDims.count == 3) ? logitsDims.d[1] : logitsDims.d[0];
             int numClsPlus1 = (logitsDims.count == 3) ? logitsDims.d[2] : logitsDims.d[1];
-            m_param.numClasses = numClsPlus1 - 1;
+            // RF-DETR exports all COCO category indices, including the
+            // sparse COCO ids such as person=1 and sports ball=37.
+            m_param.numClasses = numClsPlus1;
         }
     }
 
@@ -86,7 +105,7 @@ bool RFDetrDetectorInfer::Init(const Param& param) {
         LOG_INFO("RFDetrDetectorInfer: baked [N={}, 6]", m_param.numQueries);
     } else if (haveRaw) {
         m_outputFormat = OutputFormat::Raw;
-        LOG_INFO("RFDetrDetectorInfer: raw (logits=[N,{}], boxes=[N,4])", m_param.numClasses + 1);
+        LOG_INFO("RFDetrDetectorInfer: raw (logits=[N,{}], boxes=[N,4])", m_param.numClasses);
     } else {
         LOG_ERROR("RFDetrDetectorInfer: cannot determine output format");
         return false;
@@ -124,15 +143,15 @@ bool RFDetrDetectorInfer::InferBatch(const std::vector<FrameInput>& frames,
         m_inputHost.resize(perFrameFloats * B, 0.0f);
 
     // --- Preprocess ---
-    std::vector<LetterboxInfo> letterboxes(B);
+    std::vector<ResizeInfo> resizeInfos(B);
     for (int i = 0; i < B; ++i) {
         float* dst = m_inputHost.data() + i * perFrameFloats;
         if (!frames[i].rgb || frames[i].width <= 0 || frames[i].height <= 0) {
             std::fill(dst, dst + perFrameFloats, 0.0f);
-            letterboxes[i] = LetterboxInfo{};
+            resizeInfos[i] = ResizeInfo{};
         } else {
             PreprocessToHost(frames[i].rgb, frames[i].width, frames[i].height,
-                             letterboxes[i], dst);
+                             resizeInfos[i], dst);
         }
     }
 
@@ -167,7 +186,7 @@ bool RFDetrDetectorInfer::InferBatch(const std::vector<FrameInput>& frames,
                 DecodeBaked(m_outputHost.data() + offset, m_param.numQueries, rawBoxes);
             }
         } else {
-            size_t perFrameLogits = static_cast<size_t>(m_param.numQueries) * (m_param.numClasses + 1);
+            size_t perFrameLogits = static_cast<size_t>(m_param.numQueries) * m_param.numClasses;
             size_t perFrameBoxes  = static_cast<size_t>(m_param.numQueries) * 4;
             size_t logitsOff = static_cast<size_t>(i) * perFrameLogits;
             size_t boxesOff  = static_cast<size_t>(i) * perFrameBoxes;
@@ -184,13 +203,92 @@ bool RFDetrDetectorInfer::InferBatch(const std::vector<FrameInput>& frames,
                                                   m_boxesHost.data() + boxesOff,
                                                   perFrameBoxes * sizeof(float));
             if (okL && okB) {
+                const auto& frame = frames[i];
+                if (ShouldLogDetectorFrame(frame.frameId)) {
+                    float inputMin = std::numeric_limits<float>::max();
+                    float inputMax = std::numeric_limits<float>::lowest();
+                    const float* input = m_inputHost.data() +
+                        static_cast<size_t>(i) * perFrameFloats;
+                    for (size_t k = 0; k < perFrameFloats; ++k) {
+                        inputMin = std::min(inputMin, input[k]);
+                        inputMax = std::max(inputMax, input[k]);
+                    }
+
+                    float logitMin = std::numeric_limits<float>::max();
+                    float logitMax = std::numeric_limits<float>::lowest();
+                    float boxMin = std::numeric_limits<float>::max();
+                    float boxMax = std::numeric_limits<float>::lowest();
+                    float bestAnyScore = 0.0f;
+                    int bestAnyClass = -1;
+                    int bestAnyQuery = -1;
+                    float bestTargetScore = 0.0f;
+                    int bestTargetClass = -1;
+                    int bestTargetQuery = -1;
+                    int anyPairsAbove = 0;
+                    int targetPairsAbove = 0;
+
+                    const float* logits = m_logitsHost.data() + logitsOff;
+                    const float* boxes = m_boxesHost.data() + boxesOff;
+                    for (size_t k = 0; k < perFrameLogits; ++k) {
+                        logitMin = std::min(logitMin, logits[k]);
+                        logitMax = std::max(logitMax, logits[k]);
+                    }
+                    for (size_t k = 0; k < perFrameBoxes; ++k) {
+                        boxMin = std::min(boxMin, boxes[k]);
+                        boxMax = std::max(boxMax, boxes[k]);
+                    }
+                    for (int q = 0; q < m_param.numQueries; ++q) {
+                        for (int c = 0; c < m_param.numClasses; ++c) {
+                            const float score = Sigmoid(
+                                logits[static_cast<size_t>(q) * m_param.numClasses + c]);
+                            if (score > bestAnyScore) {
+                                bestAnyScore = score;
+                                bestAnyClass = c;
+                                bestAnyQuery = q;
+                            }
+                            if (score >= m_param.confidenceThreshold) {
+                                ++anyPairsAbove;
+                            }
+                            if (!m_param.targetClasses.empty() &&
+                                m_param.targetClasses.count(c) != 0) {
+                                if (score > bestTargetScore) {
+                                    bestTargetScore = score;
+                                    bestTargetClass = c;
+                                    bestTargetQuery = q;
+                                }
+                                if (score >= m_param.confidenceThreshold) {
+                                    ++targetPairsAbove;
+                                }
+                            }
+                        }
+                    }
+
+                    LOG_INFO(
+                        "RFDetrDetector debug: frame={} input={}x{} normalized=[{:.3f},{:.3f}] "
+                        "logits=[{:.3f},{:.3f}] boxes=[{:.3f},{:.3f}] "
+                        "bestAny=(q={},class={},score={:.3f}) "
+                        "bestTarget=(q={},class={},score={:.3f}) "
+                        "pairsAbove={} targetPairsAbove={} threshold={:.2f}",
+                        frame.frameId, frame.width, frame.height, inputMin, inputMax,
+                        logitMin, logitMax, boxMin, boxMax,
+                        bestAnyQuery, bestAnyClass, bestAnyScore,
+                        bestTargetQuery, bestTargetClass, bestTargetScore,
+                        anyPairsAbove, targetPairsAbove, m_param.confidenceThreshold);
+                }
+
                 DecodeRaw(m_logitsHost.data() + logitsOff,
                           m_boxesHost.data() + boxesOff,
-                          m_param.numQueries, m_param.numClasses + 1, rawBoxes);
+                          m_param.numQueries, m_param.numClasses, rawBoxes);
             }
         }
 
-        Unletterbox(rawBoxes, letterboxes[i], frames[i].width, frames[i].height);
+        UndoResize(rawBoxes, resizeInfos[i], frames[i].width, frames[i].height);
+
+        if (m_outputFormat == OutputFormat::Raw &&
+            ShouldLogDetectorFrame(frames[i].frameId)) {
+            LOG_INFO("RFDetrDetector debug: frame={} decoded_target_detections={}",
+                     frames[i].frameId, rawBoxes.size());
+        }
 
         results[i].reserve(rawBoxes.size());
         for (const auto& rb : rawBoxes) {
@@ -204,31 +302,27 @@ bool RFDetrDetectorInfer::InferBatch(const std::vector<FrameInput>& frames,
 // Preprocessing (pure CPU)
 // ---------------------------------------------------------------------------
 
-RFDetrDetectorInfer::LetterboxInfo
-RFDetrDetectorInfer::ComputeLetterbox(int srcW, int srcH, int dstW, int dstH) {
-    LetterboxInfo lb;
-    if (srcW <= 0 || srcH <= 0) return lb;
-    float s = std::min(static_cast<float>(dstW) / srcW,
-                       static_cast<float>(dstH) / srcH);
-    int newW = static_cast<int>(std::round(srcW * s));
-    int newH = static_cast<int>(std::round(srcH * s));
-    lb.scale = s;
-    lb.dx = (dstW - newW) / 2;
-    lb.dy = (dstH - newH) / 2;
-    return lb;
+RFDetrDetectorInfer::ResizeInfo
+RFDetrDetectorInfer::ComputeResize(int srcW, int srcH, int dstW, int dstH) {
+    ResizeInfo resize;
+    if (srcW <= 0 || srcH <= 0) return resize;
+    // Match rfdetr.predict(): direct resize to a square, without letterbox.
+    resize.scaleX = static_cast<float>(dstW) / srcW;
+    resize.scaleY = static_cast<float>(dstH) / srcH;
+    return resize;
 }
 
 bool RFDetrDetectorInfer::PreprocessToHost(const uint8_t* rgb, int srcW, int srcH,
-                                           LetterboxInfo& lbOut, float* dstChw) const {
+                                           ResizeInfo& resizeOut, float* dstChw) const {
     if (!rgb || srcW <= 0 || srcH <= 0 || !dstChw) return false;
     const int dstW = m_param.inputSize;
     const int dstH = m_param.inputSize;
-    lbOut = ComputeLetterbox(srcW, srcH, dstW, dstH);
+    resizeOut = ComputeResize(srcW, srcH, dstW, dstH);
 
-    const int newW = static_cast<int>(std::round(srcW * lbOut.scale));
-    const int newH = static_cast<int>(std::round(srcH * lbOut.scale));
-    const int dx = lbOut.dx;
-    const int dy = lbOut.dy;
+    const int newW = dstW;
+    const int newH = dstH;
+    const int dx = 0;
+    const int dy = 0;
 
     float* planeR = dstChw;
     float* planeG = dstChw + static_cast<size_t>(dstW) * dstH;
@@ -244,7 +338,7 @@ bool RFDetrDetectorInfer::PreprocessToHost(const uint8_t* rgb, int srcW, int src
     const float invStdB = 1.0f / m_param.stdB;
 
     for (int y = 0; y < newH; ++y) {
-        float sy = (y + 0.5f) / lbOut.scale - 0.5f;
+        float sy = (y + 0.5f) / resizeOut.scaleY - 0.5f;
         if (sy < 0) sy = 0;
         if (sy > srcH - 1) sy = static_cast<float>(srcH - 1);
         int y0 = static_cast<int>(std::floor(sy));
@@ -254,7 +348,7 @@ bool RFDetrDetectorInfer::PreprocessToHost(const uint8_t* rgb, int srcW, int src
         if (dstY < 0 || dstY >= dstH) continue;
 
         for (int x = 0; x < newW; ++x) {
-            float sx = (x + 0.5f) / lbOut.scale - 0.5f;
+            float sx = (x + 0.5f) / resizeOut.scaleX - 0.5f;
             if (sx < 0) sx = 0;
             if (sx > srcW - 1) sx = static_cast<float>(srcW - 1);
             int x0 = static_cast<int>(std::floor(sx));
@@ -301,25 +395,27 @@ void RFDetrDetectorInfer::DecodeBaked(const float* out, int numQueries,
 }
 
 void RFDetrDetectorInfer::DecodeRaw(const float* logits, const float* boxes,
-                                    int numQueries, int numClassesPlus1,
+                                    int numQueries, int numClasses,
                                     std::vector<RawBox>& boxesOut) const {
     boxesOut.clear();
-    const int numCls = numClassesPlus1 - 1;
     const float inputSize = static_cast<float>(m_param.inputSize);
 
     for (int q = 0; q < numQueries; ++q) {
-        const float* logitRow = logits + static_cast<size_t>(q) * numClassesPlus1;
+        const float* logitRow = logits + static_cast<size_t>(q) * numClasses;
         const float* boxRow   = boxes  + static_cast<size_t>(q) * 4;
 
-        int bestCls = 0;
+        int bestCls = -1;
         float bestScore = 0.0f;
-        for (int c = 0; c < numCls; ++c) {
-            float s = 1.0f / (1.0f + std::exp(-logitRow[c]));
+        for (int c = 0; c < numClasses; ++c) {
+            if (!m_param.targetClasses.empty() &&
+                m_param.targetClasses.find(c) == m_param.targetClasses.end()) {
+                continue;
+            }
+            float s = Sigmoid(logitRow[c]);
             if (s > bestScore) { bestScore = s; bestCls = c; }
         }
+        if (bestCls < 0) continue;
         if (bestScore < m_param.confidenceThreshold) continue;
-        if (!m_param.targetClasses.empty() &&
-            m_param.targetClasses.find(bestCls) == m_param.targetClasses.end()) continue;
 
         float cx = boxRow[0] * inputSize;
         float cy = boxRow[1] * inputSize;
@@ -329,16 +425,17 @@ void RFDetrDetectorInfer::DecodeRaw(const float* logits, const float* boxes,
     }
 }
 
-void RFDetrDetectorInfer::Unletterbox(std::vector<RawBox>& boxes,
-                                      const LetterboxInfo& lb,
+void RFDetrDetectorInfer::UndoResize(std::vector<RawBox>& boxes,
+                                      const ResizeInfo& resize,
                                       int origW, int origH) const {
-    if (lb.scale <= 0.0f) return;
-    const float invScale = 1.0f / lb.scale;
+    if (resize.scaleX <= 0.0f || resize.scaleY <= 0.0f) return;
+    const float invScaleX = 1.0f / resize.scaleX;
+    const float invScaleY = 1.0f / resize.scaleY;
     for (auto& b : boxes) {
-        b.x0 = std::max(0.0f, std::min((b.x0 - lb.dx) * invScale, static_cast<float>(origW)));
-        b.y0 = std::max(0.0f, std::min((b.y0 - lb.dy) * invScale, static_cast<float>(origH)));
-        b.x1 = std::max(0.0f, std::min((b.x1 - lb.dx) * invScale, static_cast<float>(origW)));
-        b.y1 = std::max(0.0f, std::min((b.y1 - lb.dy) * invScale, static_cast<float>(origH)));
+        b.x0 = std::max(0.0f, std::min((b.x0 - resize.dx) * invScaleX, static_cast<float>(origW)));
+        b.y0 = std::max(0.0f, std::min((b.y0 - resize.dy) * invScaleY, static_cast<float>(origH)));
+        b.x1 = std::max(0.0f, std::min((b.x1 - resize.dx) * invScaleX, static_cast<float>(origW)));
+        b.y1 = std::max(0.0f, std::min((b.y1 - resize.dy) * invScaleY, static_cast<float>(origH)));
     }
 }
 

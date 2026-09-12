@@ -139,7 +139,9 @@ static const char* BallStateStr(BallTrackState s) {
     return "lost";
 }
 
-void ObservationWriter::WriteFrame(const BallTrackMessage& msg) {
+void ObservationWriter::WriteFrame(
+    const BallTrackMessage& msg,
+    const std::map<std::string, double>& moduleTimingsMs) {
     const char* const* names = GetProject26Names();
     std::ostringstream os;
     os << "{\"type\":\"frame\",";
@@ -194,7 +196,16 @@ void ObservationWriter::WriteFrame(const BallTrackMessage& msg) {
     os << "\"raw_detection_counts\":{";
     os << "\"total\":"  << msg.rawCounts.total  << ",";
     os << "\"person\":" << msg.rawCounts.person << ",";
-    os << "\"ball\":"   << msg.rawCounts.ball;
+    os << "\"ball\":"   << msg.rawCounts.ball << "},";
+    os << "\"module_timings_ms\":{";
+    bool firstTiming = true;
+    for (const auto& timing : moduleTimingsMs) {
+        if (!firstTiming) os << ",";
+        firstTiming = false;
+        JsonEscape(os, timing.first);
+        os << ":";
+        JsonDouble(os, timing.second);
+    }
     os << "}}\n";
 
     m_file << os.str();
@@ -234,7 +245,7 @@ void ObservationWriter::Process(ns::Message& inputMessage) {
         return;
     }
 
-    WriteFrame(*msg);
+    WriteFrame(*msg, inputMessage.GetMetaData().moduleTimingMs);
 
     // Flush periodically to avoid losing data on crash.
     if ((m_framesWritten & 0x3F) == 0) m_file.flush();
