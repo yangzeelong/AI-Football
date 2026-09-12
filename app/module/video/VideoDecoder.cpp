@@ -139,12 +139,15 @@ void VideoDecoder::Process(nexusflow::Message& inputMessage) {
         }
 
         // --- Build FrameMessage ---
+        auto videoFrame = std::make_shared<VideoFrame>();
+        videoFrame->frameId = m_frameIdx;
+        videoFrame->frameData = std::move(rawPixels);
+        videoFrame->width = m_width;
+        videoFrame->height = m_height;
+        videoFrame->channels = 3;
+
         FrameMessage msg;
-        msg.videoFrame.frameId = m_frameIdx;
-        msg.videoFrame.frameData = std::move(rawPixels);
-        msg.videoFrame.width = m_width;
-        msg.videoFrame.height = m_height;
-        msg.videoFrame.channels = 3;
+        msg.videoFrame = std::move(videoFrame);
         msg.isKeyFrame = (m_frame->flags & AV_FRAME_FLAG_KEY) != 0;
         msg.isEnd = false;
         msg.timestamp = static_cast<uint64_t>(

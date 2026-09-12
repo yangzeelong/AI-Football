@@ -44,7 +44,7 @@ private:
     } m_batchParam;
 
     struct BufferedFrame {
-        VideoFrame videoFrame;
+        VideoFramePtr videoFrame;
         bool isEnd = false;
         uint64_t timestamp = 0;
         double timestampSec = 0.0;

@@ -84,6 +84,11 @@ tools/model_conversion/build_tensorrt_engines.sh rfdetr \
   --input-size 960 --max-batch 4
 ```
 
+The dynamic RF-DETR exporter also replaces two shape constructions from the
+installed RF-DETR package that are traced as batch-1 constants by the legacy
+TorchScript exporter. This keeps the generated graph valid when TensorRT
+executes it at a larger batch.
+
 960 variant:
 
 ```bash

@@ -2,17 +2,24 @@
 #define MY_MESSAGE_HPP
 
 #include <nexusflow/Message.hpp>
+#include <memory>
 #include <sstream>
+#include <string>
+#include <utility>
 #include <vector>
 
 // --- Base ---
 struct VideoFrame {
     uint32_t frameId = 0;
-    std::string frameData; // Raw pixel data (RGB24 by default)
+    std::string frameData; // Contiguous RGB24 bytes; frame object is shared after decode
     int width = 0;
     int height = 0;
     int channels = 3; // RGB24 = 3 channels
 };
+
+// A decoded frame is immutable after VideoDecoder publishes it. All pipeline
+// messages share the same frame object, so message copies do not copy pixels.
+using VideoFramePtr = std::shared_ptr<const VideoFrame>;
 
 struct Rect {
     int x0 = 0;
@@ -79,7 +86,7 @@ struct PacketMessage {
 
 // FrameMessage: output of VideoDecoder (decoded frame), input of Detector etc.
 struct FrameMessage {
-    VideoFrame videoFrame;
+    VideoFramePtr videoFrame;
     bool isKeyFrame = false;
     bool isEnd = false;
     uint64_t timestamp = 0; // Wall-clock ms
@@ -87,10 +94,11 @@ struct FrameMessage {
 
     std::string toString() const {
         std::ostringstream oss;
-        oss << "[FrameMessage] = {frameId=" << videoFrame.frameId
-            << ", " << videoFrame.width << "x" << videoFrame.height
-            << ", ch=" << videoFrame.channels
-            << ", dataSize=" << videoFrame.frameData.size() << "B"
+        oss << "[FrameMessage] = {frameId=" << (videoFrame ? videoFrame->frameId : 0)
+            << ", " << (videoFrame ? videoFrame->width : 0) << "x"
+            << (videoFrame ? videoFrame->height : 0)
+            << ", ch=" << (videoFrame ? videoFrame->channels : 0)
+            << ", dataSize=" << (videoFrame ? videoFrame->frameData.size() : 0) << "B"
             << ", isKeyFrame=" << isKeyFrame
             << ", isEnd=" << isEnd
             << ", ts=" << timestamp
@@ -129,7 +137,7 @@ struct DetectionCounts {
 };
 
 struct DetectionMessage {
-    VideoFrame videoFrame;                 // Decoded frame; Message COW detaches on mutation
+    VideoFramePtr videoFrame;              // Shared immutable decoded frame
     std::vector<Detection> detections;     // Detections in *original frame* coords
     DetectionCounts rawCounts;             // Counts before threshold / class filtering
     bool isEnd = false;
@@ -138,8 +146,9 @@ struct DetectionMessage {
 
     std::string toString() const {
         std::ostringstream oss;
-        oss << "[DetectionMessage] = {frameId=" << videoFrame.frameId
-            << ", " << videoFrame.width << "x" << videoFrame.height
+        oss << "[DetectionMessage] = {frameId=" << (videoFrame ? videoFrame->frameId : 0)
+            << ", " << (videoFrame ? videoFrame->width : 0) << "x"
+            << (videoFrame ? videoFrame->height : 0)
             << ", dets=" << detections.size()
             << ", person=" << rawCounts.person
             << ", ball=" << rawCounts.ball
@@ -165,7 +174,7 @@ enum class TrackState : int {
 };
 
 struct TrackedDetectionMessage {
-    VideoFrame videoFrame;
+    VideoFramePtr videoFrame;
     std::vector<Detection> persons;   // person detections with trackId assigned
     std::vector<Detection> balls;     // ball detections (trackId may be -1 here)
     DetectionCounts rawCounts;        // copied from upstream Detector
@@ -177,7 +186,7 @@ struct TrackedDetectionMessage {
 
     std::string toString() const {
         std::ostringstream oss;
-        oss << "[TrackedDetectionMessage] = {frameId=" << videoFrame.frameId
+        oss << "[TrackedDetectionMessage] = {frameId=" << (videoFrame ? videoFrame->frameId : 0)
             << ", persons=" << persons.size()
             << ", balls=" << balls.size()
             << ", active=" << activeTrackCount
@@ -223,7 +232,7 @@ struct PersonPose {
 };
 
 struct PoseMessage {
-    VideoFrame videoFrame;
+    VideoFramePtr videoFrame;
     std::vector<PersonPose> persons;
     std::vector<Detection>  balls;      // pass-through from upstream tracker
     DetectionCounts rawCounts;
@@ -235,7 +244,7 @@ struct PoseMessage {
 
     std::string toString() const {
         std::ostringstream oss;
-        oss << "[PoseMessage] = {frameId=" << videoFrame.frameId
+        oss << "[PoseMessage] = {frameId=" << (videoFrame ? videoFrame->frameId : 0)
             << ", persons=" << persons.size()
             << ", balls=" << balls.size()
             << ", isEnd=" << isEnd
@@ -274,7 +283,7 @@ inline const int* GetWholebodyToProject26() {
 // Kept as a distinct type so downstream modules can distinguish raw vs.
 // smoothed poses at compile time.
 struct SmoothedPoseMessage {
-    VideoFrame videoFrame;
+    VideoFramePtr videoFrame;
     std::vector<PersonPose> persons;
     std::vector<Detection>  balls;
     DetectionCounts rawCounts;
@@ -286,7 +295,7 @@ struct SmoothedPoseMessage {
 
     std::string toString() const {
         std::ostringstream oss;
-        oss << "[SmoothedPoseMessage] = {frameId=" << videoFrame.frameId
+        oss << "[SmoothedPoseMessage] = {frameId=" << (videoFrame ? videoFrame->frameId : 0)
             << ", persons=" << persons.size()
             << ", balls=" << balls.size()
             << ", isEnd=" << isEnd
@@ -318,7 +327,7 @@ struct BallTrack {
 };
 
 struct BallTrackMessage {
-    VideoFrame videoFrame;
+    VideoFramePtr videoFrame;
     std::vector<PersonPose> persons;   // pass-through from smoother
     std::vector<BallTrack>  balls;     // tracked ball(s) this frame
     DetectionCounts rawCounts;
@@ -330,7 +339,7 @@ struct BallTrackMessage {
 
     std::string toString() const {
         std::ostringstream oss;
-        oss << "[BallTrackMessage] = {frameId=" << videoFrame.frameId
+        oss << "[BallTrackMessage] = {frameId=" << (videoFrame ? videoFrame->frameId : 0)
             << ", persons=" << persons.size()
             << ", balls=" << balls.size()
             << ", isEnd=" << isEnd
@@ -340,12 +349,13 @@ struct BallTrackMessage {
 };
 
 struct InferenceMessage {
-    VideoFrame videoFrame;
+    VideoFramePtr videoFrame;
     std::vector<Box> boxes;
 
     std::string toString() const {
         std::ostringstream oss;
-        oss << "[InferenceMessage] = {frameId=" << videoFrame.frameId << ", boxes=[" << std::endl;
+        oss << "[InferenceMessage] = {frameId=" << (videoFrame ? videoFrame->frameId : 0)
+            << ", boxes=[" << std::endl;
         for (const auto& box : boxes) {
             oss << "\tx0=" << box.rect.x0 << ", y0=" << box.rect.y0 << ", x1=" << box.rect.x1 << ", y1=" << box.rect.y1
                 << ", score=" << box.score << ", label=" << box.label << ", labelName=" << box.labelName

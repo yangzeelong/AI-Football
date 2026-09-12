@@ -126,11 +126,13 @@ void RFDetrDetector::FlushBatch() {
     std::vector<detector::RFDetrDetectorInfer::FrameInput> inputs(B);
     for (int i = 0; i < B; ++i) {
         const auto& bf = m_batchBuffer[i];
-        inputs[i].rgb    = reinterpret_cast<const uint8_t*>(bf.videoFrame.frameData.data());
-        inputs[i].width  = bf.videoFrame.width;
-        inputs[i].height = bf.videoFrame.height;
-        inputs[i].frameId = bf.videoFrame.frameId;
-        if (bf.videoFrame.frameData.empty() || bf.videoFrame.channels != 3) {
+        inputs[i].rgb = bf.videoFrame
+            ? reinterpret_cast<const uint8_t*>(bf.videoFrame->frameData.data()) : nullptr;
+        inputs[i].width  = bf.videoFrame ? bf.videoFrame->width : 0;
+        inputs[i].height = bf.videoFrame ? bf.videoFrame->height : 0;
+        inputs[i].frameId = bf.videoFrame ? bf.videoFrame->frameId : 0;
+        if (!bf.videoFrame || bf.videoFrame->frameData.empty() ||
+            bf.videoFrame->channels != 3) {
             inputs[i].rgb = nullptr;
         }
     }
@@ -165,7 +167,7 @@ void RFDetrDetector::FlushBatch() {
         }
 
         LOG_DEBUG("RFDetrDetector: frame {} -> {} detections",
-                  bf.videoFrame.frameId, out.detections.size());
+                  bf.videoFrame ? bf.videoFrame->frameId : 0, out.detections.size());
         Broadcast(nexusflow::Message(std::move(out)));
     }
 }

@@ -53,6 +53,101 @@ def main() -> None:
             "Install the AI-Football requirements first."
         ) from exc
 
+    if args.dynamic_batch:
+        # RF-DETR's projector LayerNorm derives the channel count through
+        # x.size(3). The legacy exporter treats that value as symbolic when
+        # batch is dynamic, although the layer already stores the same static
+        # channel shape in normalized_shape. Patch only the export-time
+        # implementation; the installed package and checkpoint are untouched.
+        import torch
+        import torch.nn.functional as F
+        from rfdetr.models.backbone.projector import LayerNorm
+        from rfdetr.models import transformer as transformer_module
+
+        def export_layer_norm(self, x):
+            x = x.permute(0, 2, 3, 1)
+            x = F.layer_norm(x, self.normalized_shape, self.weight, self.bias, self.eps)
+            return x.permute(0, 3, 1, 2)
+
+        LayerNorm.forward = export_layer_norm
+
+        original_gen_encoder_output_proposals = (
+            transformer_module.gen_encoder_output_proposals
+        )
+
+        def export_gen_encoder_output_proposals(
+            memory, memory_padding_mask, spatial_shapes, unsigmoid=True
+        ):
+            """Keep the no-mask proposal scale dynamic along the batch axis."""
+            if memory_padding_mask is not None:
+                return original_gen_encoder_output_proposals(
+                    memory, memory_padding_mask, spatial_shapes, unsigmoid
+                )
+
+            # The package implementation uses a Python list comprehension over
+            # N_, which the legacy exporter evaluates at the example batch size.
+            # Derive a zero-cost batch-shaped tensor from memory instead.
+            def dynamic_valid_size(spatial_size):
+                batch_column = memory[:, :1, 0]
+                return batch_column[:, 0] * 0.0 + spatial_size
+
+            N_, _, _ = memory.shape
+            proposals = []
+            for level, (height, width) in enumerate(spatial_shapes):
+                valid_H = dynamic_valid_size(height)
+                valid_W = dynamic_valid_size(width)
+
+                grid_y, grid_x = torch.meshgrid(
+                    torch.linspace(
+                        0,
+                        height - 1,
+                        height,
+                        dtype=torch.float32,
+                        device=memory.device,
+                    ),
+                    torch.linspace(
+                        0,
+                        width - 1,
+                        width,
+                        dtype=torch.float32,
+                        device=memory.device,
+                    ),
+                )
+                grid = torch.cat(
+                    [grid_x.unsqueeze(-1), grid_y.unsqueeze(-1)], -1
+                )
+                scale = torch.cat(
+                    [valid_W.unsqueeze(-1), valid_H.unsqueeze(-1)], 1
+                ).view(N_, 1, 1, 2)
+                grid = (grid.unsqueeze(0).expand(N_, -1, -1, -1) + 0.5) / scale
+                wh = torch.ones_like(grid) * 0.05 * (2.0 ** level)
+                proposal = torch.cat((grid, wh), -1).view(N_, -1, 4)
+                proposals.append(proposal)
+
+            output_proposals = torch.cat(proposals, 1)
+            output_proposals_valid = (
+                (output_proposals > 0.01) & (output_proposals < 0.99)
+            ).all(-1, keepdim=True)
+            if unsigmoid:
+                output_proposals = torch.log(
+                    output_proposals / (1 - output_proposals)
+                )
+                output_proposals = output_proposals.masked_fill(
+                    ~output_proposals_valid, float("inf")
+                )
+            else:
+                output_proposals = output_proposals.masked_fill(
+                    ~output_proposals_valid, float(0)
+                )
+            output_memory = memory.masked_fill(
+                ~output_proposals_valid, float(0)
+            )
+            return output_memory.to(memory.dtype), output_proposals.to(memory.dtype)
+
+        transformer_module.gen_encoder_output_proposals = (
+            export_gen_encoder_output_proposals
+        )
+
     model_class = getattr(rfdetr, MODEL_CLASSES[args.size])
     model_kwargs = {
         "pretrain_weights": str(checkpoint),

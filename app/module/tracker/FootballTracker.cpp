@@ -171,7 +171,7 @@ void FootballTracker::Process(ns::Message& inputMessage) {
     Emit(out);
 
     LOG_DEBUG("FootballTracker: frame={} ballsIn={} active={} state={}",
-              smMsg->videoFrame.frameId, smMsg->balls.size(),
+              smMsg->videoFrame ? smMsg->videoFrame->frameId : 0, smMsg->balls.size(),
               m_track.active ? 1 : 0,
               m_track.active ? (m_track.missedFrames == 0 ? "observed" : "predicted") : "none");
 

@@ -114,23 +114,26 @@ each frame could read the first frame's device output.
 
 RF-DETR export now accepts `--dynamic-batch`. Build the resulting ONNX with
 `build_tensorrt_engines.sh --max-batch N`, then set `maxBatchSize: N` in the
-runtime configuration. A static existing engine remains valid and continues
-to run with effective batch `1`.
+runtime configuration. The generated 960 model was validated with TensorRT
+11.1 at batch 1 and batch 4 on the current GPU. A static existing engine
+remains valid and continues to run with effective batch `1`.
+
+Decoded frames are now held by `std::shared_ptr<const VideoFrame>`. Copying a
+frame through the actor graph copies the pointer instead of the approximately
+6.2 MB pixel payload. The decoder still performs one required pack from
+FFmpeg's potentially padded image planes into contiguous RGB24 storage, and
+the renderer creates a writable overlay buffer when drawing is enabled.
 
 ## Known Problems
 
-1. `VideoFrame::frameData` is currently a `std::string`. Assigning a
-   `VideoFrame` between pipeline messages copies the full RGB frame instead of
-   sharing the pixel buffer. A 1920x1080 RGB24 frame is about 6.2 MB, and this
-   copy happens across several modules.
-2. Detector and pose engines share one GPU. Model-instance parallelism does not
+1. Detector and pose engines share one GPU. Model-instance parallelism does not
    guarantee GPU kernel overlap; the engines may contend for GPU resources.
-3. Rendering introduces an additional RGB buffer copy and H.264 encoding
+2. Rendering introduces an additional RGB buffer copy and H.264 encoding
    cost. It should be disabled when measuring inference-only throughput.
-4. The current sample configuration contains machine-specific model paths and
+3. The current sample configuration contains machine-specific model paths and
    a sample video path. These should be moved to a portable runtime config or
    CLI overrides before deployment.
-5. `--stop_frame` is parsed by the executable but is not yet propagated to
+4. `--stop_frame` is parsed by the executable but is not yet propagated to
    `VideoReader`, so it does not currently stop input after the requested
    frame.
 
@@ -147,7 +150,6 @@ to run with effective batch `1`.
 
 ### Memory and Pipeline
 
-- Replace per-message RGB string copies with a shared immutable frame buffer.
 - Keep writable overlays separate from the original frame buffer.
 - Make queue sizes and worker batch policies configurable.
 - Propagate `--stop_frame`, `--stride`, and `--target_fps` into the source

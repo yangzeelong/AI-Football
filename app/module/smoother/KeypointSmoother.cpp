@@ -263,6 +263,7 @@ void KeypointSmoother::Process(ns::Message& inputMessage) {
     }
 
     LOG_DEBUG("KeypointSmoother: frame={} persons={} tracks={}",
-              poseMsg->videoFrame.frameId, out.persons.size(), m_tracks.size());
+              poseMsg->videoFrame ? poseMsg->videoFrame->frameId : 0,
+              out.persons.size(), m_tracks.size());
     Broadcast(nexusflow::Message(std::move(out)));
 }

@@ -145,7 +145,7 @@ void ObservationWriter::WriteFrame(
     const char* const* names = GetProject26Names();
     std::ostringstream os;
     os << "{\"type\":\"frame\",";
-    os << "\"frame_index\":" << msg.videoFrame.frameId << ",";
+    os << "\"frame_index\":" << (msg.videoFrame ? msg.videoFrame->frameId : 0) << ",";
     os << "\"timestamp_sec\":"; JsonDouble(os, msg.timestampSec); os << ",";
     os << "\"camera_id\":"; JsonEscape(os, m_param.cameraId); os << ",";
 
@@ -232,8 +232,10 @@ void ObservationWriter::Process(ns::Message& inputMessage) {
 
     if (!m_metadataWritten) {
         // Try to infer width/height/fps from the first frame if not configured.
-        if (m_param.width  == 0) m_param.width  = msg->videoFrame.width;
-        if (m_param.height == 0) m_param.height = msg->videoFrame.height;
+        if (msg->videoFrame) {
+            if (m_param.width  == 0) m_param.width  = msg->videoFrame->width;
+            if (m_param.height == 0) m_param.height = msg->videoFrame->height;
+        }
         WriteMetadata();
     }
 
