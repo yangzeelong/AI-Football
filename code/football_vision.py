@@ -300,6 +300,7 @@ class RfdetrDetector:
         confidence: float = 0.25,
         class_names: Sequence[str] | None = None,
         size: str = "medium",
+        resolution: int | None = None,
         device: str | None = None,
         model_dir: str | Path = "models/rfdetr",
     ) -> None:
@@ -332,11 +333,22 @@ class RfdetrDetector:
         rfdetr_device = self._normalize_device(device)
         weights_path = self._resolve_weights(size, model_dir)
         model_kwargs = {"pretrain_weights": str(weights_path)}
+        if resolution is not None:
+            model_kwargs["resolution"] = int(resolution)
         if rfdetr_device:
             model_kwargs["device"] = rfdetr_device
-        self.model = model_classes[size](**model_kwargs)
+        try:
+            self.model = model_classes[size](**model_kwargs)
+        except TypeError as exc:
+            if resolution is not None:
+                raise RuntimeError(
+                    "Installed rfdetr version does not accept resolution=. "
+                    "Please upgrade rfdetr or remove the detector input_resolution override."
+                ) from exc
+            raise
         self.confidence = confidence
         self.class_names = set(class_names or ["person", "sports ball"])
+        self.resolution = resolution
         self.device = device
         self.coco_classes = getattr(self.model, "class_names", COCO_CLASSES)
         self.person_tracker = self._build_person_tracker()
@@ -682,4 +694,3 @@ def draw_debug_panel(
             thickness,
         )
         text_y += text_height + line_gap
-
