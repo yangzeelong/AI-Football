@@ -7,7 +7,7 @@ AI-Football pipeline.
 
 | Model | ONNX input | ONNX output | TensorRT binding names |
 | --- | --- | --- | --- |
-| RF-DETR small | `image`, `1 x 3 x 512 x 512`, float32 NCHW | raw `pred_boxes` + `pred_logits` | input `image`; outputs `pred_boxes` / `pred_logits` |
+| RF-DETR small | `image`, `B x 3 x S x S`, float32 NCHW | raw `pred_boxes` + `pred_logits` | input `image`; outputs `pred_boxes` / `pred_logits` |
 | HRNet-W48-DARK | `images`, `B x 3 x 384 x 288`, float32 NCHW | `heatmaps`, `[B,133,96,72]` | `images` / `heatmaps` |
 
 The C++ preprocessing matches RF-DETR's Python inference path: RGB values are
@@ -67,6 +67,23 @@ tools/model_conversion/build_tensorrt_engines.sh rfdetr \
   --input-size 512 --max-batch 1
 ```
 
+For a batch-capable RF-DETR engine, export the batch dimension as dynamic and
+set the TensorRT optimization profile limit. The resulting engine accepts any
+batch in the profile range `1..4`:
+
+```bash
+python tools/model_conversion/export_rfdetr_onnx.py \
+  --size small \
+  --checkpoint /home/hx1/yzl/Work/AI-Football/models/rfdetr/rf-detr-small.pth \
+  --output-dir /home/hx1/yzl/Work/AI-Football/models/rfdetr/onnx \
+  --device cpu --resolution 960 --dynamic-batch
+
+tools/model_conversion/build_tensorrt_engines.sh rfdetr \
+  --onnx /home/hx1/yzl/Work/AI-Football/models/rfdetr/onnx/rf-detr-small-960-dynamic.onnx \
+  --engine /home/hx1/yzl/Work/AI-Football/models/rfdetr/rf-detr-small-960-b4.engine \
+  --input-size 960 --max-batch 4
+```
+
 960 variant:
 
 ```bash
@@ -81,6 +98,24 @@ tools/model_conversion/build_tensorrt_engines.sh rfdetr \
   --engine /home/hx1/yzl/Work/AI-Football/models/rfdetr/rf-detr-small-960.engine \
   --input-size 960 --max-batch 1
 ```
+
+## Runtime Instances and Batches
+
+`instanceCount` creates independent TensorRT execution contexts, CUDA streams,
+and device buffers. Instances can process chunks concurrently, but each
+instance also consumes model GPU memory. Start with `1` and increase only
+after measuring GPU utilization and memory headroom.
+
+For `RFDetrDetector`, `maxBatchSize` controls the module flush size and the
+requested model batch. For `HRNetPoseEstimator`, `maxBatch` is the requested
+model batch. Static batch-1 engines are detected at startup and automatically
+clamp the effective batch to `1`; the module still chunks larger inputs, so
+rows are not silently dropped. Values greater than `1` require engines built
+from a dynamic-batch ONNX graph.
+
+The detector copies each batch output tensor from device to host once, then
+decodes per-frame slices. This avoids both duplicate results for later batch
+items and an unnecessary CUDA synchronization for every frame.
 
 After export, inspect the `trtexec` parser output. The current RF-DETR
 export produces two tensors containing raw class logits and normalized

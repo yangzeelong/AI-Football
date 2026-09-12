@@ -7,6 +7,7 @@
 
 #include <chrono>
 #include <deque>
+#include <future>
 #include <memory>
 #include <string>
 #include <vector>
@@ -52,10 +53,14 @@ private:
 
     void FlushBatch();
     bool ShouldFlush() const;
+    bool InferFrames(
+        const std::vector<detector::RFDetrDetectorInfer::FrameInput>& inputs,
+        std::vector<std::vector<detector::Detection>>& results);
 
     // Model inference (has-a)
     detector::RFDetrDetectorInfer::Param m_inferParam;
-    std::unique_ptr<detector::RFDetrDetectorInfer> m_infer;
+    std::vector<std::unique_ptr<detector::RFDetrDetectorInfer>> m_inferPool;
+    int m_instanceCount = 1;
 
     // Batch state
     std::deque<BufferedFrame> m_batchBuffer;

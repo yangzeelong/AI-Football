@@ -33,8 +33,10 @@ graph:
         stdR: 0.229
         stdG: 0.224
         stdB: 0.225
-        # Batching (1 = no batching, process immediately)
+        # Batching. Requires a TensorRT engine built from a dynamic-batch ONNX
+        # model for values > 1. Static batch=1 engines are automatically clamped.
         maxBatchSize: 1
+        instanceCount: 1                 # Each instance owns a TRT context/stream and GPU buffers
         batchTimeoutMs: 0                # 0 = no timeout, flush only when full or EOF
         maxRetryNum: 0                   # 0 = disabled; >0 = force flush after N frames (anti-starvation)
 
@@ -66,6 +68,7 @@ graph:
         yPadRatio: 0.25
         minPadPx: 12.0
         maxBatch: 16
+        instanceCount: 1                 # Each instance owns a TRT context/stream and GPU buffers
         keypointConfThr: 0.05
         # ImageNet normalization (0..255 scale)
         meanR: 123.675

@@ -34,8 +34,13 @@ protected:
     void Process(ns::Message& inputMessage) override;
 
 private:
+    bool InferPersons(
+        const std::vector<pose::HRNetPoseEstimatorInfer::PersonInput>& inputs,
+        std::vector<PersonPose>& results);
+
     pose::HRNetPoseEstimatorInfer::Param m_inferParam;
-    std::unique_ptr<pose::HRNetPoseEstimatorInfer> m_infer;
+    std::vector<std::unique_ptr<pose::HRNetPoseEstimatorInfer>> m_inferPool;
+    int m_instanceCount = 1;
 };
 
 NEXUSFLOW_REGISTER_MODULE(HRNetPoseEstimator);

@@ -33,6 +33,7 @@ public:
         int   numQueries             = 300;
         float meanR = 0.485f, meanG = 0.456f, meanB = 0.406f;
         float stdR  = 0.229f, stdG  = 0.224f, stdB  = 0.225f;
+        int   maxBatchSize = 1;  // Requested batch; static engines may clamp it.
     };
 
     RFDetrDetectorInfer() = default;
@@ -46,6 +47,7 @@ public:
 
     bool IsReady() const { return m_ready; }
     int  InputSize() const { return m_param.inputSize; }
+    int  MaxBatch() const { return m_effectiveMaxBatch; }
 
     /**
      * @brief Run inference on a batch of RGB frames.
@@ -91,6 +93,7 @@ private:
     Param m_param;
     std::unique_ptr<inference::IInferenceEngine> m_engine;
     bool m_ready = false;
+    int m_effectiveMaxBatch = 1;
     OutputFormat m_outputFormat = OutputFormat::Baked;
 
     // Host buffers

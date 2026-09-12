@@ -96,23 +96,41 @@ the actual processing throughput. A strict throughput benchmark still needs
 to measure processed frames divided by wall-clock runtime under fixed test
 conditions.
 
+## Instance and Batch Support
+
+The detector and pose modules now support independent model instances. Each
+instance owns its TensorRT execution context, CUDA stream, and device/host
+scratch buffers. Chunks assigned to different instances run concurrently and
+are merged back in input order. Configure this with `instanceCount`; the
+default remains `1` because every additional instance consumes GPU memory and
+may contend for the same GPU.
+
+The runtime reads the input batch dimension from the serialized engine. Static
+batch-1 engines are automatically clamped to an effective batch of `1`, while
+larger requests are split into chunks instead of failing or dropping pose
+inputs. The RF-DETR detector also copies each batch output tensor once before
+decoding frame slices. This fixes the previous batch-output offset bug, where
+each frame could read the first frame's device output.
+
+RF-DETR export now accepts `--dynamic-batch`. Build the resulting ONNX with
+`build_tensorrt_engines.sh --max-batch N`, then set `maxBatchSize: N` in the
+runtime configuration. A static existing engine remains valid and continues
+to run with effective batch `1`.
+
 ## Known Problems
 
 1. `VideoFrame::frameData` is currently a `std::string`. Assigning a
    `VideoFrame` between pipeline messages copies the full RGB frame instead of
    sharing the pixel buffer. A 1920x1080 RGB24 frame is about 6.2 MB, and this
    copy happens across several modules.
-2. There is only one `PoseEstimator` actor. Its TensorRT inference is
-   serialized per frame, so the pipeline cannot scale pose processing across
-   multiple workers.
-3. Detector and pose engines share one GPU. Actor-level parallelism does not
+2. Detector and pose engines share one GPU. Model-instance parallelism does not
    guarantee GPU kernel overlap; the engines may contend for GPU resources.
-4. Rendering introduces an additional RGB buffer copy and H.264 encoding
+3. Rendering introduces an additional RGB buffer copy and H.264 encoding
    cost. It should be disabled when measuring inference-only throughput.
-5. The current sample configuration contains machine-specific model paths and
+4. The current sample configuration contains machine-specific model paths and
    a sample video path. These should be moved to a portable runtime config or
    CLI overrides before deployment.
-6. `--stop_frame` is parsed by the executable but is not yet propagated to
+5. `--stop_frame` is parsed by the executable but is not yet propagated to
    `VideoReader`, so it does not currently stop input after the requested
    frame.
 
@@ -137,11 +155,12 @@ conditions.
 
 ### Inference
 
-- Compare pose inference with cross-frame batching and multiple pose workers.
+- Benchmark different `instanceCount` and batch profiles against GPU memory
+  usage and end-to-end throughput.
 - Measure detector and pose TensorRT execution separately from host
   preprocessing and postprocessing.
-- Evaluate whether the 960 RF-DETR engine should remain fixed or be replaced
-  by a controlled dynamic-shape profile.
+- Evaluate whether the 960 RF-DETR engine should remain fixed or use the new
+  dynamic-batch profile in production.
 
 ### Output and Deployment
 

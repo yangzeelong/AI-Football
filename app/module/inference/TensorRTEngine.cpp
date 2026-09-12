@@ -181,14 +181,21 @@ bool TensorRTEngine::SetInputFromHost(const std::string& name,
                                       const void* hostPtr,
                                       size_t bytes,
                                       const Dims& dims) {
-    if (!m_context) return false;
+    if (!m_context || !hostPtr || bytes == 0) return false;
 
-    // Ensure device buffer is large enough.
-    if (!EnsureInputBuffer(name, bytes)) return false;
+    auto inputIt = m_inputBuffers.find(name);
+    if (inputIt == m_inputBuffers.end()) {
+        LOG_ERROR("TensorRTEngine: input tensor '{}' not found", name);
+        return false;
+    }
 
-    // Static ONNX inputs already carry their shape in the engine. Dynamic
-    // inputs need an execution-context shape before enqueueV3.
     const nvinfer1::Dims engineDims = m_engine->getTensorShape(name.c_str());
+    if (engineDims.nbDims != dims.count) {
+        LOG_ERROR("TensorRTEngine: input '{}' rank mismatch, engine={} request={}",
+                  name, engineDims.nbDims, dims.count);
+        return false;
+    }
+
     bool dynamic = false;
     for (int i = 0; i < engineDims.nbDims; ++i) {
         if (engineDims.d[i] < 0) {
@@ -196,6 +203,46 @@ bool TensorRTEngine::SetInputFromHost(const std::string& name,
             break;
         }
     }
+
+    // Static engines cannot accept a larger batch merely because the caller
+    // supplied a larger host buffer. Reject shape mismatches here, before a
+    // potentially confusing enqueue failure.
+    if (!dynamic) {
+        for (int i = 0; i < engineDims.nbDims; ++i) {
+            if (engineDims.d[i] != dims.d[i]) {
+                LOG_ERROR("TensorRTEngine: input '{}' shape mismatch at dim {}, engine={} request={}",
+                          name, i, engineDims.d[i], dims.d[i]);
+                return false;
+            }
+        }
+    } else {
+        for (int i = 0; i < dims.count; ++i) {
+            if (dims.d[i] <= 0) {
+                LOG_ERROR("TensorRTEngine: input '{}' has invalid dynamic dim {}={}",
+                          name, i, dims.d[i]);
+                return false;
+            }
+            if (engineDims.d[i] > 0 && engineDims.d[i] != dims.d[i]) {
+                LOG_ERROR("TensorRTEngine: input '{}' fixed dim {} mismatch, engine={} request={}",
+                          name, i, engineDims.d[i], dims.d[i]);
+                return false;
+            }
+        }
+    }
+
+    const size_t expectedBytes = dims.NumElements() *
+        DataTypeSize(ConvertDType(m_engine->getTensorDataType(name.c_str())));
+    if (expectedBytes == 0 || bytes != expectedBytes) {
+        LOG_ERROR("TensorRTEngine: input '{}' byte size mismatch, expected={} request={}",
+                  name, expectedBytes, bytes);
+        return false;
+    }
+
+    // Ensure device buffer is large enough.
+    if (!EnsureInputBuffer(name, bytes)) return false;
+
+    // Static ONNX inputs already carry their shape in the engine. Dynamic
+    // inputs need an execution-context shape before enqueueV3.
     if (dynamic) {
         nvinfer1::Dims trtDims = ConvertToTrtDims(dims);
         if (!m_context->setInputShape(name.c_str(), trtDims)) {
@@ -205,8 +252,7 @@ bool TensorRTEngine::SetInputFromHost(const std::string& name,
     }
 
     // H2D copy.
-    auto it = m_inputBuffers.find(name);
-    if (cudaMemcpyAsync(it->second.devicePtr, hostPtr, bytes,
+    if (cudaMemcpyAsync(inputIt->second.devicePtr, hostPtr, bytes,
                         cudaMemcpyHostToDevice, m_stream) != cudaSuccess) {
         LOG_ERROR("TensorRTEngine: cudaMemcpy H2D failed for '{}'", name);
         return false;

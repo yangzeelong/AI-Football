@@ -21,6 +21,7 @@ HRNetPoseEstimatorInfer::~HRNetPoseEstimatorInfer() {
 
 bool HRNetPoseEstimatorInfer::Init(const Param& param) {
     m_param = param;
+    m_param.maxBatch = std::max(1, m_param.maxBatch);
 
     if (m_param.enginePath.empty()) {
         LOG_WARN("HRNetPoseEstimatorInfer: enginePath is empty");
@@ -31,6 +32,20 @@ bool HRNetPoseEstimatorInfer::Init(const Param& param) {
     if (!m_engine->Load(m_param.enginePath)) {
         LOG_ERROR("HRNetPoseEstimatorInfer: failed to load engine {}", m_param.enginePath);
         return false;
+    }
+
+    const auto inputInfo = m_engine->GetInputInfo(m_param.inputBindingName);
+    if (inputInfo.dims.count <= 0) {
+        LOG_ERROR("HRNetPoseEstimatorInfer: input tensor '{}' has no shape",
+                  m_param.inputBindingName);
+        return false;
+    }
+    const int engineBatch = inputInfo.dims.d[0];
+    m_effectiveMaxBatch = engineBatch > 0 ? engineBatch : m_param.maxBatch;
+    m_effectiveMaxBatch = std::max(1, m_effectiveMaxBatch);
+    if (engineBatch > 0 && m_param.maxBatch > engineBatch) {
+        LOG_WARN("HRNetPoseEstimatorInfer: static engine batch={} clamps requested batch={} to {}",
+                 engineBatch, m_param.maxBatch, m_effectiveMaxBatch);
     }
 
     // --- Inspect output tensor shape ---
@@ -81,8 +96,11 @@ bool HRNetPoseEstimatorInfer::Init(const Param& param) {
     // Pre-allocate host buffers for max batch.
     const size_t perPersonInput  = static_cast<size_t>(3) * m_param.inputHeight * m_param.inputWidth;
     const size_t perPersonOutput = static_cast<size_t>(K) * H * W;
-    m_inputHost.assign(perPersonInput * m_param.maxBatch, 0.0f);
-    m_outputHost.assign(perPersonOutput * m_param.maxBatch, 0.0f);
+    m_inputHost.assign(perPersonInput * m_effectiveMaxBatch, 0.0f);
+    m_outputHost.assign(perPersonOutput * m_effectiveMaxBatch, 0.0f);
+
+    LOG_INFO("HRNetPoseEstimatorInfer: requestedBatch={}, effectiveBatch={}, engineBatch={}",
+             m_param.maxBatch, m_effectiveMaxBatch, engineBatch > 0 ? engineBatch : -1);
 
     m_ready = true;
     return true;
@@ -93,6 +111,7 @@ void HRNetPoseEstimatorInfer::Release() {
     m_ready = false;
     m_inputHost.clear();
     m_outputHost.clear();
+    m_effectiveMaxBatch = 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -104,7 +123,12 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
     results.clear();
     if (!m_ready || persons.empty()) return false;
 
-    const int B = std::min<int>(m_param.maxBatch, static_cast<int>(persons.size()));
+    const int B = static_cast<int>(persons.size());
+    if (B > m_effectiveMaxBatch) {
+        LOG_ERROR("HRNetPoseEstimatorInfer: batch size {} exceeds effective engine batch {}",
+                  B, m_effectiveMaxBatch);
+        return false;
+    }
     const size_t perPersonInput  = static_cast<size_t>(3) * m_param.inputHeight * m_param.inputWidth;
     const size_t perPersonOutput = static_cast<size_t>(m_param.numKeypoints) *
                                    m_param.heatmapHeight * m_param.heatmapWidth;

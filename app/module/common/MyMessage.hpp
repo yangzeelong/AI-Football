@@ -129,7 +129,7 @@ struct DetectionCounts {
 };
 
 struct DetectionMessage {
-    VideoFrame videoFrame;                 // Decoded frame (COW string, cheap to copy)
+    VideoFrame videoFrame;                 // Decoded frame; Message COW detaches on mutation
     std::vector<Detection> detections;     // Detections in *original frame* coords
     DetectionCounts rawCounts;             // Counts before threshold / class filtering
     bool isEnd = false;

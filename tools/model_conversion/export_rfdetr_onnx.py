@@ -30,6 +30,11 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Square inference resolution. Omit to use the checkpoint default.",
     )
+    parser.add_argument(
+        "--dynamic-batch",
+        action="store_true",
+        help="Export a batch-dynamic ONNX graph. TensorRT profile limits are set during engine build.",
+    )
     return parser.parse_args()
 
 
@@ -72,6 +77,13 @@ def main() -> None:
 
     def legacy_export(*export_args, **export_kwargs):
         export_kwargs.setdefault("dynamo", False)
+        if args.dynamic_batch:
+            dynamic_axes = dict(export_kwargs.get("dynamic_axes") or {})
+            input_names = export_kwargs.get("input_names") or ["input"]
+            output_names = export_kwargs.get("output_names") or ["dets", "labels"]
+            for name in list(input_names) + list(output_names):
+                dynamic_axes.setdefault(name, {})[0] = "batch"
+            export_kwargs["dynamic_axes"] = dynamic_axes
         return original_export(*export_args, **export_kwargs)
 
     torch.onnx.export = legacy_export
@@ -101,11 +113,13 @@ def main() -> None:
         node.output[:] = [rename.get(name, name) for name in node.output]
 
     resolution = model.model.resolution
-    target = output_dir / f"rf-detr-{args.size}-{resolution}.onnx"
+    suffix = "-dynamic" if args.dynamic_batch else ""
+    target = output_dir / f"rf-detr-{args.size}-{resolution}{suffix}.onnx"
     onnx.save(graph, str(target))
     print(f"RF-DETR export completed: {target}")
-    print(f"input: image [1,3,{resolution},{resolution}] float32 NCHW")
-    print("outputs: pred_boxes [1,N,4], pred_logits [1,N,91]")
+    batch_label = "batch" if args.dynamic_batch else "1"
+    print(f"input: image [{batch_label},3,{resolution},{resolution}] float32 NCHW")
+    print(f"outputs: pred_boxes [{batch_label},N,4], pred_logits [{batch_label},N,91]")
 
 
 if __name__ == "__main__":

@@ -39,22 +39,33 @@ if [[ ! -f "$onnx" ]]; then
   printf 'ONNX file not found: %s\n' "$onnx" >&2
   exit 1
 fi
+if ! [[ "$max_batch" =~ ^[1-9][0-9]*$ ]]; then
+  printf -- '--max-batch must be a positive integer: %s\n' "$max_batch" >&2
+  exit 2
+fi
+if [[ "$kind" == "rfdetr" ]] && ! [[ "$input_size" =~ ^[1-9][0-9]*$ ]]; then
+  printf -- '--input-size must be a positive integer: %s\n' "$input_size" >&2
+  exit 2
+fi
 
-has_dynamic_input=0
+# Only a dynamic batch dimension enables the profile path below. A model with
+# dynamic spatial dimensions still needs a separate shape policy.
+has_dynamic_batch=0
 if python3 - "$onnx" <<'PY'
 import sys
 import onnx
 
 model = onnx.load(sys.argv[1])
 dynamic = any(
-    dim.dim_param or dim.dim_value < 0
+    len(value.type.tensor_type.shape.dim) > 0 and
+    (value.type.tensor_type.shape.dim[0].dim_param or
+     value.type.tensor_type.shape.dim[0].dim_value < 0)
     for value in model.graph.input
-    for dim in value.type.tensor_type.shape.dim
 )
 raise SystemExit(0 if dynamic else 1)
 PY
 then
-  has_dynamic_input=1
+  has_dynamic_batch=1
 fi
 
 mkdir -p "$(dirname "$engine")"
@@ -68,7 +79,7 @@ common=(
 
 case "$kind" in
   hrnet)
-    if [[ "$has_dynamic_input" -eq 1 ]]; then
+    if [[ "$has_dynamic_batch" -eq 1 ]]; then
       common+=(
         --minShapes=images:1x3x384x288
         --optShapes=images:4x3x384x288
@@ -77,7 +88,7 @@ case "$kind" in
     fi
     ;;
   rfdetr)
-    if [[ "$has_dynamic_input" -eq 1 ]]; then
+    if [[ "$has_dynamic_batch" -eq 1 ]]; then
       common+=(
         --minShapes=image:1x3x"${input_size}"x"${input_size}"
         --optShapes=image:1x3x"${input_size}"x"${input_size}"

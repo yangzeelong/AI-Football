@@ -48,6 +48,7 @@ public:
     bool Init(const Param& param);
     void Release();
     bool IsReady() const { return m_ready; }
+    int MaxBatch() const { return m_effectiveMaxBatch; }
 
     /**
      * @brief Run pose estimation on a batch of person crops.
@@ -72,6 +73,7 @@ private:
     Param m_param;
     std::unique_ptr<inference::IInferenceEngine> m_engine;
     bool m_ready = false;
+    int m_effectiveMaxBatch = 1;
 
     std::vector<float> m_inputHost;
     std::vector<float> m_outputHost;
