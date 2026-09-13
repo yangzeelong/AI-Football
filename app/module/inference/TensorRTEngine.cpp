@@ -174,26 +174,25 @@ TensorInfo TensorRTEngine::GetOutputInfo(const std::string& name) const {
 }
 
 // ---------------------------------------------------------------------------
-// SetInputFromHost: allocate if needed + H2D + SetInputShape
+// PrepareInputDevice: validate shape + allocate device input + SetInputShape
 // ---------------------------------------------------------------------------
 
-bool TensorRTEngine::SetInputFromHost(const std::string& name,
-                                      const void* hostPtr,
-                                      size_t bytes,
-                                      const Dims& dims) {
-    if (!m_context || !hostPtr || bytes == 0) return false;
+void* TensorRTEngine::PrepareInputDevice(const std::string& name,
+                                         size_t bytes,
+                                         const Dims& dims) {
+    if (!m_context || bytes == 0) return nullptr;
 
     auto inputIt = m_inputBuffers.find(name);
     if (inputIt == m_inputBuffers.end()) {
         LOG_ERROR("TensorRTEngine: input tensor '{}' not found", name);
-        return false;
+        return nullptr;
     }
 
     const nvinfer1::Dims engineDims = m_engine->getTensorShape(name.c_str());
     if (engineDims.nbDims != dims.count) {
         LOG_ERROR("TensorRTEngine: input '{}' rank mismatch, engine={} request={}",
                   name, engineDims.nbDims, dims.count);
-        return false;
+        return nullptr;
     }
 
     bool dynamic = false;
@@ -212,7 +211,7 @@ bool TensorRTEngine::SetInputFromHost(const std::string& name,
             if (engineDims.d[i] != dims.d[i]) {
                 LOG_ERROR("TensorRTEngine: input '{}' shape mismatch at dim {}, engine={} request={}",
                           name, i, engineDims.d[i], dims.d[i]);
-                return false;
+                return nullptr;
             }
         }
     } else {
@@ -220,12 +219,12 @@ bool TensorRTEngine::SetInputFromHost(const std::string& name,
             if (dims.d[i] <= 0) {
                 LOG_ERROR("TensorRTEngine: input '{}' has invalid dynamic dim {}={}",
                           name, i, dims.d[i]);
-                return false;
+                return nullptr;
             }
             if (engineDims.d[i] > 0 && engineDims.d[i] != dims.d[i]) {
                 LOG_ERROR("TensorRTEngine: input '{}' fixed dim {} mismatch, engine={} request={}",
                           name, i, engineDims.d[i], dims.d[i]);
-                return false;
+                return nullptr;
             }
         }
     }
@@ -235,11 +234,11 @@ bool TensorRTEngine::SetInputFromHost(const std::string& name,
     if (expectedBytes == 0 || bytes != expectedBytes) {
         LOG_ERROR("TensorRTEngine: input '{}' byte size mismatch, expected={} request={}",
                   name, expectedBytes, bytes);
-        return false;
+        return nullptr;
     }
 
     // Ensure device buffer is large enough.
-    if (!EnsureInputBuffer(name, bytes)) return false;
+    if (!EnsureInputBuffer(name, bytes)) return nullptr;
 
     // Static ONNX inputs already carry their shape in the engine. Dynamic
     // inputs need an execution-context shape before enqueueV3.
@@ -247,12 +246,27 @@ bool TensorRTEngine::SetInputFromHost(const std::string& name,
         nvinfer1::Dims trtDims = ConvertToTrtDims(dims);
         if (!m_context->setInputShape(name.c_str(), trtDims)) {
             LOG_ERROR("TensorRTEngine: setInputShape failed for '{}'", name);
-            return false;
+            return nullptr;
         }
     }
 
+    return inputIt->second.devicePtr;
+}
+
+void* TensorRTEngine::GetCudaStream() const {
+    return reinterpret_cast<void*>(m_stream);
+}
+
+bool TensorRTEngine::SetInputFromHost(const std::string& name,
+                                      const void* hostPtr,
+                                      size_t bytes,
+                                      const Dims& dims) {
+    if (!hostPtr || bytes == 0) return false;
+    void* devicePtr = PrepareInputDevice(name, bytes, dims);
+    if (!devicePtr) return false;
+
     // H2D copy.
-    if (cudaMemcpyAsync(inputIt->second.devicePtr, hostPtr, bytes,
+    if (cudaMemcpyAsync(devicePtr, hostPtr, bytes,
                         cudaMemcpyHostToDevice, m_stream) != cudaSuccess) {
         LOG_ERROR("TensorRTEngine: cudaMemcpy H2D failed for '{}'", name);
         return false;
@@ -403,6 +417,8 @@ TensorInfo TensorRTEngine::GetInputInfo(const std::string&) const { return {}; }
 TensorInfo TensorRTEngine::GetOutputInfo(const std::string&) const { return {}; }
 
 bool TensorRTEngine::SetInputFromHost(const std::string&, const void*, size_t, const Dims&) { return false; }
+void* TensorRTEngine::PrepareInputDevice(const std::string&, size_t, const Dims&) { return nullptr; }
+void* TensorRTEngine::GetCudaStream() const { return nullptr; }
 bool TensorRTEngine::Infer() { return false; }
 bool TensorRTEngine::CopyOutputToHost(const std::string&, void*, size_t) { return false; }
 

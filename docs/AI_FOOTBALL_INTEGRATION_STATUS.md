@@ -107,7 +107,8 @@ construction. Detector and pose inference paths currently use
 `TIMER_SCOPE_AVERAGE_MS(..., 5000)` for preprocess, TensorRT, output-copy,
 postprocess, and whole-batch timings.
 
-Representative measurements from the current 960-resolution run:
+Representative measurements from the earlier 960-resolution run with CPU
+preprocessing:
 
 | Module | Mean time per message |
 | --- | ---: |
@@ -129,6 +130,30 @@ The output video's 60 FPS is its playback rate and must not be interpreted as
 the actual processing throughput. A strict throughput benchmark still needs
 to measure processed frames divided by wall-clock runtime under fixed test
 conditions.
+
+## GPU Preprocessing
+
+RF-DETR preprocessing can run on CUDA when `useGpuPreprocess: true`, the
+TensorRT input is `float32`, and the application is built with the CUDA kernel
+target. The implementation reuses a device-side RGB staging buffer, uploads
+each decoded RGB24 frame on the TensorRT stream, and performs bilinear resize,
+normalization, and HWC-to-NCHW conversion directly into the TensorRT input
+buffer. The CPU implementation remains as a fallback for unsupported builds or
+runtime CUDA failures.
+
+The current 960-resolution test was run with batch size 4 and rendering
+enabled. Its steady-state TimerRegistry measurements were:
+
+| Timer | Mean batch time | Mean item time |
+| --- | ---: | ---: |
+| Detector.Preprocess | 1.394 ms | 0.348 ms |
+| Detector.TensorRT | 86.691 ms | 21.673 ms |
+| Detector.Batch | 91.352 ms | 22.838 ms |
+
+The corresponding CPU-preprocessing run reported approximately 60.607 ms for
+`Detector.Preprocess` and 152.938 ms for `Detector.Batch`. The GPU path removes
+the large host resize and normalization cost, while the current synchronous
+TensorRT execution still determines most of the remaining detector latency.
 
 ## Instance and Batch Support
 
@@ -193,8 +218,9 @@ the renderer creates a writable overlay buffer when drawing is enabled.
 
 - Benchmark different `instanceCount` and batch profiles against GPU memory
   usage and end-to-end throughput.
-- Measure detector and pose TensorRT execution separately from host
-  preprocessing and postprocessing.
+- Split detector preprocessing measurement into host upload, CUDA kernel, and
+  stream synchronization costs; keep TensorRT execution and postprocessing as
+  separate timers.
 - Evaluate whether the 960 RF-DETR engine should remain fixed or use the new
   dynamic-batch profile in production.
 

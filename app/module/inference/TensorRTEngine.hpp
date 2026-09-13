@@ -18,7 +18,8 @@ namespace inference {
  * @brief TensorRT 10.x backend for IInferenceEngine.
  *
  * Owns ALL GPU resources: runtime, engine, context, stream, input/output
- * device buffers. Callers interact exclusively through host pointers.
+ * device buffers. Host callers normally use host pointers, while CUDA-aware
+ * callers can prepare an input device buffer on the engine's stream.
  *
  * Typical usage:
  *   TensorRTEngine engine;
@@ -52,6 +53,18 @@ public:
                           const void* hostPtr,
                           size_t bytes,
                           const Dims& dims) override;
+
+    /// Prepare and return the engine-owned device buffer for an input tensor.
+    /// This sets the dynamic shape but does not copy data.
+    void* PrepareInputDevice(const std::string& name,
+                             size_t bytes,
+                             const Dims& dims);
+
+    /// Return the CUDA stream used by SetInput/Infer, or nullptr when CUDA is
+    /// unavailable. The returned handle is exposed as void* to keep this
+    /// concrete header usable without CUDA in stub builds.
+    void* GetCudaStream() const;
+
     bool Infer() override;
     bool CopyOutputToHost(const std::string& name,
                           void* hostPtr,

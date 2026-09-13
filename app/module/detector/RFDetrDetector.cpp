@@ -36,6 +36,8 @@ ns::ErrorCode RFDetrDetector::Configure(const ns::Config& config) {
     m_inferParam.stdR                = config.GetValueOrDefault<float>("stdR", 0.229f);
     m_inferParam.stdG                = config.GetValueOrDefault<float>("stdG", 0.224f);
     m_inferParam.stdB                = config.GetValueOrDefault<float>("stdB", 0.225f);
+    m_inferParam.useGpuPreprocess    = config.GetValueOrDefault<bool>(
+        "useGpuPreprocess", true);
 
     // GraphUtils stores YAML sequences as vector<Any>. Convert the integer
     // class ids explicitly instead of silently falling back to an empty set.
@@ -55,10 +57,11 @@ ns::ErrorCode RFDetrDetector::Configure(const ns::Config& config) {
     m_instanceCount             = std::max(1, config.GetValueOrDefault<int>("instanceCount", 1));
     m_inferParam.maxBatchSize   = m_batchParam.maxBatchSize;
 
-    LOG_INFO("RFDetrDetector: engine={}, inputSize={}, maxBatch={}, instances={}, timeout={}ms, maxRetry={}",
+    LOG_INFO("RFDetrDetector: engine={}, inputSize={}, maxBatch={}, instances={}, timeout={}ms, maxRetry={}, gpuPreprocess={}",
              m_inferParam.enginePath, m_inferParam.inputSize,
              m_batchParam.maxBatchSize, m_instanceCount,
-             m_batchParam.batchTimeoutMs, m_batchParam.maxRetryNum);
+             m_batchParam.batchTimeoutMs, m_batchParam.maxRetryNum,
+             m_inferParam.useGpuPreprocess);
     LOG_INFO("RFDetrDetector: targetClasses count={}", m_inferParam.targetClasses.size());
     return ns::ErrorCode::SUCCESS;
 }
@@ -130,6 +133,8 @@ void RFDetrDetector::FlushBatch() {
             ? reinterpret_cast<const uint8_t*>(bf.videoFrame->frameData.data()) : nullptr;
         inputs[i].width  = bf.videoFrame ? bf.videoFrame->width : 0;
         inputs[i].height = bf.videoFrame ? bf.videoFrame->height : 0;
+        inputs[i].channels = bf.videoFrame ? bf.videoFrame->channels : 0;
+        inputs[i].dataBytes = bf.videoFrame ? bf.videoFrame->frameData.size() : 0;
         inputs[i].frameId = bf.videoFrame ? bf.videoFrame->frameId : 0;
         if (!bf.videoFrame || bf.videoFrame->frameData.empty() ||
             bf.videoFrame->channels != 3) {

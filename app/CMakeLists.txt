@@ -3,9 +3,25 @@ file(GLOB_RECURSE ALL_SRC_FILES "${CMAKE_CURRENT_SOURCE_DIR}/**.cpp")
 
 # --- CUDA detection ---
 set(CUDA_FOUND FALSE)
+set(CUDA_LANGUAGE_AVAILABLE FALSE)
 find_package(CUDA QUIET)
 if(CUDA_FOUND)
     message(STATUS "CUDA found: ${CUDA_VERSION}")
+    include(CheckLanguage)
+    # FindCUDA and the first-class CUDA language keep separate compiler
+    # variables. Bridge them so CUDA sources are actually compiled by nvcc
+    # when an older build directory has cached CMAKE_CUDA_COMPILER=NOTFOUND.
+    if((NOT CMAKE_CUDA_COMPILER OR CMAKE_CUDA_COMPILER MATCHES "NOTFOUND") AND
+       CUDA_NVCC_EXECUTABLE)
+        set(CMAKE_CUDA_COMPILER "${CUDA_NVCC_EXECUTABLE}" CACHE FILEPATH
+            "CUDA compiler" FORCE)
+    endif()
+    check_language(CUDA)
+    if(CMAKE_CUDA_COMPILER)
+        enable_language(CUDA)
+        set(CUDA_LANGUAGE_AVAILABLE TRUE)
+        add_definitions(-DWITH_CUDA_KERNELS)
+    endif()
     add_definitions(-DWITH_CUDA)
     include_directories(${CUDA_INCLUDE_DIRS})
 else()
@@ -15,6 +31,8 @@ else()
     if(CMAKE_CUDA_COMPILER)
         enable_language(CUDA)
         message(STATUS "CUDA compiler found via check_language")
+        set(CUDA_LANGUAGE_AVAILABLE TRUE)
+        add_definitions(-DWITH_CUDA_KERNELS)
         add_definitions(-DWITH_CUDA)
         set(CUDA_FOUND TRUE)
         set(CUDA_LIBRARIES CUDA::cudart)
@@ -57,6 +75,12 @@ endif()
 set(SRC_FILES ${ALL_SRC_FILES})
 if(NOT TRT_FOUND)
     list(FILTER SRC_FILES EXCLUDE REGEX ".*/inference/TensorRTEngine\\.cpp$")
+endif()
+if(NOT (CUDA_FOUND AND TRT_FOUND AND CUDA_LANGUAGE_AVAILABLE))
+    list(FILTER SRC_FILES EXCLUDE REGEX ".*/detector/RFDetrCudaPreprocess\\.cu$")
+else()
+    list(APPEND SRC_FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/module/detector/RFDetrCudaPreprocess.cu")
 endif()
 
 # --- FFmpeg detection (no pkg-config dependency) ---
@@ -138,6 +162,14 @@ target_link_libraries(football_server PRIVATE
 )
 if(CUDA_FOUND)
     target_link_libraries(football_server PRIVATE ${CUDA_LIBRARIES})
+    if(CMAKE_CUDA_COMPILER)
+        set_target_properties(football_server PROPERTIES
+            CUDA_STANDARD 14
+            CUDA_STANDARD_REQUIRED ON)
+        if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.24)
+            set_property(TARGET football_server PROPERTY CUDA_ARCHITECTURES native)
+        endif()
+    endif()
 endif()
 if(TRT_FOUND)
     target_link_libraries(football_server PRIVATE ${TRT_NVINFER_LIB})

@@ -1,8 +1,13 @@
 #include "RFDetrDetectorInfer.hpp"
+#include "RFDetrCudaPreprocess.hpp"
 #include "inference/TensorRTEngine.hpp"
 
 #include <nexusflow/Logging.hpp>
 #include <nexusflow/TimerRegistry.hpp>
+
+#ifdef WITH_CUDA_KERNELS
+#include <cuda_runtime_api.h>
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -58,6 +63,22 @@ bool RFDetrDetectorInfer::Init(const Param& param) {
                   m_param.inputBindingName);
         return false;
     }
+
+#ifdef WITH_CUDA_KERNELS
+    const auto* trtEngine = dynamic_cast<const inference::TensorRTEngine*>(
+        m_engine.get());
+    m_gpuPreprocessAvailable =
+        m_param.useGpuPreprocess && inputInfo.dtype == inference::DataType::kFloat32 &&
+        trtEngine != nullptr && trtEngine->GetCudaStream() != nullptr;
+    if (m_param.useGpuPreprocess && !m_gpuPreprocessAvailable) {
+        LOG_WARN("RFDetrDetectorInfer: GPU preprocessing unavailable; using CPU preprocessing");
+    }
+#else
+    m_gpuPreprocessAvailable = false;
+    if (m_param.useGpuPreprocess) {
+        LOG_WARN("RFDetrDetectorInfer: built without CUDA; using CPU preprocessing");
+    }
+#endif
     const int engineBatch = inputInfo.dims.d[0];
     m_effectiveMaxBatch = engineBatch > 0 ? engineBatch : m_param.maxBatchSize;
     m_effectiveMaxBatch = std::max(1, m_effectiveMaxBatch);
@@ -137,8 +158,10 @@ bool RFDetrDetectorInfer::Init(const Param& param) {
 }
 
 void RFDetrDetectorInfer::Release() {
+    ReleaseGpuBuffers();
     if (m_engine) { m_engine->Release(); m_engine.reset(); }
     m_ready = false;
+    m_gpuPreprocessAvailable = false;
     m_inputHost.clear();
     m_outputHost.clear();
     m_logitsHost.clear();
@@ -163,37 +186,59 @@ bool RFDetrDetectorInfer::InferBatch(const std::vector<FrameInput>& frames,
     }
     TIMER_SCOPE_AVERAGE_MS("Detector.Batch", static_cast<uint64_t>(B), 5000);
     const size_t perFrameFloats = static_cast<size_t>(m_param.inputSize) * m_param.inputSize * 3;
-
-    // Ensure host buffers are large enough.
-    if (m_inputHost.size() < perFrameFloats * B)
-        m_inputHost.resize(perFrameFloats * B, 0.0f);
+    inference::Dims batchDims(B, 3, m_param.inputSize, m_param.inputSize);
+    const size_t batchInputBytes = B * perFrameFloats * sizeof(float);
 
     // --- Preprocess ---
     std::vector<ResizeInfo> resizeInfos(B);
+    bool usedGpuPreprocess = false;
     {
         TIMER_SCOPE_AVERAGE_MS("Detector.Preprocess", static_cast<uint64_t>(B), 5000);
-        for (int i = 0; i < B; ++i) {
-            float* dst = m_inputHost.data() + i * perFrameFloats;
-            if (!frames[i].rgb || frames[i].width <= 0 || frames[i].height <= 0) {
-                std::fill(dst, dst + perFrameFloats, 0.0f);
-                resizeInfos[i] = ResizeInfo{};
-            } else {
-                PreprocessToHost(frames[i].rgb, frames[i].width, frames[i].height,
-                                 resizeInfos[i], dst);
+        if (m_gpuPreprocessAvailable) {
+#ifdef WITH_CUDA_KERNELS
+            auto* trtEngine = dynamic_cast<inference::TensorRTEngine*>(m_engine.get());
+            void* stream = trtEngine ? trtEngine->GetCudaStream() : nullptr;
+            void* inputDevice = trtEngine
+                ? trtEngine->PrepareInputDevice(m_param.inputBindingName,
+                                                 batchInputBytes, batchDims)
+                : nullptr;
+            usedGpuPreprocess = inputDevice != nullptr && stream != nullptr &&
+                                PreprocessToGpu(frames, resizeInfos, inputDevice, stream);
+            if (!usedGpuPreprocess) {
+                LOG_WARN("RFDetrDetectorInfer: GPU preprocessing failed; falling back to CPU");
+                m_gpuPreprocessAvailable = false;
+            }
+#endif
+        }
+
+        if (!usedGpuPreprocess) {
+            // CPU fallback. Keep this path available for unsupported input
+            // dtypes, non-CUDA builds, and runtime CUDA failures.
+            if (m_inputHost.size() < perFrameFloats * B) {
+                m_inputHost.resize(perFrameFloats * B, 0.0f);
+            }
+            for (int i = 0; i < B; ++i) {
+                float* dst = m_inputHost.data() + i * perFrameFloats;
+                if (!frames[i].rgb || frames[i].width <= 0 || frames[i].height <= 0) {
+                    std::fill(dst, dst + perFrameFloats, 0.0f);
+                    resizeInfos[i] = ResizeInfo{};
+                } else {
+                    PreprocessToHost(frames[i].rgb, frames[i].width, frames[i].height,
+                                     resizeInfos[i], dst);
+                }
             }
         }
     }
 
     // --- Engine inference ---
-    inference::Dims batchDims(B, 3, m_param.inputSize, m_param.inputSize);
-    size_t batchInputBytes = B * perFrameFloats * sizeof(float);
-
     {
         TIMER_SCOPE_AVERAGE_MS("Detector.TensorRT", static_cast<uint64_t>(B), 5000);
-        if (!m_engine->SetInputFromHost(m_param.inputBindingName,
-                                        m_inputHost.data(), batchInputBytes, batchDims)) {
-            LOG_ERROR("RFDetrDetectorInfer: SetInputFromHost failed");
-            return false;
+        if (!usedGpuPreprocess) {
+            if (!m_engine->SetInputFromHost(m_param.inputBindingName,
+                                            m_inputHost.data(), batchInputBytes, batchDims)) {
+                LOG_ERROR("RFDetrDetectorInfer: SetInputFromHost failed");
+                return false;
+            }
         }
         if (!m_engine->Infer()) {
             LOG_ERROR("RFDetrDetectorInfer: Infer failed");
@@ -255,13 +300,17 @@ bool RFDetrDetectorInfer::InferBatch(const std::vector<FrameInput>& frames,
             {
                 const auto& frame = frames[i];
                 if (ShouldLogDetectorFrame(frame.frameId)) {
-                    float inputMin = std::numeric_limits<float>::max();
-                    float inputMax = std::numeric_limits<float>::lowest();
-                    const float* input = m_inputHost.data() +
-                        static_cast<size_t>(i) * perFrameFloats;
-                    for (size_t k = 0; k < perFrameFloats; ++k) {
-                        inputMin = std::min(inputMin, input[k]);
-                        inputMax = std::max(inputMax, input[k]);
+                    float inputMin = 0.0f;
+                    float inputMax = 0.0f;
+                    if (!usedGpuPreprocess) {
+                        inputMin = std::numeric_limits<float>::max();
+                        inputMax = std::numeric_limits<float>::lowest();
+                        const float* input = m_inputHost.data() +
+                            static_cast<size_t>(i) * perFrameFloats;
+                        for (size_t k = 0; k < perFrameFloats; ++k) {
+                            inputMin = std::min(inputMin, input[k]);
+                            inputMax = std::max(inputMax, input[k]);
+                        }
                     }
 
                     float logitMin = std::numeric_limits<float>::max();
@@ -315,11 +364,13 @@ bool RFDetrDetectorInfer::InferBatch(const std::vector<FrameInput>& frames,
 
                     LOG_INFO(
                         "RFDetrDetector debug: frame={} input={}x{} normalized=[{:.3f},{:.3f}] "
+                        "input_mode={} "
                         "logits=[{:.3f},{:.3f}] boxes=[{:.3f},{:.3f}] "
                         "bestAny=(q={},class={},score={:.3f}) "
                         "bestTarget=(q={},class={},score={:.3f}) "
                         "pairsAbove={} targetPairsAbove={} threshold={:.2f}",
                         frame.frameId, frame.width, frame.height, inputMin, inputMax,
+                        usedGpuPreprocess ? "gpu" : "cpu",
                         logitMin, logitMax, boxMin, boxMax,
                         bestAnyQuery, bestAnyClass, bestAnyScore,
                         bestTargetQuery, bestTargetClass, bestTargetScore,
@@ -425,6 +476,130 @@ bool RFDetrDetectorInfer::PreprocessToHost(const uint8_t* rgb, int srcW, int src
         }
     }
     return true;
+}
+
+bool RFDetrDetectorInfer::PreprocessToGpu(
+    const std::vector<FrameInput>& frames,
+    std::vector<ResizeInfo>& resizeInfos,
+    void* inputDevice,
+    void* stream) {
+#ifdef WITH_CUDA_KERNELS
+    if (!inputDevice || !stream || frames.empty()) return false;
+
+    const size_t batch = frames.size();
+    size_t requiredStrideBytes = 1;
+    for (const auto& frame : frames) {
+        if (frame.width > 0 && frame.height > 0) {
+            requiredStrideBytes = std::max(
+                requiredStrideBytes,
+                static_cast<size_t>(frame.width) * frame.height * 3);
+        }
+    }
+
+    if (m_rgbStrideBytes < requiredStrideBytes) {
+        if (m_rgbDevice) cudaFree(m_rgbDevice);
+        m_rgbDevice = nullptr;
+        m_rgbDeviceBytes = 0;
+        m_rgbStrideBytes = requiredStrideBytes;
+    }
+
+    const size_t requiredDeviceBytes = m_rgbStrideBytes * batch;
+    if (m_rgbDeviceBytes < requiredDeviceBytes || !m_rgbDevice) {
+        if (m_rgbDevice) cudaFree(m_rgbDevice);
+        m_rgbDevice = nullptr;
+        m_rgbDeviceBytes = 0;
+        if (cudaMalloc(&m_rgbDevice, requiredDeviceBytes) != cudaSuccess) {
+            LOG_ERROR("RFDetrDetectorInfer: cudaMalloc RGB staging buffer failed ({} bytes)",
+                      requiredDeviceBytes);
+            return false;
+        }
+        m_rgbDeviceBytes = requiredDeviceBytes;
+    }
+
+    const size_t infoBytes = batch * sizeof(RfdetrGpuFrameInfo);
+    if (m_frameInfoDeviceBytes < infoBytes || !m_frameInfoDevice) {
+        if (m_frameInfoDevice) cudaFree(m_frameInfoDevice);
+        m_frameInfoDevice = nullptr;
+        m_frameInfoDeviceBytes = 0;
+        if (cudaMalloc(&m_frameInfoDevice, infoBytes) != cudaSuccess) {
+            LOG_ERROR("RFDetrDetectorInfer: cudaMalloc frame metadata buffer failed ({} bytes)",
+                      infoBytes);
+            return false;
+        }
+        m_frameInfoDeviceBytes = infoBytes;
+    }
+
+    std::vector<RfdetrGpuFrameInfo> frameInfo(batch);
+    for (size_t i = 0; i < batch; ++i) {
+        const FrameInput& frame = frames[i];
+        const size_t expectedBytes = frame.width > 0 && frame.height > 0
+            ? static_cast<size_t>(frame.width) * frame.height * 3 : 0;
+        const bool valid = frame.rgb != nullptr && frame.width > 0 &&
+                           frame.height > 0 && frame.channels == 3 &&
+                           (frame.dataBytes == 0 || frame.dataBytes >= expectedBytes);
+        frameInfo[i].width = frame.width;
+        frameInfo[i].height = frame.height;
+        frameInfo[i].valid = valid ? 1 : 0;
+        resizeInfos[i] = valid
+            ? ComputeResize(frame.width, frame.height,
+                            m_param.inputSize, m_param.inputSize)
+            : ResizeInfo{};
+
+        if (valid && cudaMemcpyAsync(
+                static_cast<uint8_t*>(m_rgbDevice) + i * m_rgbStrideBytes,
+                frame.rgb, expectedBytes, cudaMemcpyHostToDevice,
+                static_cast<cudaStream_t>(stream)) != cudaSuccess) {
+            LOG_ERROR("RFDetrDetectorInfer: RGB H2D upload failed for batch item {}", i);
+            return false;
+        }
+    }
+
+    if (cudaMemcpyAsync(m_frameInfoDevice, frameInfo.data(), infoBytes,
+                        cudaMemcpyHostToDevice,
+                        static_cast<cudaStream_t>(stream)) != cudaSuccess) {
+        LOG_ERROR("RFDetrDetectorInfer: frame metadata H2D upload failed");
+        return false;
+    }
+
+    if (!LaunchRfdetrGpuPreprocess(
+            static_cast<const uint8_t*>(m_rgbDevice), m_rgbStrideBytes,
+            static_cast<const RfdetrGpuFrameInfo*>(m_frameInfoDevice),
+            static_cast<float*>(inputDevice), static_cast<int>(batch),
+            m_param.inputSize, m_param.inputSize,
+            m_param.meanR, m_param.meanG, m_param.meanB,
+            1.0f / m_param.stdR, 1.0f / m_param.stdG, 1.0f / m_param.stdB,
+            stream)) {
+        LOG_ERROR("RFDetrDetectorInfer: GPU preprocessing kernel launch failed");
+        return false;
+    }
+
+    // TensorRT currently synchronizes its stream in Infer(). Synchronize here
+    // as well so the preprocess timer measures the actual GPU work rather than
+    // only host-side enqueue time.
+    if (cudaStreamSynchronize(static_cast<cudaStream_t>(stream)) != cudaSuccess) {
+        LOG_ERROR("RFDetrDetectorInfer: GPU preprocessing stream synchronize failed");
+        return false;
+    }
+    return true;
+#else
+    (void)frames;
+    (void)resizeInfos;
+    (void)inputDevice;
+    (void)stream;
+    return false;
+#endif
+}
+
+void RFDetrDetectorInfer::ReleaseGpuBuffers() {
+#ifdef WITH_CUDA_KERNELS
+    if (m_rgbDevice) cudaFree(m_rgbDevice);
+    if (m_frameInfoDevice) cudaFree(m_frameInfoDevice);
+#endif
+    m_rgbDevice = nullptr;
+    m_frameInfoDevice = nullptr;
+    m_rgbStrideBytes = 0;
+    m_rgbDeviceBytes = 0;
+    m_frameInfoDeviceBytes = 0;
 }
 
 // ---------------------------------------------------------------------------

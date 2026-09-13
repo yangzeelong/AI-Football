@@ -3,6 +3,7 @@
 #include "inference/IInferenceEngine.hpp"
 
 #include <memory>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <unordered_set>
@@ -34,6 +35,7 @@ public:
         float meanR = 0.485f, meanG = 0.456f, meanB = 0.406f;
         float stdR  = 0.229f, stdG  = 0.224f, stdB  = 0.225f;
         int   maxBatchSize = 1;  // Requested batch; static engines may clamp it.
+        bool  useGpuPreprocess = true;
     };
 
     RFDetrDetectorInfer() = default;
@@ -60,6 +62,8 @@ public:
         const uint8_t* rgb;
         int width;
         int height;
+        int channels = 3;
+        size_t dataBytes = 0;
         uint64_t frameId = 0;
     };
 
@@ -84,6 +88,11 @@ private:
     static ResizeInfo ComputeResize(int srcW, int srcH, int dstW, int dstH);
     bool PreprocessToHost(const uint8_t* rgb, int srcW, int srcH,
                           ResizeInfo& resizeOut, float* dstChw) const;
+    bool PreprocessToGpu(const std::vector<FrameInput>& frames,
+                         std::vector<ResizeInfo>& resizeInfos,
+                         void* inputDevice,
+                         void* stream);
+    void ReleaseGpuBuffers();
     void DecodeBaked(const float* out, int numQueries, std::vector<RawBox>& boxesOut) const;
     void DecodeRaw(const float* logits, const float* boxes,
                    int numQueries, int numClassesPlus1, std::vector<RawBox>& boxesOut) const;
@@ -101,6 +110,13 @@ private:
     std::vector<float> m_outputHost;   // baked
     std::vector<float> m_logitsHost;   // raw
     std::vector<float> m_boxesHost;    // raw
+
+    bool m_gpuPreprocessAvailable = false;
+    void* m_rgbDevice = nullptr;
+    void* m_frameInfoDevice = nullptr;
+    size_t m_rgbStrideBytes = 0;
+    size_t m_rgbDeviceBytes = 0;
+    size_t m_frameInfoDeviceBytes = 0;
 };
 
 } // namespace detector

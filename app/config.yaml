@@ -33,6 +33,7 @@ graph:
         stdR: 0.229
         stdG: 0.224
         stdB: 0.225
+        useGpuPreprocess: true       # CUDA resize + normalize + HWC->CHW
         # Batching. Requires a TensorRT engine built from a dynamic-batch ONNX
         # model for values > 1. Static batch=1 engines are automatically clamped.
         maxBatchSize: 4
