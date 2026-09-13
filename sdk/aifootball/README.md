@@ -23,7 +23,14 @@ options.deviceId = 0;
 // Debug rendering is disabled by default.
 options.enableRendering = false;
 
-auto runtime = aifootball::Runtime::Create(options);
+aifootball::AlgoConfig algoConfig;
+algoConfig.roi.enabled = true;
+algoConfig.roi.width = 1920;
+algoConfig.roi.height = 1080;
+algoConfig.roi.points = {{1579.0f, 1067.0f}, {56.0f, 733.0f},
+                         {950.0f, 416.0f}, {1796.0f, 493.0f}};
+
+auto runtime = aifootball::Runtime::Create(options, algoConfig);
 const auto status = runtime->Run();
 ```
 
@@ -31,6 +38,10 @@ const auto status = runtime->Run();
 EOF or the configured timeout, then stops and de-initializes the pipeline.
 `Init()`, `Start()`, `Wait()`, `Stop()`, and `DeInit()` are available when an
 embedding application needs explicit lifecycle control.
+
+`AlgoConfig` contains algorithm-level settings. ROI points use the coordinate
+system described by `roi.width` and `roi.height`; the runtime scales them to
+the decoded frame dimensions when necessary.
 
 Video rendering is a debug side effect and is disabled by default through
 `RuntimeOptions::enableRendering`. The pipeline still forwards messages to

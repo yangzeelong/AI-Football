@@ -3,11 +3,32 @@
 
 #include <nexusflow/Logging.hpp>
 #include <nexusflow/Message.hpp>
+#include <nexusflow/Any.hpp>
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
 #include <numeric>
+
+namespace {
+
+bool AnyToFloat(const nexusflow::Any& value, float& result) {
+    if (const auto* v = value.get<float>()) {
+        result = *v;
+        return true;
+    }
+    if (const auto* v = value.get<double>()) {
+        result = static_cast<float>(*v);
+        return true;
+    }
+    if (const auto* v = value.get<int>()) {
+        result = static_cast<float>(*v);
+        return true;
+    }
+    return false;
+}
+
+} // namespace
 
 // ---------------------------------------------------------------------------
 // KalmanBox — simplified diagonal-covariance filter for axis-aligned boxes.
@@ -221,9 +242,36 @@ ns::ErrorCode ByteTracker::Configure(const ns::Config& config) {
     m_param.lostTrackBuffer            = config.GetValueOrDefault<int>("lostTrackBuffer", 30);
     m_param.personClassId              = config.GetValueOrDefault<int>("personClassId", 1);
     m_param.ballClassId                = config.GetValueOrDefault<int>("ballClassId", 37);
+    m_param.roiEnabled                 = config.GetValueOrDefault<bool>("roiEnabled", false);
+    m_param.roiWidth                   = config.GetValueOrDefault<int>("roiWidth", 0);
+    m_param.roiHeight                  = config.GetValueOrDefault<int>("roiHeight", 0);
+    m_param.roiPolygon.clear();
+    const auto roiPoints = config.GetValueOrDefault<std::vector<nexusflow::Any>>(
+        "roiPoints", std::vector<nexusflow::Any>{});
+    for (const auto& pointValue : roiPoints) {
+        const auto* point = pointValue.get<std::vector<nexusflow::Any>>();
+        if (!point || point->size() < 2) {
+            LOG_ERROR("ByteTracker: ROI point must be a [x, y] sequence");
+            return ns::ErrorCode::FAILURE;
+        }
+        float x = 0.0f;
+        float y = 0.0f;
+        if (!AnyToFloat((*point)[0], x) || !AnyToFloat((*point)[1], y)) {
+            LOG_ERROR("ByteTracker: ROI point coordinates must be numeric");
+            return ns::ErrorCode::FAILURE;
+        }
+        m_param.roiPolygon.emplace_back(x, y);
+    }
+    if (m_param.roiEnabled && m_param.roiPolygon.size() < 3) {
+        LOG_ERROR("ByteTracker: enabled ROI requires at least 3 points");
+        return ns::ErrorCode::FAILURE;
+    }
     LOG_INFO("ByteTracker config: high>={}, low>={}, iouGate={}, lostBuf={}",
              m_param.trackActivationThreshold, m_param.secondAssociationThreshold,
              m_param.minimumMatchingThreshold, m_param.lostTrackBuffer);
+    LOG_INFO("ByteTracker ROI: enabled={}, points={}, sourceSize={}x{}",
+             m_param.roiEnabled, m_param.roiPolygon.size(),
+             m_param.roiWidth, m_param.roiHeight);
     return ns::ErrorCode::SUCCESS;
 }
 
@@ -267,6 +315,52 @@ void ByteTracker::InitTrack(STrack& t, int frameId, bool activated) {
     }
 }
 
+bool ByteTracker::PointInPolygon(
+    float x, float y,
+    const std::vector<std::pair<float, float>>& polygon) {
+    if (polygon.size() < 3) return false;
+
+    bool inside = false;
+    for (size_t i = 0, j = polygon.size() - 1; i < polygon.size(); j = i++) {
+        const float xi = polygon[i].first;
+        const float yi = polygon[i].second;
+        const float xj = polygon[j].first;
+        const float yj = polygon[j].second;
+
+        const float cross = (x - xi) * (yj - yi) - (y - yi) * (xj - xi);
+        const float minX = std::min(xi, xj);
+        const float maxX = std::max(xi, xj);
+        const float minY = std::min(yi, yj);
+        const float maxY = std::max(yi, yj);
+        if (std::abs(cross) <= 1e-4f && x >= minX && x <= maxX &&
+            y >= minY && y <= maxY) {
+            return true;
+        }
+
+        if ((yi > y) != (yj > y)) {
+            const float crossingX = xi + (y - yi) * (xj - xi) / (yj - yi);
+            if (x < crossingX) inside = !inside;
+        }
+    }
+    return inside;
+}
+
+bool ByteTracker::IsInsideRoi(const Detection& detection,
+                              const VideoFramePtr& videoFrame) const {
+    if (!m_param.roiEnabled || m_param.roiPolygon.size() < 3) return true;
+
+    float x = detection.centerX();
+    float y = detection.centerY();
+    if (videoFrame && m_param.roiWidth > 0 && m_param.roiHeight > 0 &&
+        videoFrame->width > 0 && videoFrame->height > 0) {
+        x *= static_cast<float>(m_param.roiWidth) /
+             static_cast<float>(videoFrame->width);
+        y *= static_cast<float>(m_param.roiHeight) /
+             static_cast<float>(videoFrame->height);
+    }
+    return PointInPolygon(x, y, m_param.roiPolygon);
+}
+
 // ---------------------------------------------------------------------------
 // Process
 // ---------------------------------------------------------------------------
@@ -291,9 +385,37 @@ void ByteTracker::Process(ns::Message& inputMessage) {
 
     if (detMsg->isEnd) { Broadcast(nexusflow::Message(std::move(out))); return; }
 
+    std::vector<Detection> roiDetections;
+    const std::vector<Detection>* detections = &detMsg->detections;
+    if (m_param.roiEnabled) {
+        roiDetections.reserve(detMsg->detections.size());
+        for (const auto& detection : detMsg->detections) {
+            if (IsInsideRoi(detection, detMsg->videoFrame)) {
+                roiDetections.push_back(detection);
+            }
+        }
+        detections = &roiDetections;
+        LOG_DEBUG("ByteTracker: frame={} ROI kept {}/{} detections",
+                  detMsg->videoFrame ? detMsg->videoFrame->frameId : 0,
+                  detections->size(), detMsg->detections.size());
+    }
+
+    // Observation output follows the application-level detection set. This
+    // keeps raw_detection_counts aligned with the detections sent downstream
+    // after ROI filtering, as in the Python pipeline.
+    out.rawCounts = DetectionCounts{};
+    for (const auto& detection : *detections) {
+        ++out.rawCounts.total;
+        if (detection.classId == m_param.personClassId) {
+            ++out.rawCounts.person;
+        } else if (detection.classId == m_param.ballClassId) {
+            ++out.rawCounts.ball;
+        }
+    }
+
     // --- Split detections into person high-score, person low-score, ball ---
     std::vector<STrack> detsHigh, detsLow;
-    for (const auto& d : detMsg->detections) {
+    for (const auto& d : *detections) {
         if (d.classId == m_param.personClassId) {
             STrack t;
             t.x0 = d.x0; t.y0 = d.y0; t.x1 = d.x1; t.y1 = d.y1;

@@ -4,8 +4,28 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace aifootball {
+
+/** A point in the source-frame coordinate system used by an ROI polygon. */
+struct RoiPoint {
+    float x = 0.0f;
+    float y = 0.0f;
+};
+
+/** Runtime ROI configuration parsed by the embedding application. */
+struct RoiConfig {
+    bool enabled = false;
+    int width = 0;
+    int height = 0;
+    std::vector<RoiPoint> points;
+};
+
+/** Algorithm-level configuration passed into the SDK runtime. */
+struct AlgoConfig {
+    RoiConfig roi;
+};
 
 /** Runtime options for the configuration-driven AI-Football pipeline. */
 struct RuntimeOptions {
@@ -35,7 +55,9 @@ struct RuntimeOptions {
  */
 class Runtime {
 public:
-    static std::unique_ptr<Runtime> Create(const RuntimeOptions& options);
+    static std::unique_ptr<Runtime> Create(
+        const RuntimeOptions& options,
+        const AlgoConfig& algoConfig = AlgoConfig());
 
     ~Runtime();
 
@@ -55,7 +77,7 @@ public:
     void RequestStop();
 
 private:
-    explicit Runtime(RuntimeOptions options);
+    explicit Runtime(RuntimeOptions options, AlgoConfig algoConfig);
 
     class Impl;
     std::unique_ptr<Impl> m_impl;

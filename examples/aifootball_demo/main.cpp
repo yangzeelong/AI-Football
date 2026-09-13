@@ -6,6 +6,44 @@
 #include <csignal>
 #include <string>
 #include <stdexcept>
+#include <yaml-cpp/yaml.h>
+
+namespace {
+
+aifootball::AlgoConfig LoadAlgoConfig(const std::string& configPath) {
+    aifootball::AlgoConfig algoConfig;
+    const YAML::Node root = YAML::LoadFile(configPath);
+    const YAML::Node roi = root["algorithm"]["roi"];
+    if (!roi) return algoConfig;
+
+    if (roi["enabled"]) algoConfig.roi.enabled = roi["enabled"].as<bool>();
+    if (roi["width"]) algoConfig.roi.width = roi["width"].as<int>();
+    if (roi["height"]) algoConfig.roi.height = roi["height"].as<int>();
+
+    const YAML::Node points = roi["points"];
+    if (points) {
+        if (!points.IsSequence()) {
+            throw std::runtime_error("algorithm.roi.points must be a sequence");
+        }
+        for (const auto& point : points) {
+            if (!point.IsSequence() || point.size() < 2) {
+                throw std::runtime_error("each algorithm.roi point must be [x, y]");
+            }
+            aifootball::RoiPoint parsed;
+            parsed.x = point[0].as<float>();
+            parsed.y = point[1].as<float>();
+            algoConfig.roi.points.push_back(parsed);
+        }
+    }
+
+    if (algoConfig.roi.enabled && algoConfig.roi.points.size() < 3) {
+        throw std::runtime_error(
+            "algorithm.roi.enabled requires at least 3 points");
+    }
+    return algoConfig;
+}
+
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Graceful shutdown on SIGINT / SIGTERM
@@ -87,8 +125,9 @@ int main(int argc, char* argv[]) {
         options.deviceId = deviceId;
         options.maxSeconds = maxSeconds;
         options.stride = stride > 0 ? stride : 0;
+        const auto algoConfig = LoadAlgoConfig(configPath);
 
-        auto runtime = aifootball::Runtime::Create(options);
+        auto runtime = aifootball::Runtime::Create(options, algoConfig);
         g_runtime.store(runtime.get(), std::memory_order_relaxed);
         const auto result = runtime->Run();
         g_runtime.store(nullptr, std::memory_order_relaxed);

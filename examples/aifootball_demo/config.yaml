@@ -149,3 +149,16 @@ graph:
       to: ObservationWriter
     - from: VideoRenderer
       to: AlarmPusher
+
+# Algorithm configuration is parsed by the SDK demo and passed through the
+# public AlgoConfig API. Coordinates use the source video resolution.
+algorithm:
+  roi:
+    enabled: true
+    width: 1920
+    height: 1080
+    points:
+      - [1579, 1067]
+      - [56, 733]
+      - [950, 416]
+      - [1796, 493]

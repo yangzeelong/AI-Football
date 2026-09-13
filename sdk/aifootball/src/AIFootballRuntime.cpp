@@ -80,8 +80,9 @@ void RegisterBuiltInModules() {
 
 class Runtime::Impl {
 public:
-    explicit Impl(RuntimeOptions runtimeOptions)
-        : options(std::move(runtimeOptions)) {}
+    Impl(RuntimeOptions runtimeOptions, AlgoConfig runtimeAlgoConfig)
+        : options(std::move(runtimeOptions)),
+          algoConfig(std::move(runtimeAlgoConfig)) {}
 
     ~Impl() {
         if (pipeline && started) {
@@ -127,6 +128,18 @@ public:
                     if (!options.outputDir.empty()) {
                         config["outputPath"] = JoinPath(options.outputDir, "rendered.mp4");
                     }
+                } else if (name == "ByteTracker" || name == "PersonTracker") {
+                    config["roiEnabled"] = algoConfig.roi.enabled;
+                    config["roiWidth"] = algoConfig.roi.width;
+                    config["roiHeight"] = algoConfig.roi.height;
+                    YAML::Node points(YAML::NodeType::Sequence);
+                    for (const auto& point : algoConfig.roi.points) {
+                        YAML::Node pair(YAML::NodeType::Sequence);
+                        pair.push_back(point.x);
+                        pair.push_back(point.y);
+                        points.push_back(pair);
+                    }
+                    config["roiPoints"] = points;
                 } else if (name == "ObservationWriter") {
                     if (!options.videoPath.empty()) config["videoPath"] = options.videoPath;
                     if (!options.outputDir.empty()) {
@@ -166,6 +179,7 @@ public:
     }
 
     RuntimeOptions options;
+    AlgoConfig algoConfig;
     std::unique_ptr<nexusflow::Pipeline> pipeline;
     std::string effectiveConfig;
     std::string generatedConfig;
@@ -174,13 +188,14 @@ public:
     PipelineCompletionSignal& completion = PipelineCompletionSignal::Instance();
 };
 
-Runtime::Runtime(RuntimeOptions options)
-    : m_impl(std::make_unique<Impl>(std::move(options))) {}
+Runtime::Runtime(RuntimeOptions options, AlgoConfig algoConfig)
+    : m_impl(std::make_unique<Impl>(std::move(options), std::move(algoConfig))) {}
 
 Runtime::~Runtime() = default;
 
-std::unique_ptr<Runtime> Runtime::Create(const RuntimeOptions& options) {
-    return std::unique_ptr<Runtime>(new Runtime(options));
+std::unique_ptr<Runtime> Runtime::Create(const RuntimeOptions& options,
+                                         const AlgoConfig& algoConfig) {
+    return std::unique_ptr<Runtime>(new Runtime(options, algoConfig));
 }
 
 nexusflow::ErrorCode Runtime::Init() {
@@ -197,6 +212,11 @@ nexusflow::ErrorCode Runtime::Init() {
 #endif
 
     RegisterBuiltInModules();
+    LOG_INFO("AI-Football SDK: ROI enabled={}, points={}, sourceSize={}x{}",
+             m_impl->algoConfig.roi.enabled,
+             m_impl->algoConfig.roi.points.size(),
+             m_impl->algoConfig.roi.width,
+             m_impl->algoConfig.roi.height);
     m_impl->completion.Reset();
     m_impl->completion.SetOnComplete([] {
         LOG_INFO("AI-Football SDK: pipeline completed");

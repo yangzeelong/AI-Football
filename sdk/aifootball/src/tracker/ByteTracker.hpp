@@ -1,5 +1,6 @@
 #pragma once
 
+#include "common/MyMessage.hpp"
 #include "nexusflow/ErrorCode.hpp"
 #include <nexusflow/Nexusflow.hpp>
 
@@ -43,6 +44,10 @@ private:
         int   lostTrackBuffer            = 30;    // frames before removing lost track
         int   personClassId              = 1;
         int   ballClassId                = 37;
+        bool  roiEnabled                 = false;
+        int   roiWidth                   = 0;
+        int   roiHeight                  = 0;
+        std::vector<std::pair<float, float>> roiPolygon;
     } m_param;
 
     enum class State : int { New = 0, Tracked = 1, Lost = 2, Removed = 3 };
@@ -101,6 +106,11 @@ private:
 
     int NextId() { return m_nextId++; }
     void Reset();
+
+    bool IsInsideRoi(const Detection& detection,
+                    const VideoFramePtr& videoFrame) const;
+    static bool PointInPolygon(float x, float y,
+                               const std::vector<std::pair<float, float>>& polygon);
 };
 
 NEXUSFLOW_REGISTER_MODULE(ByteTracker);
