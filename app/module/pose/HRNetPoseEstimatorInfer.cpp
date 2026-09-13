@@ -130,7 +130,7 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
                   B, m_effectiveMaxBatch);
         return false;
     }
-    TIMER_SCOPE_AVERAGE("PoseEstimator.Batch", static_cast<uint64_t>(B));
+    TIMER_SCOPE_AVERAGE_MS("PoseEstimator.Batch", static_cast<uint64_t>(B), 5000);
     const size_t perPersonInput  = static_cast<size_t>(3) * m_param.inputHeight * m_param.inputWidth;
     const size_t perPersonOutput = static_cast<size_t>(m_param.numKeypoints) *
                                    m_param.heatmapHeight * m_param.heatmapWidth;
@@ -140,7 +140,7 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
     std::vector<CropBox> crops(B);
 
     {
-        TIMER_SCOPE_AVERAGE("PoseEstimator.Preprocess", static_cast<uint64_t>(B));
+        TIMER_SCOPE_AVERAGE_MS("PoseEstimator.Preprocess", static_cast<uint64_t>(B), 5000);
         for (int i = 0; i < B; ++i) {
             const auto& p = persons[i];
             float x0 = p.x0, y0 = p.y0, x1 = p.x1, y1 = p.y1;
@@ -156,7 +156,7 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
     size_t batchInputBytes = B * perPersonInput * sizeof(float);
 
     {
-        TIMER_SCOPE_AVERAGE("PoseEstimator.TensorRT", static_cast<uint64_t>(B));
+        TIMER_SCOPE_AVERAGE_MS("PoseEstimator.TensorRT", static_cast<uint64_t>(B), 5000);
         if (!m_engine->SetInputFromHost(m_param.inputBindingName,
                                         m_inputHost.data(), batchInputBytes, batchDims)) {
             LOG_ERROR("HRNetPoseEstimatorInfer: SetInputFromHost failed");
@@ -170,7 +170,7 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
 
     size_t outBytes = B * perPersonOutput * sizeof(float);
     {
-        TIMER_SCOPE_AVERAGE("PoseEstimator.CopyOutput", static_cast<uint64_t>(B));
+        TIMER_SCOPE_AVERAGE_MS("PoseEstimator.CopyOutput", static_cast<uint64_t>(B), 5000);
         if (!m_engine->CopyOutputToHost(m_param.outputBindingName,
                                         m_outputHost.data(), outBytes)) {
             LOG_ERROR("HRNetPoseEstimatorInfer: CopyOutputToHost failed");
@@ -180,7 +180,7 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
 
     // --- Decode heatmaps + inverse map to original frame coords ---
     {
-        TIMER_SCOPE_AVERAGE("PoseEstimator.Postprocess", static_cast<uint64_t>(B));
+        TIMER_SCOPE_AVERAGE_MS("PoseEstimator.Postprocess", static_cast<uint64_t>(B), 5000);
         results.resize(B);
         for (int i = 0; i < B; ++i) {
         const float* hm = m_outputHost.data() + i * perPersonOutput;

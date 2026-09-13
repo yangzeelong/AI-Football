@@ -161,7 +161,7 @@ bool RFDetrDetectorInfer::InferBatch(const std::vector<FrameInput>& frames,
                   B, m_effectiveMaxBatch);
         return false;
     }
-    TIMER_SCOPE_AVERAGE("Detector.Batch", static_cast<uint64_t>(B));
+    TIMER_SCOPE_AVERAGE_MS("Detector.Batch", static_cast<uint64_t>(B), 5000);
     const size_t perFrameFloats = static_cast<size_t>(m_param.inputSize) * m_param.inputSize * 3;
 
     // Ensure host buffers are large enough.
@@ -171,7 +171,7 @@ bool RFDetrDetectorInfer::InferBatch(const std::vector<FrameInput>& frames,
     // --- Preprocess ---
     std::vector<ResizeInfo> resizeInfos(B);
     {
-        TIMER_SCOPE_AVERAGE("Detector.Preprocess", static_cast<uint64_t>(B));
+        TIMER_SCOPE_AVERAGE_MS("Detector.Preprocess", static_cast<uint64_t>(B), 5000);
         for (int i = 0; i < B; ++i) {
             float* dst = m_inputHost.data() + i * perFrameFloats;
             if (!frames[i].rgb || frames[i].width <= 0 || frames[i].height <= 0) {
@@ -189,7 +189,7 @@ bool RFDetrDetectorInfer::InferBatch(const std::vector<FrameInput>& frames,
     size_t batchInputBytes = B * perFrameFloats * sizeof(float);
 
     {
-        TIMER_SCOPE_AVERAGE("Detector.TensorRT", static_cast<uint64_t>(B));
+        TIMER_SCOPE_AVERAGE_MS("Detector.TensorRT", static_cast<uint64_t>(B), 5000);
         if (!m_engine->SetInputFromHost(m_param.inputBindingName,
                                         m_inputHost.data(), batchInputBytes, batchDims)) {
             LOG_ERROR("RFDetrDetectorInfer: SetInputFromHost failed");
@@ -203,7 +203,7 @@ bool RFDetrDetectorInfer::InferBatch(const std::vector<FrameInput>& frames,
 
     // --- Postprocess per frame ---
     {
-        TIMER_SCOPE_AVERAGE("Detector.Postprocess", static_cast<uint64_t>(B));
+        TIMER_SCOPE_AVERAGE_MS("Detector.Postprocess", static_cast<uint64_t>(B), 5000);
         results.resize(B);
         for (int i = 0; i < B; ++i) {
         std::vector<RawBox> rawBoxes;
@@ -214,7 +214,7 @@ bool RFDetrDetectorInfer::InferBatch(const std::vector<FrameInput>& frames,
             if (m_outputHost.size() < totalOut)
                 m_outputHost.resize(totalOut, 0.0f);
             if (i == 0) {
-                TIMER_SCOPE_AVERAGE("Detector.CopyOutput", static_cast<uint64_t>(B));
+                TIMER_SCOPE_AVERAGE_MS("Detector.CopyOutput", static_cast<uint64_t>(B), 5000);
                 if (!m_engine->CopyOutputToHost(m_param.outputBindingName,
                                                 m_outputHost.data(),
                                                 totalOut * sizeof(float))) {
@@ -239,7 +239,7 @@ bool RFDetrDetectorInfer::InferBatch(const std::vector<FrameInput>& frames,
                 m_boxesHost.resize(totalBoxes, 0.0f);
 
             if (i == 0) {
-                TIMER_SCOPE_AVERAGE("Detector.CopyOutput", static_cast<uint64_t>(B));
+                TIMER_SCOPE_AVERAGE_MS("Detector.CopyOutput", static_cast<uint64_t>(B), 5000);
                 bool okL = m_engine->CopyOutputToHost(m_param.logitsBindingName,
                                                       m_logitsHost.data(),
                                                       totalLogits * sizeof(float));

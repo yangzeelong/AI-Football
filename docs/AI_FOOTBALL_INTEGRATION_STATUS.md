@@ -78,23 +78,34 @@ TimerRegistry.
 ## TimerRegistry
 
 `nexusflow::TimerRegistry` is a thread-safe global aggregation service in the
-framework. It supports both explicit timers and RAII scopes:
+framework. `TIMER_SCOPE` prints every invocation and is intended for focused
+debugging. The average timers aggregate samples and print by elapsed time,
+sample count, or either condition:
 
 ```cpp
-TIMER_START_AVERAGE("Detector.TensorRT", 1000); // print interval in ms
+TIMER_SCOPE("Detector.DebugStep");
+TIMER_SCOPE_UNITS("Detector.DebugBatch", batchSize);
+
+TIMER_START_AVERAGE_MS("Detector.TensorRT", 5000);
 TIMER_INCREMENT_AVERAGE("Detector.TensorRT", batchSize);
 TIMER_END_AVERAGE("Detector.TensorRT");
 
+TIMER_START_AVERAGE_N("Detector.Postprocess", 100);
+TIMER_START_AVERAGE("Detector.Postprocess", 100, 5000);
+
 // or:
-TIMER_SCOPE_AVERAGE("Detector.Postprocess", batchSize);
+TIMER_SCOPE_AVERAGE_MS("Detector.Postprocess", batchSize, 5000);
+TIMER_SCOPE_AVERAGE_N("Detector.Postprocess", batchSize, 100);
+TIMER_SCOPE_AVERAGE("Detector.Postprocess", batchSize, 100, 5000);
 ```
 
 Each timer reports total samples, work units, average batch time, average
 item time, batch QPS, item QPS, and min/max time. `Module::ProcessTimed()`
-is unchanged by this instrumentation. `StartAverage()` controls the periodic
-print interval; work units are accumulated by `IncrementAverage()` or RAII
-scope construction. Detector and pose inference paths report preprocess,
-TensorRT, output-copy, postprocess, and whole-batch timings separately.
+is unchanged by this instrumentation. `StartAverage*()` controls the print
+policy; work units are accumulated by `IncrementAverage()` or RAII scope
+construction. Detector and pose inference paths currently use
+`TIMER_SCOPE_AVERAGE_MS(..., 5000)` for preprocess, TensorRT, output-copy,
+postprocess, and whole-batch timings.
 
 Representative measurements from the current 960-resolution run:
 

@@ -31,7 +31,7 @@ TEST(TimerRegistryTest, SupportsScopedAndIncrementedSamples) {
     auto& registry = TimerRegistry::Instance();
     registry.Reset();
 
-    registry.StartAverage("test.scoped", 1000);
+    registry.StartAverageMs("test.scoped", 1000);
     registry.IncrementAverage("test.scoped", 5);
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
     const double elapsedMs = registry.EndAverage("test.scoped");
@@ -44,13 +44,31 @@ TEST(TimerRegistryTest, SupportsScopedAndIncrementedSamples) {
     EXPECT_DOUBLE_EQ(stats.totalMs, elapsedMs);
 
     {
-        auto timer = registry.Scope("test.raii", 4);
+        auto timer = registry.ScopeAverageMs("test.raii", 4, 1000);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     ASSERT_TRUE(registry.GetStats("test.raii", stats));
     EXPECT_EQ(stats.samples, 1U);
     EXPECT_EQ(stats.workUnits, 4U);
     EXPECT_GT(stats.totalMs, 0.0);
+
+    {
+        auto timer = registry.Scope("test.every-sample");
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    ASSERT_TRUE(registry.GetStats("test.every-sample", stats));
+    EXPECT_EQ(stats.samples, 1U);
+    EXPECT_EQ(stats.workUnits, 1U);
+
+    registry.StartAverageN("test.every-n", 2);
+    registry.IncrementAverage("test.every-n", 1);
+    registry.EndAverage("test.every-n");
+    registry.StartAverageN("test.every-n", 2);
+    registry.IncrementAverage("test.every-n", 1);
+    registry.EndAverage("test.every-n");
+    ASSERT_TRUE(registry.GetStats("test.every-n", stats));
+    EXPECT_EQ(stats.samples, 2U);
+    EXPECT_EQ(stats.workUnits, 2U);
 }
 
 TEST(TimerRegistryTest, AggregationIsThreadSafe) {
