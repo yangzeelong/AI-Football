@@ -36,6 +36,8 @@ int main(int argc, char* argv[]) {
     cli.AddArgument("--max_seconds",  "-t", "Cap run time in seconds (0 = wait for EOF)", false, "0");
     cli.AddArgument("--stride",       "-S", "Process every Nth frame (1 = all frames)", false, "1");
     cli.AddArgument("--device",       "-d", "CUDA device id", false, "0");
+    cli.AddArgument("--render",       "",  "Enable debug video rendering", false,
+                    app::CommandParser::FlagMarker());
     cli.AddArgument("--verbose",      "-V", "Enable DEBUG-level logging", false, app::CommandParser::FlagMarker());
     cli.AddArgument("--quiet",        "-q", "Suppress INFO-level logging", false, app::CommandParser::FlagMarker());
 
@@ -64,6 +66,7 @@ int main(int argc, char* argv[]) {
     int deviceId    = cli.GetInt("device");
     std::string videoPath = cli.Get("video_path");
     std::string outputDir = cli.Get("output_dir");
+    const bool enableRendering = cli.IsFlagSet("render");
 
     LOG_INFO("=== AI-Football SDK demo ===");
     LOG_INFO("  config:       {}", configPath);
@@ -72,6 +75,7 @@ int main(int argc, char* argv[]) {
     if (maxSeconds > 0)      LOG_INFO("  max_seconds:  {}", maxSeconds);
     if (stride > 1)          LOG_INFO("  stride:       {}", stride);
     LOG_INFO("  device:       cuda:{}", deviceId);
+    LOG_INFO("  rendering:    {}", enableRendering ? "enabled" : "disabled");
 
     // --- Run through the public SDK facade ---
     try {
@@ -79,6 +83,7 @@ int main(int argc, char* argv[]) {
         options.configPath = configPath;
         options.videoPath = videoPath;
         options.outputDir = outputDir;
+        options.enableRendering = enableRendering;
         options.deviceId = deviceId;
         options.maxSeconds = maxSeconds;
         options.stride = stride > 0 ? stride : 0;

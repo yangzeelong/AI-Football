@@ -111,7 +111,7 @@ graph:
     - name: VideoRenderer
       class: VideoRenderer
       config:
-        enabled: true
+        enabled: false                 # SDK default; enable with demo --render
         outputPath: output/rendered.mp4
         fps: 60.0
         stride: 1

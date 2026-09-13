@@ -13,7 +13,8 @@ struct RuntimeOptions {
     std::string configPath;
     /// Optional override for the VideoReader videoPath setting.
     std::string videoPath;
-    /// Optional output directory for rendered.mp4, observations.jsonl, result.txt.
+    /// Optional output directory for observations.jsonl, result.txt, and
+    /// rendered.mp4 when rendering is enabled.
     std::string outputDir;
     /// CUDA device selected before model initialization.
     int deviceId = 0;
@@ -21,6 +22,8 @@ struct RuntimeOptions {
     int maxSeconds = 0;
     /// Optional override for VideoReader stride; zero keeps the YAML value.
     int stride = 0;
+    /// Enable debug video rendering. Disabled by default for SDK workloads.
+    bool enableRendering = false;
 };
 
 /**

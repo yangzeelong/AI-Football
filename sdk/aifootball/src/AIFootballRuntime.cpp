@@ -102,13 +102,6 @@ public:
             return false;
         }
 
-        const bool hasOverrides = !options.videoPath.empty() ||
-                                  !options.outputDir.empty() || options.stride > 0;
-        if (!hasOverrides) {
-            effectiveConfig = options.configPath;
-            return true;
-        }
-
         try {
             YAML::Node root = YAML::LoadFile(options.configPath);
             YAML::Node modules = root["graph"]["modules"];
@@ -127,8 +120,13 @@ public:
                 if (name == "VideoReader") {
                     if (!options.videoPath.empty()) config["videoPath"] = options.videoPath;
                     if (options.stride > 0) config["stride"] = options.stride;
-                } else if (name == "VideoRenderer" && !options.outputDir.empty()) {
-                    config["outputPath"] = JoinPath(options.outputDir, "rendered.mp4");
+                } else if (name == "VideoRenderer") {
+                    // Rendering is a debug side effect and is explicitly
+                    // controlled by the SDK, independent of the YAML default.
+                    config["enabled"] = options.enableRendering;
+                    if (!options.outputDir.empty()) {
+                        config["outputPath"] = JoinPath(options.outputDir, "rendered.mp4");
+                    }
                 } else if (name == "ObservationWriter") {
                     if (!options.videoPath.empty()) config["videoPath"] = options.videoPath;
                     if (!options.outputDir.empty()) {

@@ -46,6 +46,16 @@ Run the demo with a YAML configuration:
   --output_dir output/sdk_demo
 ```
 
+The SDK does not render video by default. Enable the debug renderer explicitly
+when needed:
+
+```bash
+./build/examples/aifootball_demo/aifootball_demo \
+  examples/aifootball_demo/config.yaml \
+  --output_dir output/sdk_debug \
+  --render
+```
+
 An embedding application only needs the SDK facade:
 
 ```cpp
@@ -56,6 +66,7 @@ int main() {
     options.configPath = "aifootball.yaml";
     options.videoPath = "input.mp4";
     options.outputDir = "output";
+    options.enableRendering = false;
     auto runtime = aifootball::Runtime::Create(options);
     return runtime->Run() == nexusflow::SUCCESS ? 0 : 1;
 }

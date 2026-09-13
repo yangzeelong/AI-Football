@@ -52,7 +52,8 @@ ctest --test-dir build --output-on-failure
 100% tests passed, 0 tests failed out of 77
 ```
 
-The application has also been run successfully on the test video. The
+The application has also been run successfully on the test video. Rendering
+is a debug-only SDK option and is disabled by default. When enabled, the
 rendered output is written to:
 
 ```text
