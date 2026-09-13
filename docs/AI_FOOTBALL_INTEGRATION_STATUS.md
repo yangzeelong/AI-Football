@@ -1,6 +1,6 @@
 # AI-Football TensorRT Integration Status
 
-Updated: 2026-09-12
+Updated: 2026-09-13
 
 ## Current Pipeline
 
@@ -68,10 +68,33 @@ output/observations.jsonl
 
 ## Current Performance
 
-The framework now measures the processing time of each module centrally in
+The framework measures the processing time of each module centrally in
 `nexusflow::Module::ProcessTimed()`. Each output message carries a
 `MessageMeta::moduleTimingMs` map, and the observation writer emits it as
-`module_timings_ms`.
+`module_timings_ms`. These values represent the elapsed time of the module's
+`Process()` invocation. Batch-specific amortization is reported separately by
+TimerRegistry.
+
+## TimerRegistry
+
+`nexusflow::TimerRegistry` is a thread-safe global aggregation service in the
+framework. It supports both explicit timers and RAII scopes:
+
+```cpp
+TIMER_START_AVERAGE("Detector.TensorRT", 1000); // print interval in ms
+TIMER_INCREMENT_AVERAGE("Detector.TensorRT", batchSize);
+TIMER_END_AVERAGE("Detector.TensorRT");
+
+// or:
+TIMER_SCOPE_AVERAGE("Detector.Postprocess", batchSize);
+```
+
+Each timer reports total samples, work units, average batch time, average
+item time, batch QPS, item QPS, and min/max time. `Module::ProcessTimed()`
+is unchanged by this instrumentation. `StartAverage()` controls the periodic
+print interval; work units are accumulated by `IncrementAverage()` or RAII
+scope construction. Detector and pose inference paths report preprocess,
+TensorRT, output-copy, postprocess, and whole-batch timings separately.
 
 Representative measurements from the current 960-resolution run:
 

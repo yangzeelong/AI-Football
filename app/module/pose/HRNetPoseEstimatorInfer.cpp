@@ -2,6 +2,7 @@
 #include "inference/TensorRTEngine.hpp"
 
 #include <nexusflow/Logging.hpp>
+#include <nexusflow/TimerRegistry.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -129,6 +130,7 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
                   B, m_effectiveMaxBatch);
         return false;
     }
+    TIMER_SCOPE_AVERAGE("PoseEstimator.Batch", static_cast<uint64_t>(B));
     const size_t perPersonInput  = static_cast<size_t>(3) * m_param.inputHeight * m_param.inputWidth;
     const size_t perPersonOutput = static_cast<size_t>(m_param.numKeypoints) *
                                    m_param.heatmapHeight * m_param.heatmapWidth;
@@ -137,39 +139,50 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
     struct CropBox { float x0, y0, x1, y1; };
     std::vector<CropBox> crops(B);
 
-    for (int i = 0; i < B; ++i) {
-        const auto& p = persons[i];
-        float x0 = p.x0, y0 = p.y0, x1 = p.x1, y1 = p.y1;
-        ExpandPoseBox(x0, y0, x1, y1, p.frameW, p.frameH);
-        crops[i] = {x0, y0, x1, y1};
-        PreprocessCrop(p.frameRgb, p.frameW, p.frameH, x0, y0, x1, y1,
-                       m_inputHost.data() + i * perPersonInput);
+    {
+        TIMER_SCOPE_AVERAGE("PoseEstimator.Preprocess", static_cast<uint64_t>(B));
+        for (int i = 0; i < B; ++i) {
+            const auto& p = persons[i];
+            float x0 = p.x0, y0 = p.y0, x1 = p.x1, y1 = p.y1;
+            ExpandPoseBox(x0, y0, x1, y1, p.frameW, p.frameH);
+            crops[i] = {x0, y0, x1, y1};
+            PreprocessCrop(p.frameRgb, p.frameW, p.frameH, x0, y0, x1, y1,
+                           m_inputHost.data() + i * perPersonInput);
+        }
     }
 
     // --- Engine inference ---
     inference::Dims batchDims(B, 3, m_param.inputHeight, m_param.inputWidth);
     size_t batchInputBytes = B * perPersonInput * sizeof(float);
 
-    if (!m_engine->SetInputFromHost(m_param.inputBindingName,
-                                    m_inputHost.data(), batchInputBytes, batchDims)) {
-        LOG_ERROR("HRNetPoseEstimatorInfer: SetInputFromHost failed");
-        return false;
-    }
-    if (!m_engine->Infer()) {
-        LOG_ERROR("HRNetPoseEstimatorInfer: Infer failed");
-        return false;
+    {
+        TIMER_SCOPE_AVERAGE("PoseEstimator.TensorRT", static_cast<uint64_t>(B));
+        if (!m_engine->SetInputFromHost(m_param.inputBindingName,
+                                        m_inputHost.data(), batchInputBytes, batchDims)) {
+            LOG_ERROR("HRNetPoseEstimatorInfer: SetInputFromHost failed");
+            return false;
+        }
+        if (!m_engine->Infer()) {
+            LOG_ERROR("HRNetPoseEstimatorInfer: Infer failed");
+            return false;
+        }
     }
 
     size_t outBytes = B * perPersonOutput * sizeof(float);
-    if (!m_engine->CopyOutputToHost(m_param.outputBindingName,
-                                    m_outputHost.data(), outBytes)) {
-        LOG_ERROR("HRNetPoseEstimatorInfer: CopyOutputToHost failed");
-        return false;
+    {
+        TIMER_SCOPE_AVERAGE("PoseEstimator.CopyOutput", static_cast<uint64_t>(B));
+        if (!m_engine->CopyOutputToHost(m_param.outputBindingName,
+                                        m_outputHost.data(), outBytes)) {
+            LOG_ERROR("HRNetPoseEstimatorInfer: CopyOutputToHost failed");
+            return false;
+        }
     }
 
     // --- Decode heatmaps + inverse map to original frame coords ---
-    results.resize(B);
-    for (int i = 0; i < B; ++i) {
+    {
+        TIMER_SCOPE_AVERAGE("PoseEstimator.Postprocess", static_cast<uint64_t>(B));
+        results.resize(B);
+        for (int i = 0; i < B; ++i) {
         const float* hm = m_outputHost.data() + i * perPersonOutput;
         PersonPose& pp = results[i];
 
@@ -193,6 +206,7 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
             pp.keypoints[k].x = cb.x0 + pp.keypoints[k].x * scaleX;
             pp.keypoints[k].y = cb.y0 + pp.keypoints[k].y * scaleY;
         }
+    }
     }
     return true;
 }

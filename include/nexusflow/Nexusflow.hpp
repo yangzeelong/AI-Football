@@ -9,5 +9,6 @@
 #include <nexusflow/PipelineBuilder.hpp>
 #include <nexusflow/TypeTraits.hpp>
 #include <nexusflow/Any.hpp>
+#include <nexusflow/TimerRegistry.hpp>
 
 #endif
