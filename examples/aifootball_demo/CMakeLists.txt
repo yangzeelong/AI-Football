@@ -1,4 +1,9 @@
-add_executable(aifootball_demo main.cpp)
+add_executable(aifootball_demo
+    main.cpp
+    DemoConfig.cpp
+    VideoReader.cpp
+    JsonlWriter.cpp
+    VideoRenderer.cpp)
 find_path(AIFOOTBALL_DEMO_FFMPEG_INCLUDE_DIR libavcodec/avcodec.h
     PATHS /usr/include/x86_64-linux-gnu /usr/include /usr/local/include)
 find_library(AIFOOTBALL_DEMO_AVFORMAT_LIB avformat
@@ -15,6 +20,7 @@ target_include_directories(aifootball_demo PRIVATE
     "${AIFOOTBALL_DEMO_FFMPEG_INCLUDE_DIR}")
 target_link_libraries(aifootball_demo PRIVATE
     aifootball_sdk
+    JsonCpp::JsonCpp
     ${AIFOOTBALL_DEMO_AVFORMAT_LIB}
     ${AIFOOTBALL_DEMO_AVCODEC_LIB}
     ${AIFOOTBALL_DEMO_AVUTIL_LIB}

@@ -111,7 +111,7 @@ graph:
     - name: VideoRenderer
       class: VideoRenderer
       config:
-        enabled: false                 # SDK default; enable with demo --render
+        enabled: false                 # Rendering is handled by tools/render_jsonl.py
         outputPath: output/rendered.mp4
         fps: 60.0
         stride: 1
@@ -151,7 +151,7 @@ graph:
       to: AlarmPusher
 
 # Algorithm configuration is parsed by the SDK demo and passed through the
-# public AlgoConfig API. Coordinates use the source video resolution.
+# public AIFootballContext API. Coordinates use the source video resolution.
 algorithm:
   roi:
     enabled: true

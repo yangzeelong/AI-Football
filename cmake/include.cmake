@@ -1,6 +1,10 @@
 include("cmake/3rdparty/spdlog.cmake")
 include("cmake/3rdparty/yaml-cpp.cmake")
 
+if(WITH_AIFOOTBALL_SDK AND WITH_EXAMPLES)
+    include("cmake/3rdparty/jsoncpp.cmake")
+endif()
+
 if(WITH_TESTING)
     include("cmake/3rdparty/gtest.cmake")
 endif()
