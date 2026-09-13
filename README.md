@@ -24,6 +24,43 @@ Current AI-Football TensorRT integration results, performance measurements,
 known issues, and TODOs are documented in
 [`docs/AI_FOOTBALL_INTEGRATION_STATUS.md`](docs/AI_FOOTBALL_INTEGRATION_STATUS.md).
 
+## AI-Football SDK
+
+The AI-Football pipeline is exposed as the `aifootball_sdk` target. The public
+entry point is [`sdk/aifootball/include/aifootball/AIFootball.hpp`](sdk/aifootball/include/aifootball/AIFootball.hpp);
+model modules and TensorRT/CUDA details remain private to the SDK target.
+
+Build the SDK and its integration demo with:
+
+```bash
+cmake -S . -B build -DWITH_AIFOOTBALL_SDK=ON
+cmake --build build --target aifootball_sdk aifootball_demo --parallel 4
+```
+
+Run the demo with a YAML configuration:
+
+```bash
+./build/examples/aifootball_demo/aifootball_demo \
+  examples/aifootball_demo/config.yaml \
+  --video_path data/射门1-1080p60.mov \
+  --output_dir output/sdk_demo
+```
+
+An embedding application only needs the SDK facade:
+
+```cpp
+#include <aifootball/AIFootball.hpp>
+
+int main() {
+    aifootball::RuntimeOptions options;
+    options.configPath = "aifootball.yaml";
+    options.videoPath = "input.mp4";
+    options.outputDir = "output";
+    auto runtime = aifootball::Runtime::Create(options);
+    return runtime->Run() == nexusflow::SUCCESS ? 0 : 1;
+}
+```
+
 The following example demonstrates how to build a pipeline with four modules: one input node distributes data to two parallel processing nodes, and one output node gathers the results.
 
 ### Option 1: Declarative Build via YAML (Recommended)

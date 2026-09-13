@@ -24,5 +24,11 @@ target_link_libraries(nexusflow PUBLIC
     yaml-cpp::yaml-cpp
 )
 
+install(TARGETS nexusflow
+    ARCHIVE DESTINATION lib
+    LIBRARY DESTINATION lib
+    RUNTIME DESTINATION bin)
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../include/nexusflow"
+    DESTINATION include)
 
 
