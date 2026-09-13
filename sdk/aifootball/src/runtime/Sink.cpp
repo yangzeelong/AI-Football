@@ -1,18 +1,17 @@
-#include "ResultSink.hpp"
+#include "Sink.hpp"
 
 #include <nexusflow/Logging.hpp>
 
 namespace aifootball {
 
-ResultSink::ResultSink(const std::string& name) : Module(name) {}
+Sink::Sink(const std::string& name) : Module(name) {}
 
-void ResultSink::SetCallback(Callback callback) {
+void Sink::SetCallback(Callback callback) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_callback = std::move(callback);
 }
 
-bool ResultSink::WaitNext(ResultPacket& packet,
-                          std::chrono::milliseconds timeout) {
+bool Sink::WaitNext(ResultPacket& packet, std::chrono::milliseconds timeout) {
     std::unique_lock<std::mutex> lock(m_mutex);
     if (!m_condition.wait_for(lock, timeout, [this] {
             return m_closed || !m_pending.empty();
@@ -25,19 +24,19 @@ bool ResultSink::WaitNext(ResultPacket& packet,
     return true;
 }
 
-void ResultSink::PrepareForEnd() {
+void Sink::PrepareForEnd() {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_endSeen = false;
 }
 
-bool ResultSink::WaitForEnd(std::chrono::milliseconds timeout) {
+bool Sink::WaitForEnd(std::chrono::milliseconds timeout) {
     std::unique_lock<std::mutex> lock(m_mutex);
     return m_condition.wait_for(lock, timeout, [this] {
         return m_closed || m_endSeen;
     }) && m_endSeen;
 }
 
-void ResultSink::Close() {
+void Sink::Close() {
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         m_closed = true;
@@ -46,10 +45,10 @@ void ResultSink::Close() {
     m_condition.notify_all();
 }
 
-void ResultSink::Process(nexusflow::Message& inputMessage) {
+void Sink::Process(nexusflow::Message& inputMessage) {
     const auto* message = inputMessage.BorrowPtr<BallTrackMessage>();
     if (!message) {
-        LOG_WARN("ResultSink: message is not BallTrackMessage, ignoring");
+        LOG_WARN("Sink: message is not BallTrackMessage, ignoring");
         return;
     }
 

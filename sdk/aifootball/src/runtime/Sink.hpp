@@ -17,12 +17,12 @@ struct ResultPacket {
     std::map<std::string, double> moduleTimingsMs;
 };
 
-/** Internal sink used to synchronously return algorithm results to Runtime. */
-class ResultSink final : public nexusflow::Module {
+/** Internal sink used to return algorithm results to AIFootballPipeline. */
+class Sink final : public nexusflow::Module {
 public:
     using Callback = std::function<void(ResultPacket)>;
 
-    explicit ResultSink(const std::string& name);
+    explicit Sink(const std::string& name);
 
     bool WaitNext(ResultPacket& packet, std::chrono::milliseconds timeout);
     void PrepareForEnd();

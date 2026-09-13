@@ -19,22 +19,27 @@ struct RoiPoint {
     float y = 0.0f;
 };
 
-/** Runtime ROI configuration parsed by the embedding application. */
-struct RoiConfig {
+/** ROI context parsed by the embedding application. */
+struct RoiContext {
     bool enabled = false;
     int width = 0;
     int height = 0;
     std::vector<RoiPoint> points;
 };
 
-/** Algorithm-level configuration passed into the SDK runtime. */
-struct AlgoConfig {
-    RoiConfig roi;
-};
-
 /** Pixel layout accepted by the SDK input API. */
 enum class PixelFormat {
     RGB24 = 0,
+};
+
+/** Policy applied when the asynchronous SDK input queue reaches capacity. */
+enum class QueuePolicy {
+    /// Wait until the pipeline worker consumes at least one queued frame.
+    Block = 0,
+    /// Drop the oldest queued frame and enqueue the current frame.
+    DropOldest = 1,
+    /// Drop the current frame; Process returns FAILURE and no result is emitted.
+    DropNew = 2,
 };
 
 /**
@@ -107,15 +112,19 @@ struct ProcessResult {
     std::map<std::string, double> moduleTimingsMs;
 };
 
-/** Runtime options for the algorithm-only SDK pipeline. */
-struct RuntimeOptions {
+/** Configuration and execution context for one algorithm pipeline. */
+struct AIFootballContext {
     /// YAML graph configuration containing model and algorithm settings.
     std::string configPath;
     /// CUDA device selected before model initialization.
     int deviceId = 0;
     /// Maximum number of decoded frames buffered before Process applies
-    /// backpressure and returns FAILURE.
+    /// inputQueuePolicy. 0 means unbounded.
     std::size_t maxPendingFrames = 64;
+    /// Behavior when maxPendingFrames has been reached.
+    QueuePolicy inputQueuePolicy = QueuePolicy::Block;
+    /// Algorithm ROI in source-frame coordinates.
+    RoiContext roi;
 };
 
 /**
@@ -124,21 +133,21 @@ struct RuntimeOptions {
  * The caller owns demuxing, decoding, rendering, and result persistence. The
  * runtime owns only the algorithm modules and their asynchronous pipeline.
  */
-class Runtime {
+class AIFootballPipeline {
 public:
     using ResultCallback = std::function<void(ProcessResult)>;
 
-    static std::unique_ptr<Runtime> Create(
-        const RuntimeOptions& options,
-        const AlgoConfig& algoConfig = AlgoConfig());
+    static std::unique_ptr<AIFootballPipeline> Create(
+        const AIFootballContext& context);
 
-    ~Runtime();
+    ~AIFootballPipeline();
 
-    Runtime(const Runtime&) = delete;
-    Runtime& operator=(const Runtime&) = delete;
+    AIFootballPipeline(const AIFootballPipeline&) = delete;
+    AIFootballPipeline& operator=(const AIFootballPipeline&) = delete;
 
     nexusflow::ErrorCode Init();
-    /// Enqueue one decoded frame and return without waiting for inference.
+    /// Enqueue one decoded frame without waiting for inference. May block when
+    /// the bounded input queue is full and inputQueuePolicy is Block.
     nexusflow::ErrorCode Process(const DecodedFrameView& frame);
     /// Drain all frames submitted before this call, including a partial model
     /// batch. This is a synchronization point, not an inference result API.
@@ -152,7 +161,7 @@ public:
     nexusflow::ErrorCode DeInit();
 
 private:
-    explicit Runtime(RuntimeOptions options, AlgoConfig algoConfig);
+    explicit AIFootballPipeline(AIFootballContext context);
 
     class Impl;
     std::unique_ptr<Impl> m_impl;

@@ -31,8 +31,8 @@ struct VideoFrame {
     }
 };
 
-// A decoded frame is immutable after VideoDecoder publishes it. All pipeline
-// messages share the same frame object, so message copies do not copy pixels.
+// A decoded frame is immutable after publication. All pipeline messages share
+// the same frame object, so message copies do not copy pixels.
 using VideoFramePtr = std::shared_ptr<const VideoFrame>;
 
 struct Rect {
@@ -55,7 +55,8 @@ struct Box {
     std::string clsLabelName;
 };
 
-// --- Stream info (sent with the first PacketMessage for decoder initialization) ---
+// --- Legacy compressed-stream messages ---
+// Kept for compatibility with older graph configs and downstream experiments.
 struct StreamInfo {
     int codecId = 0;      // AVCodecID value
     int width = 0;
@@ -69,7 +70,7 @@ struct StreamInfo {
 
 // --- Messages ---
 
-// PacketMessage: output of VideoReader (demux), input of VideoDecoder
+// PacketMessage: compressed packet plus optional stream metadata.
 struct PacketMessage {
     std::string packetData; // Compressed NAL units
     int64_t pts = 0;        // Presentation timestamp (in stream time_base)
@@ -98,7 +99,7 @@ struct PacketMessage {
     }
 };
 
-// FrameMessage: output of VideoDecoder (decoded frame), input of Detector etc.
+// FrameMessage: decoded frame input for Detector and downstream modules.
 struct FrameMessage {
     VideoFramePtr videoFrame;
     bool isKeyFrame = false;

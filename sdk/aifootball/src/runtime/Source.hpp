@@ -1,5 +1,7 @@
 #pragma once
 
+#include <aifootball/AIFootball.hpp>
+
 #include "common/MyMessage.hpp"
 #include <nexusflow/Module.hpp>
 
@@ -10,10 +12,10 @@
 namespace aifootball {
 
 /** Internal source used to bridge caller-owned decoded frames into the graph. */
-class ExternalFrameSource final : public nexusflow::Module {
+class Source final : public nexusflow::Module {
 public:
-    explicit ExternalFrameSource(const std::string& name,
-                                 std::size_t maxPendingFrames);
+    explicit Source(const std::string& name, std::size_t maxPendingFrames,
+                    QueuePolicy queuePolicy);
 
     bool Submit(FrameMessage message);
     void Close();
@@ -23,9 +25,11 @@ protected:
 
 private:
     std::mutex m_mutex;
-    std::condition_variable m_condition;
+    std::condition_variable m_dataCondition;
+    std::condition_variable m_roomCondition;
     std::deque<FrameMessage> m_pending;
     const std::size_t m_maxPendingFrames;
+    const QueuePolicy m_queuePolicy;
     bool m_closed = false;
 };
 

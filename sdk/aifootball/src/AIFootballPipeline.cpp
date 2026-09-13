@@ -2,8 +2,8 @@
 
 #include "common/Module.hpp"
 #include "common/MyMessage.hpp"
-#include "runtime/ExternalFrameSource.hpp"
-#include "runtime/ResultSink.hpp"
+#include "runtime/Source.hpp"
+#include "runtime/Sink.hpp"
 
 #include "base/GraphUtils.hpp"
 #include <nexusflow/Logging.hpp>
@@ -58,7 +58,7 @@ struct ModuleSpec {
 };
 
 std::vector<ModuleSpec> LoadAlgorithmSpecs(const std::string& configPath,
-                                           const AlgoConfig& algoConfig) {
+                                           const AIFootballContext& context) {
     YAML::Node root = YAML::LoadFile(configPath);
     const YAML::Node modules = root["graph"]["modules"];
     if (!modules || !modules.IsSequence()) {
@@ -84,12 +84,12 @@ std::vector<ModuleSpec> LoadAlgorithmSpecs(const std::string& configPath,
         }
 
         if (name == "ByteTracker" || name == "PersonTracker") {
-            spec.config.Add("roiEnabled", algoConfig.roi.enabled);
-            spec.config.Add("roiWidth", algoConfig.roi.width);
-            spec.config.Add("roiHeight", algoConfig.roi.height);
+            spec.config.Add("roiEnabled", context.roi.enabled);
+            spec.config.Add("roiWidth", context.roi.width);
+            spec.config.Add("roiHeight", context.roi.height);
             std::vector<nexusflow::Any> points;
-            points.reserve(algoConfig.roi.points.size());
-            for (const auto& point : algoConfig.roi.points) {
+            points.reserve(context.roi.points.size());
+            for (const auto& point : context.roi.points) {
                 std::vector<nexusflow::Any> pair;
                 pair.emplace_back(point.x);
                 pair.emplace_back(point.y);
@@ -170,11 +170,10 @@ ProcessResult ConvertResult(const ResultPacket& packet) {
 
 } // namespace
 
-class Runtime::Impl {
+class AIFootballPipeline::Impl {
 public:
-    Impl(RuntimeOptions runtimeOptions, AlgoConfig runtimeAlgoConfig)
-        : options(std::move(runtimeOptions)),
-          algoConfig(std::move(runtimeAlgoConfig)) {}
+    explicit Impl(AIFootballContext runtimeContext)
+        : context(std::move(runtimeContext)) {}
 
     ~Impl() {
         if (initialized) DeInit();
@@ -199,19 +198,18 @@ public:
         return result;
     }
 
-    RuntimeOptions options;
-    AlgoConfig algoConfig;
+    AIFootballContext context;
     std::unique_ptr<nexusflow::Pipeline> pipeline;
-    std::shared_ptr<ExternalFrameSource> frameSource;
-    std::shared_ptr<ResultSink> resultSink;
+    std::shared_ptr<Source> frameSource;
+    std::shared_ptr<Sink> resultSink;
     // Serializes submission and Flush so frame order matches caller order.
     std::mutex processMutex;
     std::mutex callbackMutex;
-    Runtime::ResultCallback callback;
+    AIFootballPipeline::ResultCallback callback;
     bool initialized = false;
 
     void Deliver(ResultPacket packet) {
-        Runtime::ResultCallback current;
+        AIFootballPipeline::ResultCallback current;
         {
             std::lock_guard<std::mutex> lock(callbackMutex);
             current = callback;
@@ -221,7 +219,7 @@ public:
 
     void ConfigureCallback() {
         if (!resultSink) return;
-        Runtime::ResultCallback current;
+        AIFootballPipeline::ResultCallback current;
         {
             std::lock_guard<std::mutex> lock(callbackMutex);
             current = callback;
@@ -236,41 +234,43 @@ public:
     }
 };
 
-Runtime::Runtime(RuntimeOptions options, AlgoConfig algoConfig)
-    : m_impl(std::make_unique<Impl>(std::move(options), std::move(algoConfig))) {}
+AIFootballPipeline::AIFootballPipeline(AIFootballContext context)
+    : m_impl(std::make_unique<Impl>(std::move(context))) {}
 
-Runtime::~Runtime() = default;
+AIFootballPipeline::~AIFootballPipeline() = default;
 
-std::unique_ptr<Runtime> Runtime::Create(const RuntimeOptions& options,
-                                         const AlgoConfig& algoConfig) {
-    return std::unique_ptr<Runtime>(new Runtime(options, algoConfig));
+std::unique_ptr<AIFootballPipeline> AIFootballPipeline::Create(
+    const AIFootballContext& context) {
+    return std::unique_ptr<AIFootballPipeline>(
+        new AIFootballPipeline(context));
 }
 
-nexusflow::ErrorCode Runtime::Init() {
+nexusflow::ErrorCode AIFootballPipeline::Init() {
     if (!m_impl) return nexusflow::UNINITIALIZED_ERROR;
     if (m_impl->initialized) return nexusflow::SUCCESS;
-    if (m_impl->options.configPath.empty()) {
+    if (m_impl->context.configPath.empty()) {
         LOG_ERROR("AI-Football SDK: configPath is empty");
         return nexusflow::FAILURE;
     }
 
 #ifdef WITH_CUDA
-    if (m_impl->options.deviceId < 0 ||
-        cudaSetDevice(m_impl->options.deviceId) != cudaSuccess) {
+    if (m_impl->context.deviceId < 0 ||
+        cudaSetDevice(m_impl->context.deviceId) != cudaSuccess) {
         LOG_ERROR("AI-Football SDK: failed to select CUDA device {}",
-                  m_impl->options.deviceId);
+                  m_impl->context.deviceId);
         return nexusflow::FAILURE;
     }
 #endif
 
     try {
         RegisterBuiltInModules();
-        const auto specs = LoadAlgorithmSpecs(m_impl->options.configPath,
-                                              m_impl->algoConfig);
+        const auto specs = LoadAlgorithmSpecs(m_impl->context.configPath,
+                                              m_impl->context);
 
-        m_impl->frameSource = std::make_shared<ExternalFrameSource>(
-            kInputModuleName, m_impl->options.maxPendingFrames);
-        m_impl->resultSink = std::make_shared<ResultSink>(kOutputModuleName);
+        m_impl->frameSource = std::make_shared<Source>(
+            kInputModuleName, m_impl->context.maxPendingFrames,
+            m_impl->context.inputQueuePolicy);
+        m_impl->resultSink = std::make_shared<Sink>(kOutputModuleName);
         m_impl->ConfigureCallback();
 
         nexusflow::PipelineBuilder builder;
@@ -304,18 +304,18 @@ nexusflow::ErrorCode Runtime::Init() {
         }
         m_impl->initialized = true;
         LOG_INFO("AI-Football SDK: initialized algorithm-only pipeline, roi={}, modules={}",
-                 m_impl->algoConfig.roi.enabled, specs.size());
+                 m_impl->context.roi.enabled, specs.size());
         return nexusflow::SUCCESS;
     } catch (const YAML::Exception& error) {
         LOG_ERROR("AI-Football SDK: failed to load config '{}': {}",
-                  m_impl->options.configPath, error.what());
+                  m_impl->context.configPath, error.what());
     } catch (const std::exception& error) {
         LOG_ERROR("AI-Football SDK: initialization failed: {}", error.what());
     }
     return nexusflow::FAILURE;
 }
 
-nexusflow::ErrorCode Runtime::Process(const DecodedFrameView& frame) {
+nexusflow::ErrorCode AIFootballPipeline::Process(const DecodedFrameView& frame) {
     if (!m_impl || !m_impl->initialized || !m_impl->frameSource ||
         !m_impl->resultSink) {
         return nexusflow::UNINITIALIZED_ERROR;
@@ -354,7 +354,7 @@ nexusflow::ErrorCode Runtime::Process(const DecodedFrameView& frame) {
         ? nexusflow::SUCCESS : nexusflow::FAILURE;
 }
 
-nexusflow::ErrorCode Runtime::Flush() {
+nexusflow::ErrorCode AIFootballPipeline::Flush() {
     if (!m_impl || !m_impl->initialized || !m_impl->frameSource ||
         !m_impl->resultSink) {
         return nexusflow::UNINITIALIZED_ERROR;
@@ -371,8 +371,8 @@ nexusflow::ErrorCode Runtime::Flush() {
         ? nexusflow::SUCCESS : nexusflow::FAILURE;
 }
 
-nexusflow::ErrorCode Runtime::PollResult(ProcessResult& result,
-                                          uint32_t timeoutMs) {
+nexusflow::ErrorCode AIFootballPipeline::PollResult(ProcessResult& result,
+                                                   uint32_t timeoutMs) {
     if (!m_impl || !m_impl->initialized || !m_impl->resultSink) {
         return nexusflow::UNINITIALIZED_ERROR;
     }
@@ -385,7 +385,8 @@ nexusflow::ErrorCode Runtime::PollResult(ProcessResult& result,
     return nexusflow::SUCCESS;
 }
 
-nexusflow::ErrorCode Runtime::SetResultCallback(ResultCallback callback) {
+nexusflow::ErrorCode AIFootballPipeline::SetResultCallback(
+    ResultCallback callback) {
     if (!m_impl || !m_impl->initialized || !m_impl->resultSink) {
         return nexusflow::UNINITIALIZED_ERROR;
     }
@@ -397,7 +398,7 @@ nexusflow::ErrorCode Runtime::SetResultCallback(ResultCallback callback) {
     return nexusflow::SUCCESS;
 }
 
-nexusflow::ErrorCode Runtime::DeInit() {
+nexusflow::ErrorCode AIFootballPipeline::DeInit() {
     if (!m_impl) return nexusflow::SUCCESS;
     std::lock_guard<std::mutex> processLock(m_impl->processMutex);
     return m_impl->DeInit();
