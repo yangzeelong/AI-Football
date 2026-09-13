@@ -110,13 +110,17 @@ Detector 的 resize/normalize。
 SDK 现在只提供算法运行时：
 
 ```text
-decoded RGB24 frame -> Runtime::Process -> PollResult/callback -> ProcessResult
+decoded RGB24 frame -> AIFootballPipeline::Process -> PollResult/callback -> ProcessResult
 ```
 
 `VideoReader`、`VideoDecoder`、`VideoRenderer`、`ObservationWriter` 和
-`AlarmPusher` 不再加入 SDK 内部 pipeline。离线 demo 自己做 FFmpeg 解码和
-JSONL 输出；渲染通过 `tools/render_jsonl.py` 离线完成。`DecodedFrameView`
-只借用输入 buffer，处理期间不复制 RGB 像素。
+`AlarmPusher` 不再加入 SDK 内部 pipeline。离线 demo 自己做 FFmpeg 解码、
+JSONL 输出和可选 MP4 渲染；也可以使用 `tools/render_jsonl.py` 对 JSONL
+做离线重放。`DecodedFrameView`
+当调用方提供 `dataOwner` 时 SDK 可异步借用输入 buffer；未提供 owner 时，
+SDK 会在 `Process()` 返回前复制 RGB 像素，调用方可安全复用解码 buffer。
+SDK 输入队列默认使用 `QueuePolicy::Block`，队列满时 `Process()` 会阻塞形成
+背压；实时优先场景可切换为 `DropOldest` 或 `DropNew`。
 
 ## 后续 TODO
 

@@ -16,22 +16,21 @@ Include:
 #include <aifootball/AIFootball.hpp>
 ```
 
-The main entry point is `aifootball::Runtime`:
+The main entry point is `aifootball::AIFootballPipeline`:
 
 ```cpp
-aifootball::RuntimeOptions options;
-options.configPath = "config.yaml";
-options.deviceId = 0;
+aifootball::AIFootballContext context;
+context.configPath = "config.yaml";
+context.deviceId = 0;
+context.inputQueuePolicy = aifootball::QueuePolicy::Block;
+context.roi.enabled = true;
+context.roi.width = 1920;
+context.roi.height = 1080;
+context.roi.points = {{1579.0f, 1067.0f}, {56.0f, 733.0f},
+                     {950.0f, 416.0f}, {1796.0f, 493.0f}};
 
-aifootball::AlgoConfig algoConfig;
-algoConfig.roi.enabled = true;
-algoConfig.roi.width = 1920;
-algoConfig.roi.height = 1080;
-algoConfig.roi.points = {{1579.0f, 1067.0f}, {56.0f, 733.0f},
-                         {950.0f, 416.0f}, {1796.0f, 493.0f}};
-
-auto runtime = aifootball::Runtime::Create(options, algoConfig);
-if (runtime->Init() != nexusflow::SUCCESS) return false;
+auto pipeline = aifootball::AIFootballPipeline::Create(context);
+if (pipeline->Init() != nexusflow::SUCCESS) return false;
 
 aifootball::DecodedFrameView frame;
 frame.frameId = frameIndex;
@@ -42,16 +41,18 @@ frame.strideBytes = width * 3;
 frame.data = rgb24Bytes;
 frame.dataBytes = static_cast<std::size_t>(width) * height * 3;
 
-const auto status = runtime->Process(frame); // asynchronous enqueue
+const auto status = pipeline->Process(frame); // asynchronous enqueue
 
 aifootball::ProcessResult result;
-runtime->PollResult(result, 0); // non-blocking; or install a callback
+pipeline->PollResult(result, 0); // non-blocking; or install a callback
 // At end of stream only:
-runtime->Flush();
-runtime->DeInit();
+pipeline->Flush();
+pipeline->DeInit();
 ```
 
-`Process()` only enqueues work and returns without waiting for inference.
+`Process()` only enqueues work and returns without waiting for inference, but
+it may block before enqueueing when the bounded input queue is full and
+`QueuePolicy::Block` is selected.
 Results are retrieved asynchronously with `PollResult()` or delivered through
 `SetResultCallback()`. `PollResult(result, 0)` is a non-blocking poll. Call
 `Flush()` once at the end of a stream to drain the final partial detector
@@ -62,15 +63,22 @@ that shared owner until the result is delivered and can use the buffer without
 copying. If it is empty, the SDK copies the bytes before returning from
 `Process()` so the caller may immediately reuse its decode buffer.
 
+The input queue is bounded by `AIFootballContext::maxPendingFrames`.
+`QueuePolicy::Block` is the default and applies backpressure by blocking
+`Process()` until the internal source queue has room. `QueuePolicy::DropOldest`
+drops the oldest queued input frame and accepts the new frame.
+`QueuePolicy::DropNew` rejects the current frame; `Process()` returns
+`nexusflow::FAILURE` and no result will be emitted for that frame.
+
 Results are emitted in input order when polled, while preserving the configured
 detector batch policy. `DeInit()` stops the internal actor graph; callers should
 flush and drain results before de-initializing.
 
-`AlgoConfig` contains algorithm-level settings. ROI points use the coordinate
+`AIFootballContext` contains execution and algorithm-level settings. ROI points use the coordinate
 system described by `roi.width` and `roi.height`; the runtime scales them to
 the decoded frame dimensions when necessary.
 
-ROI is supplied by the embedding application through `AlgoConfig`, normally by
+ROI is supplied by the embedding application through `AIFootballContext`, normally by
 parsing `algorithm.roi` from YAML. ROI coordinates are expressed in the source
 frame coordinate system described by `roi.width` and `roi.height`.
 
@@ -87,8 +95,11 @@ dependencies. The public headers are installed under `include/aifootball`.
 ## Demo
 
 `examples/aifootball_demo` is an offline integration executable. It owns
-FFmpeg decoding and writes `observations.jsonl` after calling the SDK. It does
-not render video. Render that JSONL for debugging with:
+FFmpeg decoding, writes `observations.jsonl` after calling the SDK, and can
+optionally render detections to MP4. Its `VideoReader` creates an owned RGB24
+buffer per decoded frame and passes it through `DecodedFrameView::dataOwner`,
+so the SDK does not need an additional input copy. Rendering is disabled by
+default:
 
 ```bash
 python3 tools/render_jsonl.py \
@@ -103,4 +114,9 @@ build/examples/aifootball_demo/aifootball_demo \
   examples/aifootball_demo/config.yaml \
   --video_path data/射门1-1080p60.mov \
   --output_dir output/sdk_demo
+
+build/examples/aifootball_demo/aifootball_demo \
+  examples/aifootball_demo/config.yaml \
+  --output_dir output/sdk_debug \
+  --render
 ```

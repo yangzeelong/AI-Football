@@ -46,14 +46,16 @@ Run the demo with a YAML configuration:
   --output_dir output/sdk_demo
 ```
 
-The SDK does not render video by default. Enable the debug renderer explicitly
-when needed:
+The SDK demo does not render video by default. Enable the offline demo renderer
+explicitly when needed:
 
 ```bash
 ./build/examples/aifootball_demo/aifootball_demo \
   examples/aifootball_demo/config.yaml \
-  --output_dir output/sdk_debug \
-  --render
+  --output_dir output/sdk_debug
+python3 tools/render_jsonl.py \
+  --observations output/sdk_debug/observations.jsonl \
+  --output output/sdk_debug/rendered.mp4
 ```
 
 An embedding application only needs the SDK facade:
@@ -62,13 +64,16 @@ An embedding application only needs the SDK facade:
 #include <aifootball/AIFootball.hpp>
 
 int main() {
-    aifootball::RuntimeOptions options;
-    options.configPath = "aifootball.yaml";
-    options.videoPath = "input.mp4";
-    options.outputDir = "output";
-    options.enableRendering = false;
-    auto runtime = aifootball::Runtime::Create(options);
-    return runtime->Run() == nexusflow::SUCCESS ? 0 : 1;
+    aifootball::AIFootballContext context;
+    context.configPath = "aifootball.yaml";
+    context.deviceId = 0;
+    context.inputQueuePolicy = aifootball::QueuePolicy::Block;
+    auto pipeline = aifootball::AIFootballPipeline::Create(context);
+    if (pipeline->Init() != nexusflow::SUCCESS) return 1;
+    // Fill DecodedFrameView from the host application's decoder and enqueue it.
+    pipeline->Flush();
+    pipeline->DeInit();
+    return 0;
 }
 ```
 
