@@ -49,35 +49,6 @@ if(CUDA_FOUND)
     endif()
 endif()
 
-set(FFMPEG_FOUND FALSE)
-set(FFMPEG_LIBRARIES "")
-set(FFMPEG_INCLUDE_DIRS "")
-set(FFMPEG_LIB_SEARCH_PATHS
-    /usr/lib/x86_64-linux-gnu /usr/lib /usr/local/lib /usr/lib64)
-set(FFMPEG_INCLUDE_SEARCH_PATHS
-    /usr/include/x86_64-linux-gnu /usr/include /usr/local/include)
-find_library(AVFORMAT_LIB avformat PATHS ${FFMPEG_LIB_SEARCH_PATHS})
-find_library(AVCODEC_LIB avcodec PATHS ${FFMPEG_LIB_SEARCH_PATHS})
-find_library(AVUTIL_LIB avutil PATHS ${FFMPEG_LIB_SEARCH_PATHS})
-find_library(SWSCALE_LIB swscale PATHS ${FFMPEG_LIB_SEARCH_PATHS})
-find_path(AVFORMAT_INCLUDE_DIR libavformat/avformat.h PATHS ${FFMPEG_INCLUDE_SEARCH_PATHS})
-find_path(AVCODEC_INCLUDE_DIR libavcodec/avcodec.h PATHS ${FFMPEG_INCLUDE_SEARCH_PATHS})
-find_path(AVUTIL_INCLUDE_DIR libavutil/imgutils.h PATHS ${FFMPEG_INCLUDE_SEARCH_PATHS})
-find_path(SWSCALE_INCLUDE_DIR libswscale/swscale.h PATHS ${FFMPEG_INCLUDE_SEARCH_PATHS})
-if(AVFORMAT_LIB AND AVCODEC_LIB AND AVUTIL_LIB AND SWSCALE_LIB)
-    set(FFMPEG_FOUND TRUE)
-    list(APPEND FFMPEG_LIBRARIES
-        ${AVFORMAT_LIB} ${AVCODEC_LIB} ${AVUTIL_LIB} ${SWSCALE_LIB})
-    foreach(inc ${AVFORMAT_INCLUDE_DIR} ${AVCODEC_INCLUDE_DIR}
-              ${AVUTIL_INCLUDE_DIR} ${SWSCALE_INCLUDE_DIR})
-        if(inc AND NOT "${inc}" IN_LIST FFMPEG_INCLUDE_DIRS)
-            list(APPEND FFMPEG_INCLUDE_DIRS "${inc}")
-        endif()
-    endforeach()
-else()
-    message(WARNING "AI-Football SDK: FFmpeg not found; video I/O disabled")
-endif()
-
 if(NOT TRT_FOUND)
     list(FILTER AIFOOTBALL_CPP_FILES EXCLUDE REGEX ".*/inference/TensorRTEngine\\.cpp$")
 endif()
@@ -89,10 +60,10 @@ else()
         "${CMAKE_CURRENT_SOURCE_DIR}/src/detector/RFDetrCudaPreprocess.cu")
 endif()
 
-if(NOT FFMPEG_FOUND)
-    list(FILTER AIFOOTBALL_CPP_FILES EXCLUDE REGEX ".*/video/VideoReader\\.cpp$")
-    list(FILTER AIFOOTBALL_CPP_FILES EXCLUDE REGEX ".*/video/VideoDecoder\\.cpp$")
-endif()
+# Video demux/decode and rendering belong to the offline demo, not to the
+# embeddable algorithm SDK runtime.
+list(FILTER AIFOOTBALL_CPP_FILES EXCLUDE REGEX ".*/video/.*\\.cpp$")
+list(FILTER AIFOOTBALL_CPP_FILES EXCLUDE REGEX ".*/output/.*\\.cpp$")
 
 add_library(aifootball_sdk STATIC ${AIFOOTBALL_CPP_FILES})
 add_library(Nexusflow::aifootball_sdk ALIAS aifootball_sdk)
@@ -102,12 +73,11 @@ target_include_directories(aifootball_sdk
         "${CMAKE_CURRENT_SOURCE_DIR}/include"
     PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/src"
-        ${FFMPEG_INCLUDE_DIRS}
+        "${PROJECT_SOURCE_DIR}/src"
         ${CUDA_INCLUDE_DIRS}
         ${TRT_INCLUDE_DIR})
 
 target_compile_definitions(aifootball_sdk PRIVATE
-    $<$<BOOL:${FFMPEG_FOUND}>:WITH_FFMPEG>
     $<$<BOOL:${TRT_FOUND}>:WITH_TENSORRT>
     $<$<BOOL:${AIFOOTBALL_CUDA_AVAILABLE}>:WITH_CUDA>
     $<$<BOOL:${TRT_FOUND}>:$<$<BOOL:${AIFOOTBALL_CUDA_AVAILABLE}>:WITH_CUDA_KERNELS>>)
@@ -115,7 +85,6 @@ target_compile_definitions(aifootball_sdk PRIVATE
 target_link_libraries(aifootball_sdk
     PUBLIC
         nexusflow
-        ${FFMPEG_LIBRARIES}
         ${CUDA_LIBRARIES}
         ${TRT_NVINFER_LIB})
 if(TRT_NVINFER_PLUGIN_LIB)

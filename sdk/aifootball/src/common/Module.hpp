@@ -9,12 +9,6 @@
 #include "inference/IInferenceEngine.hpp"
 #include "inference/TensorRTEngine.hpp"
 
-// --- Video input ---
-#ifdef WITH_FFMPEG
-#include "video/VideoReader.hpp"
-#include "video/VideoDecoder.hpp"
-#endif
-
 // --- Detection ---
 #include "detector/RFDetrDetectorInfer.hpp"
 #include "detector/RFDetrDetector.hpp"
@@ -29,8 +23,3 @@
 
 // --- Smoothing ---
 #include "smoother/KeypointSmoother.hpp"
-
-// --- Output sinks ---
-#include "output/ObservationWriter.hpp"
-#include "output/VideoRenderer.hpp"
-#include "output/AlarmPusher.hpp"

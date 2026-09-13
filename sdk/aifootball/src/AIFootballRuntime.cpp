@@ -1,11 +1,15 @@
 #include <aifootball/AIFootball.hpp>
 
 #include "common/Module.hpp"
-#include "common/PipelineCompletionSignal.hpp"
+#include "common/MyMessage.hpp"
+#include "runtime/ExternalFrameSource.hpp"
+#include "runtime/ResultSink.hpp"
 
+#include "base/GraphUtils.hpp"
 #include <nexusflow/Logging.hpp>
 #include <nexusflow/ModuleFactory.hpp>
 #include <nexusflow/Pipeline.hpp>
+#include <nexusflow/PipelineBuilder.hpp>
 
 #include <yaml-cpp/yaml.h>
 
@@ -13,67 +17,155 @@
 #include <cuda_runtime_api.h>
 #endif
 
-#include <atomic>
-#include <cerrno>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <fstream>
 #include <mutex>
-#include <sstream>
+#include <limits>
 #include <stdexcept>
-#include <sys/stat.h>
-#include <unistd.h>
+#include <string>
 #include <utility>
+#include <vector>
 
 namespace aifootball {
 namespace {
 
-std::string JoinPath(const std::string& dir, const std::string& name) {
-    if (dir.empty()) return name;
-    if (dir.back() == '/') return dir + name;
-    return dir + "/" + name;
-}
+constexpr const char* kInputModuleName = "SdkInput";
+constexpr const char* kOutputModuleName = "SdkOutput";
 
-bool EnsureDirectory(const std::string& path) {
-    if (path.empty()) return true;
-    std::string current;
-    size_t begin = 0;
-    if (path[0] == '/') {
-        current = "/";
-        begin = 1;
-    }
-    while (begin < path.size()) {
-        const size_t slash = path.find('/', begin);
-        const size_t end = slash == std::string::npos ? path.size() : slash;
-        if (end > begin) {
-            if (!current.empty() && current.back() != '/') current.push_back('/');
-            current.append(path, begin, end - begin);
-            if (::mkdir(current.c_str(), 0755) != 0 && errno != EEXIST) return false;
-        }
-        if (slash == std::string::npos) break;
-        begin = slash + 1;
-    }
-    return true;
+bool IsOfflineModule(const std::string& className) {
+    return className == "VideoReader" || className == "VideoDecoder" ||
+           className == "VideoRenderer" || className == "ObservationWriter" ||
+           className == "AlarmPusher";
 }
 
 void RegisterBuiltInModules() {
     static std::once_flag once;
     std::call_once(once, [] {
         auto& factory = nexusflow::ModuleFactory::GetInstance();
-#ifdef WITH_FFMPEG
-        factory.Register<VideoReader>("VideoReader");
-        factory.Register<VideoDecoder>("VideoDecoder");
-#endif
         factory.Register<RFDetrDetector>("RFDetrDetector");
         factory.Register<ByteTracker>("ByteTracker");
         factory.Register<HRNetPoseEstimator>("HRNetPoseEstimator");
         factory.Register<KeypointSmoother>("KeypointSmoother");
         factory.Register<FootballTracker>("FootballTracker");
-        factory.Register<VideoRenderer>("VideoRenderer");
-        factory.Register<ObservationWriter>("ObservationWriter");
-        factory.Register<AlarmPusher>("AlarmPusher");
     });
+}
+
+struct ModuleSpec {
+    std::string name;
+    std::string className;
+    nexusflow::Config config;
+};
+
+std::vector<ModuleSpec> LoadAlgorithmSpecs(const std::string& configPath,
+                                           const AlgoConfig& algoConfig) {
+    YAML::Node root = YAML::LoadFile(configPath);
+    const YAML::Node modules = root["graph"]["modules"];
+    if (!modules || !modules.IsSequence()) {
+        throw std::runtime_error("config must contain graph.modules sequence");
+    }
+
+    std::vector<ModuleSpec> specs;
+    for (const auto& module : modules) {
+        const std::string name = module["name"].as<std::string>("");
+        const std::string className = module["class"].as<std::string>("");
+        if (name.empty() || className.empty()) {
+            throw std::runtime_error("every graph module requires name and class");
+        }
+        if (IsOfflineModule(className)) continue;
+
+        ModuleSpec spec{name, className, nexusflow::Config()};
+        const YAML::Node config = module["config"];
+        if (config && config.IsMap()) {
+            for (const auto& entry : config) {
+                spec.config.Add(entry.first.as<std::string>(),
+                                graphutils::convertYamlNodeToAny(entry.second));
+            }
+        }
+
+        if (name == "ByteTracker" || name == "PersonTracker") {
+            spec.config.Add("roiEnabled", algoConfig.roi.enabled);
+            spec.config.Add("roiWidth", algoConfig.roi.width);
+            spec.config.Add("roiHeight", algoConfig.roi.height);
+            std::vector<nexusflow::Any> points;
+            points.reserve(algoConfig.roi.points.size());
+            for (const auto& point : algoConfig.roi.points) {
+                std::vector<nexusflow::Any> pair;
+                pair.emplace_back(point.x);
+                pair.emplace_back(point.y);
+                points.emplace_back(std::move(pair));
+            }
+            spec.config.Add("roiPoints", std::move(points));
+        }
+
+        specs.push_back(std::move(spec));
+    }
+
+    if (specs.empty()) {
+        throw std::runtime_error("config contains no algorithm modules");
+    }
+    return specs;
+}
+
+KeypointState ConvertKeypointState(::KeypointState state) {
+    switch (state) {
+        case ::KeypointState::Observed: return KeypointState::Observed;
+        case ::KeypointState::Virtual: return KeypointState::Virtual;
+        case ::KeypointState::Missing: return KeypointState::Missing;
+    }
+    return KeypointState::Missing;
+}
+
+BallTrackState ConvertBallState(::BallTrackState state) {
+    switch (state) {
+        case ::BallTrackState::Observed: return BallTrackState::Observed;
+        case ::BallTrackState::Predicted: return BallTrackState::Predicted;
+        case ::BallTrackState::Lost: return BallTrackState::Lost;
+    }
+    return BallTrackState::Lost;
+}
+
+ProcessResult ConvertResult(const ResultPacket& packet) {
+    const auto& input = packet.message;
+    ProcessResult output;
+    output.frameId = input.videoFrame ? input.videoFrame->frameId : 0;
+    output.timestampSec = input.timestampSec;
+    output.rawCounts.total = input.rawCounts.total;
+    output.rawCounts.person = input.rawCounts.person;
+    output.rawCounts.ball = input.rawCounts.ball;
+    output.moduleTimingsMs = packet.moduleTimingsMs;
+    // SdkInput measures the framework worker wait, not algorithm work. Keep
+    // only timings belonging to the public algorithm modules.
+    output.moduleTimingsMs.erase(kInputModuleName);
+
+    output.persons.reserve(input.persons.size());
+    for (const auto& person : input.persons) {
+        PersonResult result;
+        result.trackId = person.trackId;
+        result.bbox = {{person.x0, person.y0, person.x1, person.y1}};
+        result.confidence = person.detectionConfidence;
+        for (int i = 0; i < kProjectKeypointCount; ++i) {
+            result.keypoints[static_cast<std::size_t>(i)] = {
+                person.keypoints[i].x,
+                person.keypoints[i].y,
+                person.keypoints[i].confidence,
+                ConvertKeypointState(person.keypoints[i].state),
+            };
+        }
+        output.persons.push_back(std::move(result));
+    }
+
+    output.balls.reserve(input.balls.size());
+    for (const auto& ball : input.balls) {
+        BallResult result;
+        result.trackId = ball.trackId;
+        result.bbox = {{ball.x0, ball.y0, ball.x1, ball.y1}};
+        result.center = {{ball.centerX, ball.centerY}};
+        result.confidence = ball.confidence;
+        result.state = ConvertBallState(ball.state);
+        output.balls.push_back(std::move(result));
+    }
+    return output;
 }
 
 } // namespace
@@ -85,107 +177,63 @@ public:
           algoConfig(std::move(runtimeAlgoConfig)) {}
 
     ~Impl() {
-        if (pipeline && started) {
-            pipeline->Stop();
-            started = false;
-        }
-        if (pipeline && initialized) {
-            pipeline->DeInit();
-            initialized = false;
-        }
-        completion.SetOnComplete(nullptr);
-        if (!generatedConfig.empty()) std::remove(generatedConfig.c_str());
+        if (initialized) DeInit();
     }
 
-    bool PrepareConfig() {
-        if (options.configPath.empty()) {
-            LOG_ERROR("AI-Football SDK: configPath is empty");
-            return false;
+    nexusflow::ErrorCode DeInit() {
+        if (!initialized) return nexusflow::SUCCESS;
+        if (frameSource) frameSource->Close();
+        if (resultSink) resultSink->Close();
+
+        nexusflow::ErrorCode result = nexusflow::SUCCESS;
+        if (pipeline) {
+            const auto stopResult = pipeline->Stop();
+            if (stopResult != nexusflow::SUCCESS) result = stopResult;
+            const auto deinitResult = pipeline->DeInit();
+            if (deinitResult != nexusflow::SUCCESS) result = deinitResult;
         }
-
-        try {
-            YAML::Node root = YAML::LoadFile(options.configPath);
-            YAML::Node modules = root["graph"]["modules"];
-            if (!modules || !modules.IsSequence()) {
-                LOG_ERROR("AI-Football SDK: config has no graph.modules sequence");
-                return false;
-            }
-
-            for (auto module : modules) {
-                const std::string name = module["name"].as<std::string>("");
-                YAML::Node config = module["config"];
-                if (!config || !config.IsMap()) {
-                    config = YAML::Node(YAML::NodeType::Map);
-                    module["config"] = config;
-                }
-                if (name == "VideoReader") {
-                    if (!options.videoPath.empty()) config["videoPath"] = options.videoPath;
-                    if (options.stride > 0) config["stride"] = options.stride;
-                } else if (name == "VideoRenderer") {
-                    // Rendering is a debug side effect and is explicitly
-                    // controlled by the SDK, independent of the YAML default.
-                    config["enabled"] = options.enableRendering;
-                    if (!options.outputDir.empty()) {
-                        config["outputPath"] = JoinPath(options.outputDir, "rendered.mp4");
-                    }
-                } else if (name == "ByteTracker" || name == "PersonTracker") {
-                    config["roiEnabled"] = algoConfig.roi.enabled;
-                    config["roiWidth"] = algoConfig.roi.width;
-                    config["roiHeight"] = algoConfig.roi.height;
-                    YAML::Node points(YAML::NodeType::Sequence);
-                    for (const auto& point : algoConfig.roi.points) {
-                        YAML::Node pair(YAML::NodeType::Sequence);
-                        pair.push_back(point.x);
-                        pair.push_back(point.y);
-                        points.push_back(pair);
-                    }
-                    config["roiPoints"] = points;
-                } else if (name == "ObservationWriter") {
-                    if (!options.videoPath.empty()) config["videoPath"] = options.videoPath;
-                    if (!options.outputDir.empty()) {
-                        config["outputPath"] = JoinPath(options.outputDir, "observations.jsonl");
-                    }
-                } else if (name == "AlarmPusher" && !options.outputDir.empty()) {
-                    config["savePath"] = JoinPath(options.outputDir, "result.txt");
-                }
-            }
-
-            if (!options.outputDir.empty() && !EnsureDirectory(options.outputDir)) {
-                LOG_ERROR("AI-Football SDK: failed to create output directory '{}'",
-                          options.outputDir);
-                return false;
-            }
-
-            std::ostringstream path;
-            path << "/tmp/nexusflow_aifootball_" << static_cast<long>(::getpid())
-                 << "_" << reinterpret_cast<std::uintptr_t>(this) << ".yaml";
-            generatedConfig = path.str();
-            YAML::Emitter emitter;
-            emitter << root;
-            std::ofstream file(generatedConfig);
-            if (!file.is_open()) {
-                LOG_ERROR("AI-Football SDK: failed to create temporary config '{}'",
-                          generatedConfig);
-                return false;
-            }
-            file << emitter.c_str() << "\n";
-            effectiveConfig = generatedConfig;
-            return true;
-        } catch (const YAML::Exception& e) {
-            LOG_ERROR("AI-Football SDK: failed to prepare config '{}': {}",
-                      options.configPath, e.what());
-            return false;
-        }
+        pipeline.reset();
+        frameSource.reset();
+        resultSink.reset();
+        initialized = false;
+        return result;
     }
 
     RuntimeOptions options;
     AlgoConfig algoConfig;
     std::unique_ptr<nexusflow::Pipeline> pipeline;
-    std::string effectiveConfig;
-    std::string generatedConfig;
+    std::shared_ptr<ExternalFrameSource> frameSource;
+    std::shared_ptr<ResultSink> resultSink;
+    // Serializes submission and Flush so frame order matches caller order.
+    std::mutex processMutex;
+    std::mutex callbackMutex;
+    Runtime::ResultCallback callback;
     bool initialized = false;
-    bool started = false;
-    PipelineCompletionSignal& completion = PipelineCompletionSignal::Instance();
+
+    void Deliver(ResultPacket packet) {
+        Runtime::ResultCallback current;
+        {
+            std::lock_guard<std::mutex> lock(callbackMutex);
+            current = callback;
+        }
+        if (current) current(ConvertResult(packet));
+    }
+
+    void ConfigureCallback() {
+        if (!resultSink) return;
+        Runtime::ResultCallback current;
+        {
+            std::lock_guard<std::mutex> lock(callbackMutex);
+            current = callback;
+        }
+        if (current) {
+            resultSink->SetCallback([this](ResultPacket packet) {
+                Deliver(std::move(packet));
+            });
+        } else {
+            resultSink->SetCallback(nullptr);
+        }
+    }
 };
 
 Runtime::Runtime(RuntimeOptions options, AlgoConfig algoConfig)
@@ -199,8 +247,12 @@ std::unique_ptr<Runtime> Runtime::Create(const RuntimeOptions& options,
 }
 
 nexusflow::ErrorCode Runtime::Init() {
-    if (!m_impl || m_impl->initialized) return nexusflow::SUCCESS;
-    if (!m_impl->PrepareConfig()) return nexusflow::FAILURE;
+    if (!m_impl) return nexusflow::UNINITIALIZED_ERROR;
+    if (m_impl->initialized) return nexusflow::SUCCESS;
+    if (m_impl->options.configPath.empty()) {
+        LOG_ERROR("AI-Football SDK: configPath is empty");
+        return nexusflow::FAILURE;
+    }
 
 #ifdef WITH_CUDA
     if (m_impl->options.deviceId < 0 ||
@@ -211,86 +263,144 @@ nexusflow::ErrorCode Runtime::Init() {
     }
 #endif
 
-    RegisterBuiltInModules();
-    LOG_INFO("AI-Football SDK: ROI enabled={}, points={}, sourceSize={}x{}",
-             m_impl->algoConfig.roi.enabled,
-             m_impl->algoConfig.roi.points.size(),
-             m_impl->algoConfig.roi.width,
-             m_impl->algoConfig.roi.height);
-    m_impl->completion.Reset();
-    m_impl->completion.SetOnComplete([] {
-        LOG_INFO("AI-Football SDK: pipeline completed");
-    });
-    m_impl->pipeline = nexusflow::Pipeline::CreateFromYaml(m_impl->effectiveConfig);
-    if (!m_impl->pipeline) {
-        LOG_ERROR("AI-Football SDK: failed to create pipeline from '{}'",
-                  m_impl->effectiveConfig);
-        return nexusflow::FAILURE;
+    try {
+        RegisterBuiltInModules();
+        const auto specs = LoadAlgorithmSpecs(m_impl->options.configPath,
+                                              m_impl->algoConfig);
+
+        m_impl->frameSource = std::make_shared<ExternalFrameSource>(
+            kInputModuleName, m_impl->options.maxPendingFrames);
+        m_impl->resultSink = std::make_shared<ResultSink>(kOutputModuleName);
+        m_impl->ConfigureCallback();
+
+        nexusflow::PipelineBuilder builder;
+        builder.AddModule(m_impl->frameSource);
+        std::string previous = kInputModuleName;
+        for (const auto& spec : specs) {
+            auto module = nexusflow::ModuleFactory::GetInstance().CreateModule(
+                spec.className, spec.name, spec.config);
+            if (!module) {
+                LOG_ERROR("AI-Football SDK: failed to create module '{}' ({})",
+                          spec.name, spec.className);
+                return nexusflow::FAILURE;
+            }
+            builder.AddModule(module).Connect(previous, spec.name);
+            previous = spec.name;
+        }
+        builder.AddModule(m_impl->resultSink).Connect(previous, kOutputModuleName);
+
+        m_impl->pipeline = builder.Build();
+        if (!m_impl->pipeline) {
+            LOG_ERROR("AI-Football SDK: failed to build algorithm pipeline");
+            return nexusflow::FAILURE;
+        }
+        auto result = m_impl->pipeline->Init();
+        if (result != nexusflow::SUCCESS) return result;
+        result = m_impl->pipeline->Start();
+        if (result != nexusflow::SUCCESS) {
+            m_impl->pipeline->DeInit();
+            m_impl->pipeline.reset();
+            return result;
+        }
+        m_impl->initialized = true;
+        LOG_INFO("AI-Football SDK: initialized algorithm-only pipeline, roi={}, modules={}",
+                 m_impl->algoConfig.roi.enabled, specs.size());
+        return nexusflow::SUCCESS;
+    } catch (const YAML::Exception& error) {
+        LOG_ERROR("AI-Football SDK: failed to load config '{}': {}",
+                  m_impl->options.configPath, error.what());
+    } catch (const std::exception& error) {
+        LOG_ERROR("AI-Football SDK: initialization failed: {}", error.what());
     }
-    m_impl->initialized = true;
-    return nexusflow::SUCCESS;
+    return nexusflow::FAILURE;
 }
 
-nexusflow::ErrorCode Runtime::Start() {
-    if (!m_impl || !m_impl->pipeline || !m_impl->initialized) {
+nexusflow::ErrorCode Runtime::Process(const DecodedFrameView& frame) {
+    if (!m_impl || !m_impl->initialized || !m_impl->frameSource ||
+        !m_impl->resultSink) {
         return nexusflow::UNINITIALIZED_ERROR;
     }
-    if (m_impl->started) return nexusflow::FAILED_ALREADY_START;
-    const auto result = m_impl->pipeline->Init();
-    if (result != nexusflow::SUCCESS) return result;
-    const auto startResult = m_impl->pipeline->Start();
-    if (startResult == nexusflow::SUCCESS) m_impl->started = true;
-    return startResult;
+    if (frame.frameId > std::numeric_limits<uint32_t>::max() ||
+        frame.pixelFormat != PixelFormat::RGB24 || frame.width <= 0 ||
+        frame.height <= 0 || frame.data == nullptr || frame.dataBytes == 0 ||
+        (frame.strideBytes != 0 && frame.strideBytes != frame.width * 3) ||
+        frame.dataBytes < static_cast<std::size_t>(frame.width) *
+                              static_cast<std::size_t>(frame.height) * 3) {
+        LOG_ERROR("AI-Football SDK: invalid RGB24 frame id={}, size={}x{}, stride={}, bytes={}",
+                  frame.frameId, frame.width, frame.height,
+                  frame.strideBytes, frame.dataBytes);
+        return nexusflow::FAILURE;
+    }
+
+    std::lock_guard<std::mutex> processLock(m_impl->processMutex);
+    auto videoFrame = std::make_shared<VideoFrame>();
+    videoFrame->frameId = static_cast<uint32_t>(frame.frameId);
+    if (frame.dataOwner) {
+        videoFrame->externalData = frame.data;
+        videoFrame->externalDataBytes = frame.dataBytes;
+        videoFrame->externalOwner = frame.dataOwner;
+    } else {
+        videoFrame->frameData.assign(
+            reinterpret_cast<const char*>(frame.data), frame.dataBytes);
+    }
+    videoFrame->width = frame.width;
+    videoFrame->height = frame.height;
+    videoFrame->channels = 3;
+
+    FrameMessage message;
+    message.videoFrame = std::move(videoFrame);
+    message.timestampSec = frame.timestampSec;
+    return m_impl->frameSource->Submit(std::move(message))
+        ? nexusflow::SUCCESS : nexusflow::FAILURE;
 }
 
-nexusflow::ErrorCode Runtime::Wait() {
-    if (!m_impl || !m_impl->started) return nexusflow::UNINITIALIZED_ERROR;
-    if (m_impl->options.maxSeconds > 0) {
-        const bool completed = m_impl->completion.WaitForCompletion(
-            std::chrono::seconds(m_impl->options.maxSeconds));
-        if (!completed) {
-            LOG_WARN("AI-Football SDK: timeout after {} seconds",
-                     m_impl->options.maxSeconds);
-        }
-    } else {
-        m_impl->completion.WaitForCompletion(std::chrono::seconds(0));
+nexusflow::ErrorCode Runtime::Flush() {
+    if (!m_impl || !m_impl->initialized || !m_impl->frameSource ||
+        !m_impl->resultSink) {
+        return nexusflow::UNINITIALIZED_ERROR;
     }
+
+    std::lock_guard<std::mutex> processLock(m_impl->processMutex);
+    m_impl->resultSink->PrepareForEnd();
+    FrameMessage endMessage;
+    endMessage.isEnd = true;
+    if (!m_impl->frameSource->Submit(std::move(endMessage))) {
+        return nexusflow::FAILURE;
+    }
+    return m_impl->resultSink->WaitForEnd(std::chrono::minutes(5))
+        ? nexusflow::SUCCESS : nexusflow::FAILURE;
+}
+
+nexusflow::ErrorCode Runtime::PollResult(ProcessResult& result,
+                                          uint32_t timeoutMs) {
+    if (!m_impl || !m_impl->initialized || !m_impl->resultSink) {
+        return nexusflow::UNINITIALIZED_ERROR;
+    }
+    ResultPacket packet;
+    const auto timeout = std::chrono::milliseconds(timeoutMs);
+    if (!m_impl->resultSink->WaitNext(packet, timeout)) {
+        return nexusflow::FAILURE;
+    }
+    result = ConvertResult(packet);
     return nexusflow::SUCCESS;
 }
 
-nexusflow::ErrorCode Runtime::Stop() {
-    if (!m_impl || !m_impl->pipeline || !m_impl->started) return nexusflow::SUCCESS;
-    const auto result = m_impl->pipeline->Stop();
-    m_impl->started = false;
-    return result;
+nexusflow::ErrorCode Runtime::SetResultCallback(ResultCallback callback) {
+    if (!m_impl || !m_impl->initialized || !m_impl->resultSink) {
+        return nexusflow::UNINITIALIZED_ERROR;
+    }
+    {
+        std::lock_guard<std::mutex> lock(m_impl->callbackMutex);
+        m_impl->callback = std::move(callback);
+    }
+    m_impl->ConfigureCallback();
+    return nexusflow::SUCCESS;
 }
 
 nexusflow::ErrorCode Runtime::DeInit() {
-    if (!m_impl || !m_impl->pipeline || !m_impl->initialized) return nexusflow::SUCCESS;
-    const auto result = m_impl->pipeline->DeInit();
-    m_impl->initialized = false;
-    m_impl->completion.SetOnComplete(nullptr);
-    return result;
-}
-
-nexusflow::ErrorCode Runtime::Run() {
-    auto result = Init();
-    if (result != nexusflow::SUCCESS) return result;
-    result = Start();
-    if (result != nexusflow::SUCCESS) {
-        DeInit();
-        return result;
-    }
-    result = Wait();
-    const auto stopResult = Stop();
-    const auto deinitResult = DeInit();
-    if (result != nexusflow::SUCCESS) return result;
-    if (stopResult != nexusflow::SUCCESS) return stopResult;
-    return deinitResult;
-}
-
-void Runtime::RequestStop() {
-    if (m_impl) m_impl->completion.NotifyComplete();
+    if (!m_impl) return nexusflow::SUCCESS;
+    std::lock_guard<std::mutex> processLock(m_impl->processMutex);
+    return m_impl->DeInit();
 }
 
 } // namespace aifootball

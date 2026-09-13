@@ -5,16 +5,30 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <cstddef>
+#include <cstdint>
 #include <utility>
 #include <vector>
 
 // --- Base ---
 struct VideoFrame {
     uint32_t frameId = 0;
-    std::string frameData; // Contiguous RGB24 bytes; frame object is shared after decode
+    std::string frameData; // Owned contiguous RGB24 bytes for file/demo input.
+    const uint8_t* externalData = nullptr; // Non-owning SDK input view.
+    std::size_t externalDataBytes = 0;
+    std::shared_ptr<const void> externalOwner; // Optional lifetime anchor.
     int width = 0;
     int height = 0;
     int channels = 3; // RGB24 = 3 channels
+
+    const uint8_t* Data() const {
+        if (externalData != nullptr) return externalData;
+        return reinterpret_cast<const uint8_t*>(frameData.data());
+    }
+
+    std::size_t DataSize() const {
+        return externalData != nullptr ? externalDataBytes : frameData.size();
+    }
 };
 
 // A decoded frame is immutable after VideoDecoder publishes it. All pipeline
@@ -98,7 +112,7 @@ struct FrameMessage {
             << ", " << (videoFrame ? videoFrame->width : 0) << "x"
             << (videoFrame ? videoFrame->height : 0)
             << ", ch=" << (videoFrame ? videoFrame->channels : 0)
-            << ", dataSize=" << (videoFrame ? videoFrame->frameData.size() : 0) << "B"
+            << ", dataSize=" << (videoFrame ? videoFrame->DataSize() : 0) << "B"
             << ", isKeyFrame=" << isKeyFrame
             << ", isEnd=" << isEnd
             << ", ts=" << timestamp

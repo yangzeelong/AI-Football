@@ -130,13 +130,13 @@ void RFDetrDetector::FlushBatch() {
     for (int i = 0; i < B; ++i) {
         const auto& bf = m_batchBuffer[i];
         inputs[i].rgb = bf.videoFrame
-            ? reinterpret_cast<const uint8_t*>(bf.videoFrame->frameData.data()) : nullptr;
+            ? bf.videoFrame->Data() : nullptr;
         inputs[i].width  = bf.videoFrame ? bf.videoFrame->width : 0;
         inputs[i].height = bf.videoFrame ? bf.videoFrame->height : 0;
         inputs[i].channels = bf.videoFrame ? bf.videoFrame->channels : 0;
-        inputs[i].dataBytes = bf.videoFrame ? bf.videoFrame->frameData.size() : 0;
+        inputs[i].dataBytes = bf.videoFrame ? bf.videoFrame->DataSize() : 0;
         inputs[i].frameId = bf.videoFrame ? bf.videoFrame->frameId : 0;
-        if (!bf.videoFrame || bf.videoFrame->frameData.empty() ||
+        if (!bf.videoFrame || bf.videoFrame->DataSize() == 0 ||
             bf.videoFrame->channels != 3) {
             inputs[i].rgb = nullptr;
         }

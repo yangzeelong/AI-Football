@@ -2,21 +2,24 @@
 
 Updated: 2026-09-13
 
-## Current Pipeline
+## Current Algorithm Pipeline
 
 The current C++ pipeline is:
 
 ```text
-VideoReader
-  -> VideoDecoder
+DecodedFrameView
+  -> SdkInput
   -> RFDetrDetector
   -> ByteTracker
   -> HRNetPoseEstimator
   -> KeypointSmoother
   -> FootballTracker
-  -> VideoRenderer
-  -> ObservationWriter / AlarmPusher
+  -> SdkOutput
 ```
+
+The embeddable SDK owns only this algorithm path. Video demux/decode, rendering,
+JSONL persistence, and alarms are outside the SDK. The offline demo owns the
+FFmpeg file adapter and `tools/render_jsonl.py` renders JSONL for debugging.
 
 The application uses the RF-DETR small 960 model and the HRNet-W48-DARK
 wholebody TensorRT engine. The source video remains in its original format;
@@ -52,19 +55,18 @@ ctest --test-dir build --output-on-failure
 100% tests passed, 0 tests failed out of 77
 ```
 
-The application has also been run successfully on the test video. Rendering
-is a debug-only SDK option and is disabled by default. When enabled, the
-rendered output is written to:
+The offline demo has also been run successfully on the test video. Rendering
+is not part of the SDK runtime. The demo writes observations to:
 
 ```text
-output/rendered.mp4
+output/sdk_demo/observations.jsonl
 ```
 
-The generated video was verified with OpenCV as readable, with 1920x1080
-frames and approximately 60 FPS. Observation output is written to:
+For a debug video, use the model-free renderer:
 
 ```text
-output/observations.jsonl
+python3 tools/render_jsonl.py --observations output/sdk_demo/observations.jsonl \
+  --output output/sdk_demo/rendered.mp4
 ```
 
 ## Current Performance
@@ -193,9 +195,8 @@ the renderer creates a writable overlay buffer when drawing is enabled.
 3. The current sample configuration contains machine-specific model paths and
    a sample video path. These should be moved to a portable runtime config or
    CLI overrides before deployment.
-4. `--stop_frame` is parsed by the executable but is not yet propagated to
-   `VideoReader`, so it does not currently stop input after the requested
-   frame.
+4. The public SDK currently accepts packed RGB24 only. Upstream online
+   integration must convert NV12/BGR or padded planes before `Process()`.
 
 ## TODO
 
@@ -212,8 +213,8 @@ the renderer creates a writable overlay buffer when drawing is enabled.
 
 - Keep writable overlays separate from the original frame buffer.
 - Make queue sizes and worker batch policies configurable.
-- Propagate `--stop_frame`, `--stride`, and `--target_fps` into the source
-  module instead of only parsing them in `main.cpp`.
+- Add optional input adapters for NV12/BGR and non-packed plane layouts without
+  changing the algorithm result contract.
 
 ### Inference
 
@@ -227,7 +228,6 @@ the renderer creates a writable overlay buffer when drawing is enabled.
 
 ### Output and Deployment
 
-- Add an inference-only mode that skips rendering and video encoding.
-- Make the renderer codec, bitrate, and pixel format configurable.
 - Add portable model path resolution and a deployment configuration example.
-- Add automated validation for rendered video dimensions, FPS, and frame count.
+- Add automated validation for offline JSONL/video dimensions, FPS, and frame
+  count.

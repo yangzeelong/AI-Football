@@ -115,7 +115,7 @@ void HRNetPoseEstimator::Process(ns::Message& inputMessage) {
 
     // Fallback: emit persons with missing keypoints if engine not ready.
     if (m_inferPool.empty() || !m_inferPool.front()->IsReady() || trkMsg->persons.empty() ||
-        !vf || vf->frameData.empty() || vf->width <= 0 || vf->height <= 0 || vf->channels != 3) {
+        !vf || vf->DataSize() == 0 || vf->width <= 0 || vf->height <= 0 || vf->channels != 3) {
         for (const auto& d : trkMsg->persons) {
             PersonPose pp;
             pp.trackId = d.trackId;
@@ -127,7 +127,7 @@ void HRNetPoseEstimator::Process(ns::Message& inputMessage) {
     }
 
     // Build input list for the infer class.
-    const uint8_t* rgb = reinterpret_cast<const uint8_t*>(vf->frameData.data());
+    const uint8_t* rgb = vf->Data();
     std::vector<pose::HRNetPoseEstimatorInfer::PersonInput> inputs;
     inputs.reserve(trkMsg->persons.size());
     for (const auto& d : trkMsg->persons) {
