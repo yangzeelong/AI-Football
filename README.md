@@ -72,6 +72,21 @@ int main() {
 }
 ```
 
+### Render JSONL Observations
+
+The model-free replay tool can render an existing `observations.jsonl` onto
+the source video for demonstrations or debugging. It does not run inference.
+
+```bash
+python3 tools/render_jsonl.py \
+  --observations output/sdk_roi_full/observations.jsonl \
+  --output output/sdk_roi_replay.mp4
+```
+
+The source video is read from the JSONL metadata. Use `--video` to override
+that path, or `--hide-keypoints`, `--hide-boxes`, and `--hide-panel` to adjust
+the presentation.
+
 The following example demonstrates how to build a pipeline with four modules: one input node distributes data to two parallel processing nodes, and one output node gathers the results.
 
 ### Option 1: Declarative Build via YAML (Recommended)
