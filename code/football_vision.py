@@ -15,6 +15,62 @@ Point = tuple[int, int]
 BBox = tuple[float, float, float, float]
 
 
+def _letterbox_rgb(
+    image: np.ndarray,
+    target_size: int,
+) -> tuple[np.ndarray, float, int, int]:
+    """Resize an RGB image proportionally and pad it to a square."""
+    if target_size <= 0:
+        raise ValueError(f"target_size must be positive: {target_size}")
+
+    height, width = image.shape[:2]
+    scale = min(target_size / width, target_size / height)
+    resized_width = max(1, round(width * scale))
+    resized_height = max(1, round(height * scale))
+    resized = cv2.resize(
+        image,
+        (resized_width, resized_height),
+        interpolation=cv2.INTER_LINEAR,
+    )
+
+    # Neutral gray padding avoids introducing a high-contrast black border.
+    canvas = np.full(
+        (target_size, target_size, 3),
+        114,
+        dtype=image.dtype,
+    )
+    pad_x = (target_size - resized_width) // 2
+    pad_y = (target_size - resized_height) // 2
+    canvas[pad_y:pad_y + resized_height,
+           pad_x:pad_x + resized_width] = resized
+    return canvas, scale, pad_x, pad_y
+
+
+def _unletterbox_detection(
+    detection: "Detection",
+    scale: float,
+    pad_x: int,
+    pad_y: int,
+    width: int,
+    height: int,
+) -> "Detection":
+    x1, y1, x2, y2 = detection.bbox
+    bbox = (
+        max(0.0, min(float(width), (x1 - pad_x) / scale)),
+        max(0.0, min(float(height), (y1 - pad_y) / scale)),
+        max(0.0, min(float(width), (x2 - pad_x) / scale)),
+        max(0.0, min(float(height), (y2 - pad_y) / scale)),
+    )
+    return Detection(
+        frame_index=detection.frame_index,
+        label=detection.label,
+        confidence=detection.confidence,
+        bbox=bbox,
+        class_id=detection.class_id,
+        track_id=detection.track_id,
+    )
+
+
 # BGRColor
 class Color(Enum):
     RED = (0, 0, 255)
@@ -301,6 +357,7 @@ class RfdetrDetector:
         class_names: Sequence[str] | None = None,
         size: str = "medium",
         resolution: int | None = None,
+        preserve_aspect_ratio: bool = True,
         device: str | None = None,
         model_dir: str | Path = "models/rfdetr",
     ) -> None:
@@ -349,14 +406,35 @@ class RfdetrDetector:
         self.confidence = confidence
         self.class_names = set(class_names or ["person", "sports ball"])
         self.resolution = resolution
+        self.preserve_aspect_ratio = preserve_aspect_ratio
         self.device = device
         self.coco_classes = getattr(self.model, "class_names", COCO_CLASSES)
         self.person_tracker = self._build_person_tracker()
 
     def detect(self, frame: VideoFrame) -> list[Detection]:
         rgb_image = cv2.cvtColor(frame.image, cv2.COLOR_BGR2RGB)
-        predictions = self.model.predict(rgb_image, threshold=self.confidence)
-        return self._parse_predictions(frame, predictions)
+        if not self.preserve_aspect_ratio:
+            predictions = self.model.predict(rgb_image, threshold=self.confidence)
+            return self._parse_predictions(frame, predictions)
+
+        # RF-DETR requires a square tensor. Letterbox first so the video geometry
+        # is preserved, then map the predicted boxes back to the source frame.
+        target_resolution = int(
+            self.resolution or getattr(self.model.model, "resolution", 640))
+        letterboxed, scale, pad_x, pad_y = _letterbox_rgb(
+            rgb_image, target_resolution)
+        predictions = self.model.predict(letterboxed, threshold=self.confidence)
+        detections = self._parse_predictions(frame, predictions)
+        return [
+            _unletterbox_detection(
+                detection,
+                scale=scale,
+                pad_x=pad_x,
+                pad_y=pad_y,
+                width=frame.image.shape[1],
+                height=frame.image.shape[0],
+            ) for detection in detections
+        ]
 
     def track(self,
               frame: VideoFrame,

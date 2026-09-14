@@ -194,11 +194,15 @@ def run_video_app(
         viewer = VideoShow(fps=reader.fps,
                            display_width=display_width,
                            display_height=display_height) if show else None
-        writer = ResultVideoWriter(
-            output_video,
-            fps=output_fps,
-            frame_size=(reader.width, reader.height),
-        ) if output_video else None
+        writer = (
+            ResultVideoWriter(
+                output_video,
+                fps=output_fps,
+                frame_size=(reader.width, reader.height),
+            )
+            if output_video
+            else None
+        )
 
         processed = 0
         total_frames = _processed_frame_total(reader.frame_count,

@@ -75,6 +75,11 @@ def parse_args() -> argparse.Namespace:
         help="Stop after N processed frames.",
     )
     parser.add_argument(
+        "--no-render",
+        action="store_true",
+        help="Skip rendered video output and write observations JSONL only.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print commands without running them.",
@@ -105,6 +110,7 @@ def main() -> None:
             stride=args.stride,
             target_fps=args.target_fps,
             max_frames=args.max_frames,
+            no_render=args.no_render,
         )
         rows.append(execute_run(run, args.dry_run))
 
@@ -122,6 +128,7 @@ def build_run(
     stride: int | None,
     target_fps: float | None,
     max_frames: int | None,
+    no_render: bool,
 ) -> dict[str, Any]:
     name = f"res_{resolution}"
     run_dir = run_root / name
@@ -145,6 +152,7 @@ def build_run(
         stride=stride,
         target_fps=target_fps,
         max_frames=max_frames,
+        no_render=no_render,
     )
     report_cmd = build_report_cmd(
         observation_path=observation_path,
@@ -191,6 +199,7 @@ def build_app_cmd(
     stride: int | None,
     target_fps: float | None,
     max_frames: int | None,
+    no_render: bool,
 ) -> list[str]:
     cmd = [
         sys.executable,
@@ -205,6 +214,8 @@ def build_app_cmd(
         str(device),
         "--use-roi",
     ]
+    if no_render:
+        cmd.append("--no-render")
     if target_fps is not None:
         cmd.extend(["--target-fps", str(target_fps)])
     else:

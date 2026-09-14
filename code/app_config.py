@@ -98,6 +98,7 @@ class DetectorConfig:
     rfdetr_size: str = DEFAULT_RFDETR_SIZE
     rfdetr_model_dir: str = DEFAULT_RFDETR_MODEL_DIR
     input_resolution: int | None = None
+    preserve_aspect_ratio: bool = True
 
 
 @dataclass(frozen=True)
@@ -411,6 +412,7 @@ def _detector_from_raw(raw: dict, section: str) -> DetectorConfig:
             "rfdetr_size",
             "rfdetr_model_dir",
             "input_resolution",
+            "preserve_aspect_ratio",
         },
         section,
     )
@@ -422,6 +424,7 @@ def _detector_from_raw(raw: dict, section: str) -> DetectorConfig:
         input_resolution=(
             None if raw["input_resolution"] is None else int(raw["input_resolution"])
         ),
+        preserve_aspect_ratio=bool(raw["preserve_aspect_ratio"]),
     )
 
 

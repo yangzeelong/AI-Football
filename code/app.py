@@ -51,6 +51,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--show",
                         action="store_true",
                         help="Show rendered detections with OpenCV.")
+    parser.add_argument(
+        "--no-render",
+        action="store_true",
+        help="Skip rendered video output and write observations JSONL only.",
+    )
     parser.add_argument("--camera-id",
                         default="C1",
                         help="Camera ID stored in observation output.")
@@ -125,7 +130,7 @@ def main() -> None:
         max_frames=args.max_frames,
         display_width=args.display_width,
         display_height=args.display_height,
-        output_video=str(output_video),
+        output_video=str(output_video) if output_video is not None else None,
         tracker=app_config.runtime.tracker,
         pose_estimator=pose_estimator,
         app_config=app_config,
@@ -152,6 +157,7 @@ def build_detector(app_config: AppConfig, device: str):
         class_names=class_names,
         size=size,
         resolution=detector_cfg.input_resolution,
+        preserve_aspect_ratio=detector_cfg.preserve_aspect_ratio,
         device=device,
         model_dir=model_dir,
     )
@@ -176,10 +182,11 @@ def _normalize_sampling_args(stride: int | None,
 
 def _resolve_output_paths(
     args: argparse.Namespace,
-) -> tuple[Path, Path, Path]:
+) -> tuple[Path, Path, Path | None]:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    return output_dir, output_dir / "observations.jsonl", output_dir / "rendered.mp4"
+    output_video = None if args.no_render else output_dir / "rendered.mp4"
+    return output_dir, output_dir / "observations.jsonl", output_video
 
 
 def _save_run_metadata(
@@ -187,7 +194,7 @@ def _save_run_metadata(
     args: argparse.Namespace,
     app_config: AppConfig,
     output_observations: Path,
-    output_video: Path,
+    output_video: Path | None,
     stride: int,
     target_fps: float | None,
 ) -> None:
@@ -202,7 +209,7 @@ def _save_run_metadata(
             "config": str(config_source),
             "output_dir": str(output_dir),
             "output_observations": str(output_observations),
-            "output_video": str(output_video),
+            "output_video": str(output_video) if output_video is not None else None,
             "stride": stride,
             "target_fps": target_fps,
             "detector": "rfdetr",
