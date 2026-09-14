@@ -297,7 +297,7 @@ bool TensorRTEngine::EnsureInputBuffer(const std::string& name, size_t bytes) {
 }
 
 // ---------------------------------------------------------------------------
-// Infer: enqueueV3 + synchronize
+// Infer: enqueueV3
 // ---------------------------------------------------------------------------
 
 bool TensorRTEngine::Infer() {
@@ -322,7 +322,9 @@ bool TensorRTEngine::Infer() {
         LOG_ERROR("TensorRTEngine: enqueueV3 failed");
         return false;
     }
-    cudaStreamSynchronize(m_stream);
+    // Do not synchronize here. Input preparation, preprocessing, and
+    // TensorRT execution all use m_stream, so CUDA preserves their ordering.
+    // CopyOutputToHost() is the synchronization point for host consumers.
     return true;
 }
 

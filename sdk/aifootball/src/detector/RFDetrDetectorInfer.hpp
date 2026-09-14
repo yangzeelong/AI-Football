@@ -85,6 +85,17 @@ private:
         int   classId;
     };
 
+    struct HostFloatBuffer {
+        std::vector<float> fallback;
+        float* pinned = nullptr;
+        size_t size = 0;
+        size_t capacity = 0;
+        bool usingPinned = false;
+
+        float* Data() { return usingPinned ? pinned : fallback.data(); }
+        const float* Data() const { return usingPinned ? pinned : fallback.data(); }
+    };
+
     static ResizeInfo ComputeResize(int srcW, int srcH, int dstW, int dstH);
     bool PreprocessToHost(const uint8_t* rgb, int srcW, int srcH,
                           ResizeInfo& resizeOut, float* dstChw) const;
@@ -92,6 +103,10 @@ private:
                          std::vector<ResizeInfo>& resizeInfos,
                          void* inputDevice,
                          void* stream);
+    bool EnsureHostBuffer(HostFloatBuffer& buffer, size_t floats,
+                          const char* name);
+    void ReleaseHostBuffer(HostFloatBuffer& buffer);
+    void ReleaseHostBuffers();
     void ReleaseGpuBuffers();
     void DecodeBaked(const float* out, int numQueries, std::vector<RawBox>& boxesOut) const;
     void DecodeRaw(const float* logits, const float* boxes,
@@ -106,10 +121,10 @@ private:
     OutputFormat m_outputFormat = OutputFormat::Baked;
 
     // Host buffers
-    std::vector<float> m_inputHost;
-    std::vector<float> m_outputHost;   // baked
-    std::vector<float> m_logitsHost;   // raw
-    std::vector<float> m_boxesHost;    // raw
+    HostFloatBuffer m_inputHost;
+    HostFloatBuffer m_outputHost;   // baked
+    HostFloatBuffer m_logitsHost;   // raw
+    HostFloatBuffer m_boxesHost;    // raw
 
     bool m_gpuPreprocessAvailable = false;
     void* m_rgbDevice = nullptr;

@@ -176,11 +176,13 @@ public:
         : context(std::move(runtimeContext)) {}
 
     ~Impl() {
-        if (initialized) DeInit();
+        if (initialized || pipeline || frameSource || resultSink) DeInit();
     }
 
     nexusflow::ErrorCode DeInit() {
-        if (!initialized) return nexusflow::SUCCESS;
+        if (!initialized && !pipeline && !frameSource && !resultSink) {
+            return nexusflow::SUCCESS;
+        }
         if (frameSource) frameSource->Close();
         if (resultSink) resultSink->Close();
 

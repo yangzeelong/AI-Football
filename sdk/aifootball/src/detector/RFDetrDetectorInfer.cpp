@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <exception>
 #include <limits>
 
 namespace {
@@ -158,14 +159,11 @@ bool RFDetrDetectorInfer::Init(const Param& param) {
 }
 
 void RFDetrDetectorInfer::Release() {
+    ReleaseHostBuffers();
     ReleaseGpuBuffers();
     if (m_engine) { m_engine->Release(); m_engine.reset(); }
     m_ready = false;
     m_gpuPreprocessAvailable = false;
-    m_inputHost.clear();
-    m_outputHost.clear();
-    m_logitsHost.clear();
-    m_boxesHost.clear();
     m_effectiveMaxBatch = 1;
 }
 
@@ -198,10 +196,14 @@ bool RFDetrDetectorInfer::InferBatch(const std::vector<FrameInput>& frames,
 #ifdef WITH_CUDA_KERNELS
             auto* trtEngine = dynamic_cast<inference::TensorRTEngine*>(m_engine.get());
             void* stream = trtEngine ? trtEngine->GetCudaStream() : nullptr;
-            void* inputDevice = trtEngine
-                ? trtEngine->PrepareInputDevice(m_param.inputBindingName,
-                                                 batchInputBytes, batchDims)
-                : nullptr;
+            void* inputDevice = nullptr;
+            {
+                TIMER_SCOPE_AVERAGE_MS("Detector.PrepareInput", static_cast<uint64_t>(B), 5000);
+                inputDevice = trtEngine
+                    ? trtEngine->PrepareInputDevice(m_param.inputBindingName,
+                                                     batchInputBytes, batchDims)
+                    : nullptr;
+            }
             usedGpuPreprocess = inputDevice != nullptr && stream != nullptr &&
                                 PreprocessToGpu(frames, resizeInfos, inputDevice, stream);
             if (!usedGpuPreprocess) {
@@ -214,11 +216,12 @@ bool RFDetrDetectorInfer::InferBatch(const std::vector<FrameInput>& frames,
         if (!usedGpuPreprocess) {
             // CPU fallback. Keep this path available for unsupported input
             // dtypes, non-CUDA builds, and runtime CUDA failures.
-            if (m_inputHost.size() < perFrameFloats * B) {
-                m_inputHost.resize(perFrameFloats * B, 0.0f);
+            if (!EnsureHostBuffer(m_inputHost, perFrameFloats * B,
+                                  "Detector.InputHost")) {
+                return false;
             }
             for (int i = 0; i < B; ++i) {
-                float* dst = m_inputHost.data() + i * perFrameFloats;
+                float* dst = m_inputHost.Data() + i * perFrameFloats;
                 if (!frames[i].rgb || frames[i].width <= 0 || frames[i].height <= 0) {
                     std::fill(dst, dst + perFrameFloats, 0.0f);
                     resizeInfos[i] = ResizeInfo{};
@@ -234,8 +237,9 @@ bool RFDetrDetectorInfer::InferBatch(const std::vector<FrameInput>& frames,
     {
         TIMER_SCOPE_AVERAGE_MS("Detector.TensorRT", static_cast<uint64_t>(B), 5000);
         if (!usedGpuPreprocess) {
+            TIMER_SCOPE_AVERAGE_MS("Detector.InputH2D", static_cast<uint64_t>(B), 5000);
             if (!m_engine->SetInputFromHost(m_param.inputBindingName,
-                                            m_inputHost.data(), batchInputBytes, batchDims)) {
+                                            m_inputHost.Data(), batchInputBytes, batchDims)) {
                 LOG_ERROR("RFDetrDetectorInfer: SetInputFromHost failed");
                 return false;
             }
@@ -256,12 +260,14 @@ bool RFDetrDetectorInfer::InferBatch(const std::vector<FrameInput>& frames,
         if (m_outputFormat == OutputFormat::Baked) {
             size_t perFrameOut = static_cast<size_t>(m_param.numQueries) * 6;
             size_t totalOut = perFrameOut * static_cast<size_t>(B);
-            if (m_outputHost.size() < totalOut)
-                m_outputHost.resize(totalOut, 0.0f);
+            if (!EnsureHostBuffer(m_outputHost, totalOut,
+                                  "Detector.OutputHost")) {
+                return false;
+            }
             if (i == 0) {
                 TIMER_SCOPE_AVERAGE_MS("Detector.CopyOutput", static_cast<uint64_t>(B), 5000);
                 if (!m_engine->CopyOutputToHost(m_param.outputBindingName,
-                                                m_outputHost.data(),
+                                                m_outputHost.Data(),
                                                 totalOut * sizeof(float))) {
                     LOG_ERROR("RFDetrDetectorInfer: CopyOutputToHost failed for '{}'",
                               m_param.outputBindingName);
@@ -269,7 +275,7 @@ bool RFDetrDetectorInfer::InferBatch(const std::vector<FrameInput>& frames,
                 }
             }
             size_t offset = static_cast<size_t>(i) * perFrameOut;
-            DecodeBaked(m_outputHost.data() + offset, m_param.numQueries, rawBoxes);
+            DecodeBaked(m_outputHost.Data() + offset, m_param.numQueries, rawBoxes);
         } else {
             size_t perFrameLogits = static_cast<size_t>(m_param.numQueries) * m_param.numClasses;
             size_t perFrameBoxes  = static_cast<size_t>(m_param.numQueries) * 4;
@@ -278,18 +284,20 @@ bool RFDetrDetectorInfer::InferBatch(const std::vector<FrameInput>& frames,
 
             const size_t totalLogits = perFrameLogits * static_cast<size_t>(B);
             const size_t totalBoxes = perFrameBoxes * static_cast<size_t>(B);
-            if (m_logitsHost.size() < totalLogits)
-                m_logitsHost.resize(totalLogits, 0.0f);
-            if (m_boxesHost.size() < totalBoxes)
-                m_boxesHost.resize(totalBoxes, 0.0f);
+            if (!EnsureHostBuffer(m_logitsHost, totalLogits,
+                                  "Detector.LogitsHost") ||
+                !EnsureHostBuffer(m_boxesHost, totalBoxes,
+                                  "Detector.BoxesHost")) {
+                return false;
+            }
 
             if (i == 0) {
                 TIMER_SCOPE_AVERAGE_MS("Detector.CopyOutput", static_cast<uint64_t>(B), 5000);
                 bool okL = m_engine->CopyOutputToHost(m_param.logitsBindingName,
-                                                      m_logitsHost.data(),
+                                                      m_logitsHost.Data(),
                                                       totalLogits * sizeof(float));
                 bool okB = m_engine->CopyOutputToHost(m_param.boxesBindingName,
-                                                      m_boxesHost.data(),
+                                                      m_boxesHost.Data(),
                                                       totalBoxes * sizeof(float));
                 if (!okL || !okB) {
                     LOG_ERROR("RFDetrDetectorInfer: failed to copy raw batch outputs");
@@ -305,7 +313,7 @@ bool RFDetrDetectorInfer::InferBatch(const std::vector<FrameInput>& frames,
                     if (!usedGpuPreprocess) {
                         inputMin = std::numeric_limits<float>::max();
                         inputMax = std::numeric_limits<float>::lowest();
-                        const float* input = m_inputHost.data() +
+                        const float* input = m_inputHost.Data() +
                             static_cast<size_t>(i) * perFrameFloats;
                         for (size_t k = 0; k < perFrameFloats; ++k) {
                             inputMin = std::min(inputMin, input[k]);
@@ -326,8 +334,8 @@ bool RFDetrDetectorInfer::InferBatch(const std::vector<FrameInput>& frames,
                     int anyPairsAbove = 0;
                     int targetPairsAbove = 0;
 
-                    const float* logits = m_logitsHost.data() + logitsOff;
-                    const float* boxes = m_boxesHost.data() + boxesOff;
+                    const float* logits = m_logitsHost.Data() + logitsOff;
+                    const float* boxes = m_boxesHost.Data() + boxesOff;
                     for (size_t k = 0; k < perFrameLogits; ++k) {
                         logitMin = std::min(logitMin, logits[k]);
                         logitMax = std::max(logitMax, logits[k]);
@@ -377,8 +385,8 @@ bool RFDetrDetectorInfer::InferBatch(const std::vector<FrameInput>& frames,
                         anyPairsAbove, targetPairsAbove, m_param.confidenceThreshold);
                 }
 
-                DecodeRaw(m_logitsHost.data() + logitsOff,
-                          m_boxesHost.data() + boxesOff,
+                DecodeRaw(m_logitsHost.Data() + logitsOff,
+                          m_boxesHost.Data() + boxesOff,
                           m_param.numQueries, m_param.numClasses, rawBoxes);
             }
         }
@@ -545,40 +553,41 @@ bool RFDetrDetectorInfer::PreprocessToGpu(
                             m_param.inputSize, m_param.inputSize)
             : ResizeInfo{};
 
-        if (valid && cudaMemcpyAsync(
-                static_cast<uint8_t*>(m_rgbDevice) + i * m_rgbStrideBytes,
-                frame.rgb, expectedBytes, cudaMemcpyHostToDevice,
-                static_cast<cudaStream_t>(stream)) != cudaSuccess) {
-            LOG_ERROR("RFDetrDetectorInfer: RGB H2D upload failed for batch item {}", i);
+        if (valid) {
+            TIMER_SCOPE_AVERAGE_MS("Detector.RawH2D", 1, 5000);
+            if (cudaMemcpyAsync(
+                    static_cast<uint8_t*>(m_rgbDevice) + i * m_rgbStrideBytes,
+                    frame.rgb, expectedBytes, cudaMemcpyHostToDevice,
+                    static_cast<cudaStream_t>(stream)) != cudaSuccess) {
+                LOG_ERROR("RFDetrDetectorInfer: RGB H2D upload failed for batch item {}", i);
+                return false;
+            }
+        }
+    }
+
+    {
+        TIMER_SCOPE_AVERAGE_MS("Detector.FrameInfoH2D", 1, 5000);
+        if (cudaMemcpyAsync(m_frameInfoDevice, frameInfo.data(), infoBytes,
+                            cudaMemcpyHostToDevice,
+                            static_cast<cudaStream_t>(stream)) != cudaSuccess) {
+            LOG_ERROR("RFDetrDetectorInfer: frame metadata H2D upload failed");
             return false;
         }
     }
 
-    if (cudaMemcpyAsync(m_frameInfoDevice, frameInfo.data(), infoBytes,
-                        cudaMemcpyHostToDevice,
-                        static_cast<cudaStream_t>(stream)) != cudaSuccess) {
-        LOG_ERROR("RFDetrDetectorInfer: frame metadata H2D upload failed");
-        return false;
-    }
-
-    if (!LaunchRfdetrGpuPreprocess(
-            static_cast<const uint8_t*>(m_rgbDevice), m_rgbStrideBytes,
-            static_cast<const RfdetrGpuFrameInfo*>(m_frameInfoDevice),
-            static_cast<float*>(inputDevice), static_cast<int>(batch),
-            m_param.inputSize, m_param.inputSize,
-            m_param.meanR, m_param.meanG, m_param.meanB,
-            1.0f / m_param.stdR, 1.0f / m_param.stdG, 1.0f / m_param.stdB,
-            stream)) {
-        LOG_ERROR("RFDetrDetectorInfer: GPU preprocessing kernel launch failed");
-        return false;
-    }
-
-    // TensorRT currently synchronizes its stream in Infer(). Synchronize here
-    // as well so the preprocess timer measures the actual GPU work rather than
-    // only host-side enqueue time.
-    if (cudaStreamSynchronize(static_cast<cudaStream_t>(stream)) != cudaSuccess) {
-        LOG_ERROR("RFDetrDetectorInfer: GPU preprocessing stream synchronize failed");
-        return false;
+    {
+        TIMER_SCOPE_AVERAGE_MS("Detector.PreprocessKernel", batch, 5000);
+        if (!LaunchRfdetrGpuPreprocess(
+                static_cast<const uint8_t*>(m_rgbDevice), m_rgbStrideBytes,
+                static_cast<const RfdetrGpuFrameInfo*>(m_frameInfoDevice),
+                static_cast<float*>(inputDevice), static_cast<int>(batch),
+                m_param.inputSize, m_param.inputSize,
+                m_param.meanR, m_param.meanG, m_param.meanB,
+                1.0f / m_param.stdR, 1.0f / m_param.stdG, 1.0f / m_param.stdB,
+                stream)) {
+            LOG_ERROR("RFDetrDetectorInfer: GPU preprocessing kernel launch failed");
+            return false;
+        }
     }
     return true;
 #else
@@ -600,6 +609,67 @@ void RFDetrDetectorInfer::ReleaseGpuBuffers() {
     m_rgbStrideBytes = 0;
     m_rgbDeviceBytes = 0;
     m_frameInfoDeviceBytes = 0;
+}
+
+bool RFDetrDetectorInfer::EnsureHostBuffer(HostFloatBuffer& buffer,
+                                           size_t floats,
+                                           const char* name) {
+    if (floats == 0) return false;
+    if (buffer.capacity >= floats && buffer.Data() != nullptr) {
+        buffer.size = floats;
+        return true;
+    }
+
+    ReleaseHostBuffer(buffer);
+
+#ifdef WITH_TENSORRT
+    void* allocated = nullptr;
+    const size_t bytes = floats * sizeof(float);
+    if (cudaHostAlloc(&allocated, bytes, cudaHostAllocDefault) == cudaSuccess) {
+        buffer.pinned = static_cast<float*>(allocated);
+        buffer.capacity = floats;
+        buffer.size = floats;
+        buffer.usingPinned = true;
+        LOG_DEBUG("RFDetrDetectorInfer: allocated pinned host buffer '{}' ({} bytes)",
+                  name, bytes);
+        return true;
+    }
+    LOG_WARN("RFDetrDetectorInfer: pinned host allocation failed for '{}'; using pageable memory",
+             name);
+#endif
+
+    try {
+        buffer.fallback.resize(floats);
+    } catch (const std::exception& exc) {
+        LOG_ERROR("RFDetrDetectorInfer: host buffer '{}' allocation failed: {}",
+                  name, exc.what());
+        return false;
+    }
+    buffer.capacity = floats;
+    buffer.size = floats;
+    buffer.usingPinned = false;
+    return true;
+}
+
+void RFDetrDetectorInfer::ReleaseHostBuffer(HostFloatBuffer& buffer) {
+#ifdef WITH_TENSORRT
+    if (buffer.usingPinned && buffer.pinned != nullptr) {
+        cudaFreeHost(buffer.pinned);
+    }
+#endif
+    buffer.pinned = nullptr;
+    buffer.size = 0;
+    buffer.capacity = 0;
+    buffer.usingPinned = false;
+    buffer.fallback.clear();
+    buffer.fallback.shrink_to_fit();
+}
+
+void RFDetrDetectorInfer::ReleaseHostBuffers() {
+    ReleaseHostBuffer(m_inputHost);
+    ReleaseHostBuffer(m_outputHost);
+    ReleaseHostBuffer(m_logitsHost);
+    ReleaseHostBuffer(m_boxesHost);
 }
 
 // ---------------------------------------------------------------------------

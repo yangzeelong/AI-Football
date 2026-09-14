@@ -140,10 +140,12 @@ public:
                                   const Dims& dims) = 0;
 
     /**
-     * @brief Run inference (enqueue + synchronize).
+     * @brief Enqueue inference on the backend stream.
      *
      * All input tensors must have been set via SetInputFromHost() beforehand.
      * Output buffers are populated on device; use CopyOutputToHost() to read.
+     * Backends may return before device execution completes. The host-output
+     * copy is responsible for waiting until the requested output is ready.
      */
     virtual bool Infer() = 0;
 

@@ -25,7 +25,7 @@ namespace inference {
  *   TensorRTEngine engine;
  *   engine.Load("model.engine");
  *   engine.SetInputFromHost("images", hostBuf, bytes, Dims{1,3,640,640});
- *   engine.Infer();
+ *   engine.Infer();                  // enqueue on the engine stream
  *   engine.CopyOutputToHost("output0", hostOut, outBytes);
  */
 class TensorRTEngine : public IInferenceEngine {
