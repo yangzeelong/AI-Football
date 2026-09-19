@@ -233,7 +233,9 @@ void KeypointSmoother::Process(ns::Message& inputMessage) {
     SmoothedPoseMessage out;
     out.videoFrame       = poseMsg->videoFrame;
     out.balls            = poseMsg->balls;
+    out.rejectedBalls    = poseMsg->rejectedBalls;
     out.rawCounts        = poseMsg->rawCounts;
+    out.filteredCounts   = poseMsg->filteredCounts;
     out.activeTrackCount = poseMsg->activeTrackCount;
     out.lostTrackCount   = poseMsg->lostTrackCount;
     out.isEnd            = poseMsg->isEnd;

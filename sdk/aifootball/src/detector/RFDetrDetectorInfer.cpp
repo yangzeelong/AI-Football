@@ -416,9 +416,18 @@ RFDetrDetectorInfer::ResizeInfo
 RFDetrDetectorInfer::ComputeResize(int srcW, int srcH, int dstW, int dstH) {
     ResizeInfo resize;
     if (srcW <= 0 || srcH <= 0) return resize;
-    // Match rfdetr.predict(): direct resize to a square, without letterbox.
-    resize.scaleX = static_cast<float>(dstW) / srcW;
-    resize.scaleY = static_cast<float>(dstH) / srcH;
+    // Match AI-Football's Python detector: preserve aspect ratio and pad the
+    // resized RGB image with neutral gray (114) to a square.
+    const float scale = std::min(static_cast<float>(dstW) / srcW,
+                                 static_cast<float>(dstH) / srcH);
+    resize.scaleX = scale;
+    resize.scaleY = scale;
+    resize.resizedWidth = std::max(1, static_cast<int>(std::nearbyint(srcW * scale)));
+    resize.resizedHeight = std::max(1, static_cast<int>(std::nearbyint(srcH * scale)));
+    resize.sampleScaleX = static_cast<float>(resize.resizedWidth) / srcW;
+    resize.sampleScaleY = static_cast<float>(resize.resizedHeight) / srcH;
+    resize.dx = (dstW - resize.resizedWidth) / 2;
+    resize.dy = (dstH - resize.resizedHeight) / 2;
     return resize;
 }
 
@@ -429,18 +438,21 @@ bool RFDetrDetectorInfer::PreprocessToHost(const uint8_t* rgb, int srcW, int src
     const int dstH = m_param.inputSize;
     resizeOut = ComputeResize(srcW, srcH, dstW, dstH);
 
-    const int newW = dstW;
-    const int newH = dstH;
-    const int dx = 0;
-    const int dy = 0;
+    const int newW = resizeOut.resizedWidth;
+    const int newH = resizeOut.resizedHeight;
+    const int dx = resizeOut.dx;
+    const int dy = resizeOut.dy;
 
     float* planeR = dstChw;
     float* planeG = dstChw + static_cast<size_t>(dstW) * dstH;
     float* planeB = dstChw + 2 * static_cast<size_t>(dstW) * dstH;
 
-    std::fill(planeR, planeR + static_cast<size_t>(dstW) * dstH, 0.0f);
-    std::fill(planeG, planeG + static_cast<size_t>(dstW) * dstH, 0.0f);
-    std::fill(planeB, planeB + static_cast<size_t>(dstW) * dstH, 0.0f);
+    const float grayR = (114.0f / 255.0f - m_param.meanR) / m_param.stdR;
+    const float grayG = (114.0f / 255.0f - m_param.meanG) / m_param.stdG;
+    const float grayB = (114.0f / 255.0f - m_param.meanB) / m_param.stdB;
+    std::fill(planeR, planeR + static_cast<size_t>(dstW) * dstH, grayR);
+    std::fill(planeG, planeG + static_cast<size_t>(dstW) * dstH, grayG);
+    std::fill(planeB, planeB + static_cast<size_t>(dstW) * dstH, grayB);
 
     const float inv255 = 1.0f / 255.0f;
     const float invStdR = 1.0f / m_param.stdR;
@@ -448,7 +460,7 @@ bool RFDetrDetectorInfer::PreprocessToHost(const uint8_t* rgb, int srcW, int src
     const float invStdB = 1.0f / m_param.stdB;
 
     for (int y = 0; y < newH; ++y) {
-        float sy = (y + 0.5f) / resizeOut.scaleY - 0.5f;
+        float sy = (y + 0.5f) / resizeOut.sampleScaleY - 0.5f;
         if (sy < 0) sy = 0;
         if (sy > srcH - 1) sy = static_cast<float>(srcH - 1);
         int y0 = static_cast<int>(std::floor(sy));
@@ -458,7 +470,7 @@ bool RFDetrDetectorInfer::PreprocessToHost(const uint8_t* rgb, int srcW, int src
         if (dstY < 0 || dstY >= dstH) continue;
 
         for (int x = 0; x < newW; ++x) {
-            float sx = (x + 0.5f) / resizeOut.scaleX - 0.5f;
+            float sx = (x + 0.5f) / resizeOut.sampleScaleX - 0.5f;
             if (sx < 0) sx = 0;
             if (sx > srcW - 1) sx = static_cast<float>(srcW - 1);
             int x0 = static_cast<int>(std::floor(sx));
@@ -545,13 +557,17 @@ bool RFDetrDetectorInfer::PreprocessToGpu(
         const bool valid = frame.rgb != nullptr && frame.width > 0 &&
                            frame.height > 0 && frame.channels == 3 &&
                            (frame.dataBytes == 0 || frame.dataBytes >= expectedBytes);
-        frameInfo[i].width = frame.width;
-        frameInfo[i].height = frame.height;
-        frameInfo[i].valid = valid ? 1 : 0;
         resizeInfos[i] = valid
             ? ComputeResize(frame.width, frame.height,
                             m_param.inputSize, m_param.inputSize)
             : ResizeInfo{};
+        frameInfo[i].width = frame.width;
+        frameInfo[i].height = frame.height;
+        frameInfo[i].resizedWidth = resizeInfos[i].resizedWidth;
+        frameInfo[i].resizedHeight = resizeInfos[i].resizedHeight;
+        frameInfo[i].padX = resizeInfos[i].dx;
+        frameInfo[i].padY = resizeInfos[i].dy;
+        frameInfo[i].valid = valid ? 1 : 0;
 
         if (valid) {
             TIMER_SCOPE_AVERAGE_MS("Detector.RawH2D", 1, 5000);
@@ -696,28 +712,50 @@ void RFDetrDetectorInfer::DecodeRaw(const float* logits, const float* boxes,
     boxesOut.clear();
     const float inputSize = static_cast<float>(m_param.inputSize);
 
+    // RF-DETR's Python postprocess ranks all query/class pairs globally and
+    // keeps the top 300 before applying the confidence and class filters.
+    // Selecting only one target class per query changes both the candidate
+    // set and the tracker input, especially when multiple target classes are
+    // confident for the same query.
+    struct Candidate {
+        float score;
+        int query;
+        int classId;
+    };
+    std::vector<Candidate> candidates;
+    candidates.reserve(static_cast<size_t>(numQueries) * numClasses);
     for (int q = 0; q < numQueries; ++q) {
         const float* logitRow = logits + static_cast<size_t>(q) * numClasses;
-        const float* boxRow   = boxes  + static_cast<size_t>(q) * 4;
-
-        int bestCls = -1;
-        float bestScore = 0.0f;
         for (int c = 0; c < numClasses; ++c) {
-            if (!m_param.targetClasses.empty() &&
-                m_param.targetClasses.find(c) == m_param.targetClasses.end()) {
-                continue;
-            }
-            float s = Sigmoid(logitRow[c]);
-            if (s > bestScore) { bestScore = s; bestCls = c; }
+            candidates.push_back(Candidate{Sigmoid(logitRow[c]), q, c});
         }
-        if (bestCls < 0) continue;
-        if (bestScore < m_param.confidenceThreshold) continue;
+    }
+
+    const size_t topK = std::min<size_t>(300, candidates.size());
+    std::partial_sort(
+        candidates.begin(), candidates.begin() + static_cast<std::ptrdiff_t>(topK),
+        candidates.end(),
+        [](const Candidate& lhs, const Candidate& rhs) {
+            return lhs.score > rhs.score;
+        });
+
+    for (size_t i = 0; i < topK; ++i) {
+        const auto& candidate = candidates[i];
+        if (candidate.score <= m_param.confidenceThreshold) continue;
+        if (!m_param.targetClasses.empty() &&
+            m_param.targetClasses.find(candidate.classId) == m_param.targetClasses.end()) {
+            continue;
+        }
+
+        const float* boxRow = boxes + static_cast<size_t>(candidate.query) * 4;
 
         float cx = boxRow[0] * inputSize;
         float cy = boxRow[1] * inputSize;
         float w  = boxRow[2] * inputSize;
         float h  = boxRow[3] * inputSize;
-        boxesOut.push_back(RawBox{cx - w*0.5f, cy - h*0.5f, cx + w*0.5f, cy + h*0.5f, bestScore, bestCls});
+        boxesOut.push_back(RawBox{cx - w*0.5f, cy - h*0.5f,
+                                  cx + w*0.5f, cy + h*0.5f,
+                                  candidate.score, candidate.classId});
     }
 }
 

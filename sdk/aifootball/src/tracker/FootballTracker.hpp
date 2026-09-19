@@ -17,9 +17,8 @@ namespace ns = nexusflow;
  * Output: BallTrackMessage (persons pass-through, balls contains tracked ball)
  *
  * Algorithm:
- *   - If no active track: pick highest-confidence detection, initialize.
- *   - Else: pick detection closest to predicted center within
- *     maxAssociationDistancePx; if none, fall back to highest confidence.
+ *   - Score candidates using confidence, person support, temporal association,
+ *     and a background penalty, matching the Python implementation.
  *   - If no detection matched: predict center via linear velocity,
  *     decay confidence, increment missedFrames; drop track when
  *     missedFrames > maxMissedFrames.
@@ -60,6 +59,17 @@ private:
     void UpdateFromDetection(const Detection& d, double ts);
     void Predict(double ts);
     void Emit(BallTrackMessage& out) const;
+    bool IsRescuableBall(const Detection& detection,
+                         const SmoothedPoseMessage& message) const;
+    float ScoreDetection(const Detection& detection,
+                         const std::pair<float, float>* predictedCenter,
+                         const SmoothedPoseMessage& message) const;
+    float BallSupportScore(const Detection& detection,
+                           const SmoothedPoseMessage& message) const;
+    float BackgroundPenalty(const Detection& detection,
+                            float supportScore,
+                            float associationScore,
+                            const SmoothedPoseMessage& message) const;
 };
 
 NEXUSFLOW_REGISTER_MODULE(FootballTracker);

@@ -192,7 +192,14 @@ struct TrackedDetectionMessage {
     VideoFramePtr videoFrame;
     std::vector<Detection> persons;   // person detections with trackId assigned
     std::vector<Detection> balls;     // ball detections (trackId may be -1 here)
+    // Ball detections rejected by the application-level confidence/size
+    // filter. Python evaluates these after pose estimation and may rescue
+    // them when they have sufficient person/foot support.
+    std::vector<Detection> rejectedBalls;
     DetectionCounts rawCounts;        // copied from upstream Detector
+    // Counts after ROI and application-level detection filters. Unlike
+    // persons.size(), this remains stable when tracking suppresses a track.
+    DetectionCounts filteredCounts;
     int   activeTrackCount = 0;       // # of tracks in Tracked state this frame
     int   lostTrackCount   = 0;       // # of tracks in Lost state this frame
     bool  isEnd = false;
@@ -250,7 +257,9 @@ struct PoseMessage {
     VideoFramePtr videoFrame;
     std::vector<PersonPose> persons;
     std::vector<Detection>  balls;      // pass-through from upstream tracker
+    std::vector<Detection>  rejectedBalls;
     DetectionCounts rawCounts;
+    DetectionCounts filteredCounts;
     int   activeTrackCount = 0;
     int   lostTrackCount   = 0;
     bool  isEnd = false;
@@ -301,7 +310,9 @@ struct SmoothedPoseMessage {
     VideoFramePtr videoFrame;
     std::vector<PersonPose> persons;
     std::vector<Detection>  balls;
+    std::vector<Detection>  rejectedBalls;
     DetectionCounts rawCounts;
+    DetectionCounts filteredCounts;
     int   activeTrackCount = 0;
     int   lostTrackCount   = 0;
     bool  isEnd = false;

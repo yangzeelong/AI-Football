@@ -37,6 +37,10 @@ __device__ inline float SampleChannel(const uint8_t* source,
     return (top * (1.0f - wy) + bottom * wy) * (1.0f / 255.0f);
 }
 
+__device__ inline float Normalize(float value, float mean, float invStd) {
+    return (value * (1.0f / 255.0f) - mean) * invStd;
+}
+
 __global__ void RfdetrPreprocessKernel(
     const uint8_t* srcBatch,
     size_t srcStrideBytes,
@@ -60,19 +64,32 @@ __global__ void RfdetrPreprocessKernel(
     const RfdetrGpuFrameInfo info = frameInfo[batchIndex];
     const size_t index = static_cast<size_t>(y) * dstWidth + x;
 
-    if (!info.valid || info.width <= 0 || info.height <= 0) {
-        output[index] = 0.0f;
-        output[planeSize + index] = 0.0f;
-        output[2 * planeSize + index] = 0.0f;
+    if (!info.valid || info.width <= 0 || info.height <= 0 ||
+        info.resizedWidth <= 0 || info.resizedHeight <= 0) {
+        const float grayR = Normalize(114.0f, meanR, invStdR);
+        const float grayG = Normalize(114.0f, meanG, invStdG);
+        const float grayB = Normalize(114.0f, meanB, invStdB);
+        output[index] = grayR;
+        output[planeSize + index] = grayG;
+        output[2 * planeSize + index] = grayB;
+        return;
+    }
+
+    const bool inImage = x >= info.padX && x < info.padX + info.resizedWidth &&
+                         y >= info.padY && y < info.padY + info.resizedHeight;
+    if (!inImage) {
+        output[index] = Normalize(114.0f, meanR, invStdR);
+        output[planeSize + index] = Normalize(114.0f, meanG, invStdG);
+        output[2 * planeSize + index] = Normalize(114.0f, meanB, invStdB);
         return;
     }
 
     const uint8_t* source = srcBatch + static_cast<size_t>(batchIndex) *
                             srcStrideBytes;
-    const float scaleX = static_cast<float>(dstWidth) / info.width;
-    const float scaleY = static_cast<float>(dstHeight) / info.height;
-    const float sx = (static_cast<float>(x) + 0.5f) / scaleX - 0.5f;
-    const float sy = (static_cast<float>(y) + 0.5f) / scaleY - 0.5f;
+    const float scaleX = static_cast<float>(info.resizedWidth) / info.width;
+    const float scaleY = static_cast<float>(info.resizedHeight) / info.height;
+    const float sx = (static_cast<float>(x - info.padX) + 0.5f) / scaleX - 0.5f;
+    const float sy = (static_cast<float>(y - info.padY) + 0.5f) / scaleY - 0.5f;
 
     const float r = SampleChannel(source, info.width, info.height, sx, sy, 0);
     const float g = SampleChannel(source, info.width, info.height, sx, sy, 1);

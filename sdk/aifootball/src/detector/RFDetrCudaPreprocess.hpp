@@ -8,6 +8,10 @@ namespace detector {
 struct RfdetrGpuFrameInfo {
     int width = 0;
     int height = 0;
+    int resizedWidth = 0;
+    int resizedHeight = 0;
+    int padX = 0;
+    int padY = 0;
     int valid = 0;
 };
 

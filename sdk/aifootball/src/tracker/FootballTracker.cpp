@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <utility>
 
 // ---------------------------------------------------------------------------
 
@@ -107,6 +108,114 @@ void FootballTracker::Emit(BallTrackMessage& out) const {
     out.balls.push_back(b);
 }
 
+bool FootballTracker::IsRescuableBall(
+    const Detection& detection, const SmoothedPoseMessage& message) const {
+    // Match Python's _rescue_ball_detections(): rejected balls are allowed
+    // back into the candidate set only when pose support is strong enough and
+    // the box is still plausibly a ball-sized object.
+    if (detection.score < 0.05f || !message.videoFrame) return false;
+
+    if (BallSupportScore(detection, message) < 0.35f) return false;
+
+    const float imageWidth = static_cast<float>(message.videoFrame->width);
+    const float imageHeight = static_cast<float>(message.videoFrame->height);
+    const float maxBallSize = std::min(imageWidth, imageHeight) * 0.18f;
+    return std::max(detection.width(), detection.height()) <= maxBallSize;
+}
+
+float FootballTracker::BallSupportScore(
+    const Detection& detection, const SmoothedPoseMessage& message) const {
+    if (message.persons.empty() || !message.videoFrame) return 0.0f;
+
+    const float imageWidth = static_cast<float>(message.videoFrame->width);
+    const float imageHeight = static_cast<float>(message.videoFrame->height);
+    const float supportRadius = std::max(
+        36.0f, std::min(imageWidth, imageHeight) * 0.08f);
+    const float ballX = detection.centerX();
+    const float ballY = detection.centerY();
+    float best = 0.0f;
+
+    // These are the project-26 indices used by the Python implementation:
+    // left/right ankle, toes, and heel occupy indices 15..22.
+    constexpr int kFootBegin = 15;
+    constexpr int kFootEnd = 23;
+    for (const auto& person : message.persons) {
+        std::vector<std::pair<float, float>> footPoints;
+        for (int i = kFootBegin; i < kFootEnd; ++i) {
+            const auto& keypoint = person.keypoints[i];
+            if (keypoint.confidence < 0.2f ||
+                keypoint.state == KeypointState::Missing) {
+                continue;
+            }
+            footPoints.emplace_back(keypoint.x, keypoint.y);
+        }
+
+        if (!footPoints.empty()) {
+            float nearest = std::numeric_limits<float>::infinity();
+            for (const auto& point : footPoints) {
+                nearest = std::min(nearest,
+                                   std::hypot(ballX - point.first,
+                                              ballY - point.second));
+            }
+            if (nearest <= supportRadius) {
+                best = std::max(best, 1.0f - nearest / supportRadius);
+                // Match Python's rescue rule: when valid foot keypoints are
+                // close enough, do not also apply the bbox fallback.
+                continue;
+            }
+        }
+
+        const float width = person.x1 - person.x0;
+        const float height = person.y1 - person.y0;
+        const float xMargin = std::max(12.0f, width * 0.08f);
+        const float upperY = person.y1 - std::max(18.0f, height * 0.35f);
+        const float lowerY = person.y1 + std::max(12.0f, height * 0.1f);
+        if (person.x0 - xMargin <= ballX && ballX <= person.x1 + xMargin &&
+            upperY <= ballY && ballY <= lowerY) {
+            best = std::max(best, 0.7f);
+        }
+    }
+    return best;
+}
+
+float FootballTracker::BackgroundPenalty(
+    const Detection& detection, float supportScore, float associationScore,
+    const SmoothedPoseMessage& message) const {
+    if (supportScore > 0.0f || associationScore > 0.2f ||
+        !message.videoFrame || message.videoFrame->height <= 0) {
+        return 0.0f;
+    }
+    const float yRatio = detection.centerY() /
+                         static_cast<float>(message.videoFrame->height);
+    if (yRatio < 0.25f) return 0.55f;
+    if (yRatio < 0.4f) return 0.25f;
+    return 0.0f;
+}
+
+float FootballTracker::ScoreDetection(
+    const Detection& detection, const std::pair<float, float>* predictedCenter,
+    const SmoothedPoseMessage& message) const {
+    const float supportScore = BallSupportScore(detection, message);
+    float associationScore = 0.0f;
+    if (predictedCenter) {
+        float radius = m_param.maxAssociationDistancePx;
+        if (m_track.active) {
+            radius += std::min(120.0f,
+                               static_cast<float>(m_track.missedFrames) * 20.0f);
+        }
+        if (radius > 0.0f) {
+            const float distance = std::hypot(
+                predictedCenter->first - detection.centerX(),
+                predictedCenter->second - detection.centerY());
+            associationScore = std::max(0.0f, 1.0f - distance / radius);
+        }
+    }
+    return detection.score + 0.45f * supportScore +
+           0.35f * associationScore -
+           BackgroundPenalty(detection, supportScore, associationScore,
+                             message);
+}
+
 // ---------------------------------------------------------------------------
 // Process
 // ---------------------------------------------------------------------------
@@ -123,7 +232,9 @@ void FootballTracker::Process(ns::Message& inputMessage) {
     BallTrackMessage out;
     out.videoFrame       = smMsg->videoFrame;
     out.persons          = smMsg->persons;   // pass-through
-    out.rawCounts        = smMsg->rawCounts;
+    // Public raw_detection_counts follows Python's post-ROI/application
+    // detection count. Keep detector-level rawCounts internal to diagnostics.
+    out.rawCounts        = smMsg->filteredCounts;
     out.activeTrackCount = smMsg->activeTrackCount;
     out.lostTrackCount   = smMsg->lostTrackCount;
     out.isEnd            = smMsg->isEnd;
@@ -132,35 +243,41 @@ void FootballTracker::Process(ns::Message& inputMessage) {
 
     if (smMsg->isEnd) { Broadcast(nexusflow::Message(std::move(out))); return; }
 
+    // Python performs this rescue after pose estimation. Keep the rejected
+    // detections separate until now so the normal ByteTracker filtering and
+    // raw count semantics remain unchanged.
+    std::vector<Detection> candidates = smMsg->balls;
+    for (const auto& detection : smMsg->rejectedBalls) {
+        if (!IsRescuableBall(detection, *smMsg)) continue;
+        candidates.push_back(detection);
+        ++out.rawCounts.total;
+        ++out.rawCounts.ball;
+    }
+
     // --- Select best ball detection ---
     const Detection* best = nullptr;
-    if (!m_track.active) {
-        // Highest confidence.
-        for (const auto& d : smMsg->balls) {
-            if (d.classId != m_param.ballClassId) continue;
-            if (!best || d.score > best->score) best = &d;
-        }
-    } else {
-        // Predicted center for this frame.
+    float bestScore = -std::numeric_limits<float>::infinity();
+    std::pair<float, float> predictedCenter;
+    const std::pair<float, float>* predictedCenterPtr = nullptr;
+    if (m_track.active) {
         double dt = std::max(0.0, smMsg->timestampSec - m_track.timestampSec);
-        float px = m_track.cx + m_track.vx * static_cast<float>(dt);
-        float py = m_track.cy + m_track.vy * static_cast<float>(dt);
-
-        float bestDist = std::numeric_limits<float>::infinity();
-        const Detection* fallback = nullptr;  // highest-confidence fallback
-        for (const auto& d : smMsg->balls) {
-            if (d.classId != m_param.ballClassId) continue;
-            if (!fallback || d.score > fallback->score) fallback = &d;
-            float dcx = 0.5f * (d.x0 + d.x1);
-            float dcy = 0.5f * (d.y0 + d.y1);
-            float dist = std::hypot(dcx - px, dcy - py);
-            if (dist <= m_param.maxAssociationDistancePx && dist < bestDist) {
-                bestDist = dist;
-                best = &d;
-            }
-        }
-        if (!best) best = fallback;
+        predictedCenter = {
+            m_track.cx + m_track.vx * static_cast<float>(dt),
+            m_track.cy + m_track.vy * static_cast<float>(dt),
+        };
+        predictedCenterPtr = &predictedCenter;
     }
+    for (const auto& d : candidates) {
+        if (d.classId != m_param.ballClassId) continue;
+        const float score = ScoreDetection(d, predictedCenterPtr, *smMsg);
+        if (score > bestScore) {
+            bestScore = score;
+            best = &d;
+        }
+    }
+
+    const float minimumScore = m_track.active ? 0.15f : 0.18f;
+    if (bestScore < minimumScore) best = nullptr;
 
     if (best) {
         UpdateFromDetection(*best, smMsg->timestampSec);
@@ -171,7 +288,7 @@ void FootballTracker::Process(ns::Message& inputMessage) {
     Emit(out);
 
     LOG_DEBUG("FootballTracker: frame={} ballsIn={} active={} state={}",
-              smMsg->videoFrame ? smMsg->videoFrame->frameId : 0, smMsg->balls.size(),
+              smMsg->videoFrame ? smMsg->videoFrame->frameId : 0, candidates.size(),
               m_track.active ? 1 : 0,
               m_track.active ? (m_track.missedFrames == 0 ? "observed" : "predicted") : "none");
 

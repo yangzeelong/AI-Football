@@ -76,6 +76,10 @@ private:
     struct ResizeInfo {
         float scaleX = 1.0f;
         float scaleY = 1.0f;
+        float sampleScaleX = 1.0f;
+        float sampleScaleY = 1.0f;
+        int resizedWidth = 0;
+        int resizedHeight = 0;
         int   dx = 0, dy = 0;
     };
 

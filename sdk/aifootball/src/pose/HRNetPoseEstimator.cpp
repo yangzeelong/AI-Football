@@ -100,7 +100,9 @@ void HRNetPoseEstimator::Process(ns::Message& inputMessage) {
     PoseMessage out;
     out.videoFrame       = trkMsg->videoFrame;
     out.balls            = trkMsg->balls;
+    out.rejectedBalls    = trkMsg->rejectedBalls;
     out.rawCounts        = trkMsg->rawCounts;
+    out.filteredCounts   = trkMsg->filteredCounts;
     out.activeTrackCount = trkMsg->activeTrackCount;
     out.lostTrackCount   = trkMsg->lostTrackCount;
     out.isEnd            = trkMsg->isEnd;

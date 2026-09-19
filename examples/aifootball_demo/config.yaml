@@ -50,6 +50,13 @@ graph:
         lostTrackBuffer: 30
         personClassId: 1
         ballClassId: 37
+        # Same post-ROI box filters as AI-Football/config/app.yaml.
+        personMinConfidence: 0.68
+        personMinWidthPx: 8.0
+        personMinHeightPx: 24.0
+        ballMinConfidence: 0.4
+        ballMinWidthPx: 2.0
+        ballMinHeightPx: 2.0
 
     - name: PoseEstimator
       class: HRNetPoseEstimator

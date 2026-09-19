@@ -178,7 +178,8 @@ void ByteTracker::LinearAssignment(const std::vector<float>& cost,
     std::vector<int>   p(m + 1, 0), way(m + 1, 0);
 
     auto C = [&](int i, int j) -> float {
-        return cost[static_cast<size_t>(i) * m + j];
+        const float value = cost[static_cast<size_t>(i) * m + j];
+        return value;
     };
 
     for (int i = 0; i < n; ++i) {
@@ -242,6 +243,12 @@ ns::ErrorCode ByteTracker::Configure(const ns::Config& config) {
     m_param.lostTrackBuffer            = config.GetValueOrDefault<int>("lostTrackBuffer", 30);
     m_param.personClassId              = config.GetValueOrDefault<int>("personClassId", 1);
     m_param.ballClassId                = config.GetValueOrDefault<int>("ballClassId", 37);
+    m_param.personMinConfidence         = config.GetValueOrDefault<float>("personMinConfidence", 0.0f);
+    m_param.personMinWidthPx            = config.GetValueOrDefault<float>("personMinWidthPx", 0.0f);
+    m_param.personMinHeightPx           = config.GetValueOrDefault<float>("personMinHeightPx", 0.0f);
+    m_param.ballMinConfidence           = config.GetValueOrDefault<float>("ballMinConfidence", 0.0f);
+    m_param.ballMinWidthPx              = config.GetValueOrDefault<float>("ballMinWidthPx", 0.0f);
+    m_param.ballMinHeightPx             = config.GetValueOrDefault<float>("ballMinHeightPx", 0.0f);
     m_param.roiEnabled                 = config.GetValueOrDefault<bool>("roiEnabled", false);
     m_param.roiWidth                   = config.GetValueOrDefault<int>("roiWidth", 0);
     m_param.roiHeight                  = config.GetValueOrDefault<int>("roiHeight", 0);
@@ -266,9 +273,13 @@ ns::ErrorCode ByteTracker::Configure(const ns::Config& config) {
         LOG_ERROR("ByteTracker: enabled ROI requires at least 3 points");
         return ns::ErrorCode::FAILURE;
     }
-    LOG_INFO("ByteTracker config: high>={}, low>={}, iouGate={}, lostBuf={}",
+    LOG_INFO("ByteTracker config: high>={}, low>={}, iouGate={}, lostBuf={}, "
+             "personFilter=({},{}x{}), ballFilter=({},{}x{})",
              m_param.trackActivationThreshold, m_param.secondAssociationThreshold,
-             m_param.minimumMatchingThreshold, m_param.lostTrackBuffer);
+             m_param.minimumMatchingThreshold, m_param.lostTrackBuffer,
+             m_param.personMinConfidence, m_param.personMinWidthPx,
+             m_param.personMinHeightPx, m_param.ballMinConfidence,
+             m_param.ballMinWidthPx, m_param.ballMinHeightPx);
     LOG_INFO("ByteTracker ROI: enabled={}, points={}, sourceSize={}x{}",
              m_param.roiEnabled, m_param.roiPolygon.size(),
              m_param.roiWidth, m_param.roiHeight);
@@ -385,47 +396,60 @@ void ByteTracker::Process(ns::Message& inputMessage) {
 
     if (detMsg->isEnd) { Broadcast(nexusflow::Message(std::move(out))); return; }
 
-    std::vector<Detection> roiDetections;
-    const std::vector<Detection>* detections = &detMsg->detections;
-    if (m_param.roiEnabled) {
-        roiDetections.reserve(detMsg->detections.size());
-        for (const auto& detection : detMsg->detections) {
-            if (IsInsideRoi(detection, detMsg->videoFrame)) {
-                roiDetections.push_back(detection);
-            }
-        }
-        detections = &roiDetections;
-        LOG_DEBUG("ByteTracker: frame={} ROI kept {}/{} detections",
-                  detMsg->videoFrame ? detMsg->videoFrame->frameId : 0,
-                  detections->size(), detMsg->detections.size());
-    }
-
-    // Observation output follows the application-level detection set. This
-    // keeps raw_detection_counts aligned with the detections sent downstream
-    // after ROI filtering, as in the Python pipeline.
-    out.rawCounts = DetectionCounts{};
-    for (const auto& detection : *detections) {
-        ++out.rawCounts.total;
+    // Python runs ByteTrack on the complete detector output first. ROI and
+    // application-level box filters are applied to the tracker output after
+    // association, so detections outside the ROI can still influence a
+    // person's track state. Balls are not tracked here and follow the
+    // Python ROI -> filter order directly.
+    std::vector<Detection> personDetections;
+    std::vector<Detection> acceptedBalls;
+    std::vector<Detection> rejectedBalls;
+    personDetections.reserve(detMsg->detections.size());
+    acceptedBalls.reserve(detMsg->detections.size());
+    rejectedBalls.reserve(detMsg->detections.size());
+    for (const auto& detection : detMsg->detections) {
         if (detection.classId == m_param.personClassId) {
-            ++out.rawCounts.person;
-        } else if (detection.classId == m_param.ballClassId) {
-            ++out.rawCounts.ball;
+            personDetections.push_back(detection);
+            if (IsInsideRoi(detection, detMsg->videoFrame) &&
+                detection.score >= m_param.personMinConfidence &&
+                detection.width() >= m_param.personMinWidthPx &&
+                detection.height() >= m_param.personMinHeightPx) {
+                ++out.filteredCounts.total;
+                ++out.filteredCounts.person;
+            }
+            continue;
         }
+
+        if (detection.classId != m_param.ballClassId ||
+            !IsInsideRoi(detection, detMsg->videoFrame)) {
+            continue;
+        }
+
+        const float width = detection.x1 - detection.x0;
+        const float height = detection.y1 - detection.y0;
+        if (detection.score < m_param.ballMinConfidence ||
+            width < m_param.ballMinWidthPx || height < m_param.ballMinHeightPx) {
+            rejectedBalls.push_back(detection);
+            continue;
+        }
+        acceptedBalls.push_back(detection);
+        ++out.filteredCounts.total;
+        ++out.filteredCounts.ball;
     }
 
-    // --- Split detections into person high-score, person low-score, ball ---
+    // --- Split all person detections into high/low-score tracking inputs ---
     std::vector<STrack> detsHigh, detsLow;
-    for (const auto& d : *detections) {
-        if (d.classId == m_param.personClassId) {
-            STrack t;
-            t.x0 = d.x0; t.y0 = d.y0; t.x1 = d.x1; t.y1 = d.y1;
-            t.score = d.score; t.classId = d.classId;
-            if (d.score >= m_param.trackActivationThreshold)      detsHigh.push_back(t);
-            else if (d.score >= m_param.secondAssociationThreshold) detsLow.push_back(t);
-        } else if (d.classId == m_param.ballClassId) {
-            out.balls.push_back(d);  // pass through unchanged
+    for (const auto& d : personDetections) {
+        STrack t;
+        t.x0 = d.x0; t.y0 = d.y0; t.x1 = d.x1; t.y1 = d.y1;
+        t.score = d.score; t.classId = d.classId;
+        if (d.score >= m_param.trackActivationThreshold) {
+            detsHigh.push_back(t);
+        } else if (d.score >= m_param.secondAssociationThreshold) {
+            detsLow.push_back(t);
         }
     }
+    out.rejectedBalls = std::move(rejectedBalls);
 
     m_frameId++;
 
@@ -495,13 +519,16 @@ void ByteTracker::Process(ns::Message& inputMessage) {
     // --- Initialize new tracks from unmatched high-score detections ---
     for (int idx : uDets1) {
         STrack t = detsHigh[idx];
-        InitTrack(t, m_frameId, /*activated=*/false);
+        // AI-Football configures supervision.ByteTrack with
+        // minimum_consecutive_frames=1, so a new track is visible in the
+        // same frame as its first high-confidence detection.
+        InitTrack(t, m_frameId, /*activated=*/true);
         m_trackedStracks.push_back(t);
     }
 
     // --- Reactivate lost tracks that match any current tracked "New" track ---
     // (Simplified: we skip cross-lost matching for brevity; lost tracks are
-    //  only revived through the first association above.)
+    // only revived through the first association above.)
 
     // --- Merge tracked list: keep Tracked + newly-added New tracks ---
     std::vector<STrack> newTracked;
@@ -531,7 +558,17 @@ void ByteTracker::Process(ns::Message& inputMessage) {
         d.score = t.score;
         d.classId = t.classId;
         d.trackId = t.trackId;
+
+        if (!IsInsideRoi(d, detMsg->videoFrame) ||
+            d.score < m_param.personMinConfidence ||
+            d.width() < m_param.personMinWidthPx ||
+            d.height() < m_param.personMinHeightPx) {
+            continue;
+        }
         out.persons.push_back(d);
+    }
+    for (const auto& d : acceptedBalls) {
+        out.balls.push_back(d);
     }
     out.activeTrackCount = static_cast<int>(out.persons.size());
     out.lostTrackCount   = static_cast<int>(m_lostStracks.size());

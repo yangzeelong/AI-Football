@@ -187,6 +187,8 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
         PersonPose& pp = results[i];
 
         pp.trackId = persons[i].trackId;
+        // Keep the detector/tracker box in the public result. The expanded
+        // crop is only an internal pose-inference input.
         pp.x0 = persons[i].x0; pp.y0 = persons[i].y0;
         pp.x1 = persons[i].x1; pp.y1 = persons[i].y1;
         pp.detectionConfidence = persons[i].score;
@@ -224,8 +226,10 @@ void HRNetPoseEstimatorInfer::ExpandPoseBox(float& x0, float& y0, float& x1, flo
     float yPad = std::max(h * m_param.yPadRatio, m_param.minPadPx);
     x0 = std::max(0.0f, x0 - xPad);
     y0 = std::max(0.0f, y0 - yPad);
-    x1 = std::min(static_cast<float>(imgW - 1), x1 + xPad);
-    y1 = std::min(static_cast<float>(imgH - 1), y1 + yPad);
+    // Match Python's _expand_bbox: coordinates are clamped to image width /
+    // height, not to the last pixel index.
+    x1 = std::min(static_cast<float>(imgW), x1 + xPad);
+    y1 = std::min(static_cast<float>(imgH), y1 + yPad);
 }
 
 void HRNetPoseEstimatorInfer::PreprocessCrop(const uint8_t* frameRgb, int frameW, int frameH,

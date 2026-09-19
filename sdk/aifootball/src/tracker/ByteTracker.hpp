@@ -44,6 +44,12 @@ private:
         int   lostTrackBuffer            = 30;    // frames before removing lost track
         int   personClassId              = 1;
         int   ballClassId                = 37;
+        float personMinConfidence        = 0.0f;
+        float personMinWidthPx           = 0.0f;
+        float personMinHeightPx          = 0.0f;
+        float ballMinConfidence          = 0.0f;
+        float ballMinWidthPx             = 0.0f;
+        float ballMinHeightPx            = 0.0f;
         bool  roiEnabled                 = false;
         int   roiWidth                   = 0;
         int   roiHeight                  = 0;

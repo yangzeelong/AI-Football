@@ -68,7 +68,11 @@ nexusflow::Any convertYamlNodeToAny(const YAML::Node& node) {
             }
             if (detail::isFloat(val)) {
                 try {
-                    return Any(std::stod(val));
+                    // Module configs conventionally read numeric parameters
+                    // as float. Keep YAML decimals compatible with that API
+                    // instead of storing them as double and silently falling
+                    // back to defaults in GetValueOrDefault<float>().
+                    return Any(static_cast<float>(std::stod(val)));
                 } catch (...) {
                 }
             }
