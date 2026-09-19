@@ -56,21 +56,29 @@ class MMPoseTopDownEstimator:
         self,
         frame: VideoFrame,
         person_detections: Sequence[Detection],
+        output_detections: Sequence[Detection] | None = None,
     ) -> list[PersonObservation2D]:
         if not person_detections:
             return []
+        if output_detections is None:
+            output_detections = person_detections
+        if len(output_detections) != len(person_detections):
+            raise ValueError(
+                "output_detections must have the same length as person_detections"
+            )
 
         bboxes = np.array([detection.bbox for detection in person_detections],
                           dtype=np.float32)
         pose_results = self._inference_topdown(self.model, frame.image, bboxes)
 
         observations: list[PersonObservation2D] = []
-        for detection, pose_result in zip(person_detections, pose_results):
+        for detection, output_detection, pose_result in zip(
+                person_detections, output_detections, pose_results):
             keypoints, scores = _extract_pose_arrays(pose_result)
             observations.append(
                 PersonObservation2D(
                     track_id=detection.track_id,
-                    bbox=detection.bbox,
+                    bbox=output_detection.bbox,
                     confidence=detection.confidence,
                     keypoints=project_wholebody_to_26(keypoints, scores),
                 ))

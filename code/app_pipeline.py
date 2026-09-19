@@ -235,7 +235,11 @@ def run_video_app(
                         app_config.pose_box_expansion.y_pad_ratio,
                         app_config.pose_box_expansion.min_pad_px,
                     )
-                    persons = pose_estimator.estimate(frame, pose_boxes)
+                    persons = pose_estimator.estimate(
+                        frame,
+                        pose_boxes,
+                        output_detections=person_boxes,
+                    )
                     persons = keypoint_smoother.update(persons)
                 rescued_balls = _rescue_ball_detections(filter_result.rejected,
                                                         persons, reader.width,
