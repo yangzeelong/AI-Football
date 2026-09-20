@@ -176,12 +176,27 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
         }
     }
 
+    // Run MMPose flip-test in one TensorRT batch when there is enough engine
+    // capacity. This preserves the two input tensors and only avoids the
+    // second enqueue/copy synchronization.
+    const bool combineFlipBatch = m_param.flipTest && (2 * B <= m_effectiveMaxBatch);
+    const int engineBatch = combineFlipBatch ? 2 * B : B;
+    if (combineFlipBatch) {
+        for (int i = 0; i < B; ++i) {
+            float* flippedInput = m_inputHost.data() + static_cast<size_t>(B + i) * perPersonInput;
+            std::memcpy(flippedInput,
+                        m_inputHost.data() + static_cast<size_t>(i) * perPersonInput,
+                        perPersonInput * sizeof(float));
+            FlipInput(flippedInput);
+        }
+    }
+
     // --- Engine inference ---
-    inference::Dims batchDims(B, 3, m_param.inputHeight, m_param.inputWidth);
-    size_t batchInputBytes = B * perPersonInput * sizeof(float);
+    inference::Dims batchDims(engineBatch, 3, m_param.inputHeight, m_param.inputWidth);
+    size_t batchInputBytes = static_cast<size_t>(engineBatch) * perPersonInput * sizeof(float);
 
     {
-        TIMER_SCOPE_AVERAGE_MS("PoseEstimator.TensorRT", static_cast<uint64_t>(B), 5000);
+        TIMER_SCOPE_AVERAGE_MS("PoseEstimator.TensorRT", static_cast<uint64_t>(engineBatch), 5000);
         if (!m_engine->SetInputFromHost(m_param.inputBindingName,
                                         m_inputHost.data(), batchInputBytes, batchDims)) {
             LOG_ERROR("HRNetPoseEstimatorInfer: SetInputFromHost failed");
@@ -193,7 +208,7 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
         }
         if (!m_engine->CopyOutputToHost(m_param.outputBindingName,
                                         m_outputHost.data(),
-                                        B * perPersonOutput * sizeof(float))) {
+                                        static_cast<size_t>(engineBatch) * perPersonOutput * sizeof(float))) {
             LOG_ERROR("HRNetPoseEstimatorInfer: CopyOutputToHost failed");
             return false;
         }
@@ -202,13 +217,15 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
     // MMPose's test_cfg enables heatmap flip-test. The flipped pass operates
     // on the already warped tensor, so only the CHW image needs reversing.
     if (m_param.flipTest) {
-        for (int i = 0; i < B; ++i) {
-            FlipInput(m_inputHost.data() + i * perPersonInput);
-        }
-        {
+        if (!combineFlipBatch) {
+            inference::Dims flipBatchDims(B, 3, m_param.inputHeight, m_param.inputWidth);
+            const size_t flipBatchInputBytes = static_cast<size_t>(B) * perPersonInput * sizeof(float);
+            for (int i = 0; i < B; ++i) {
+                FlipInput(m_inputHost.data() + static_cast<size_t>(i) * perPersonInput);
+            }
             TIMER_SCOPE_AVERAGE_MS("PoseEstimator.TensorRTFlip", static_cast<uint64_t>(B), 5000);
             if (!m_engine->SetInputFromHost(m_param.inputBindingName,
-                                            m_inputHost.data(), batchInputBytes, batchDims) ||
+                                            m_inputHost.data(), flipBatchInputBytes, flipBatchDims) ||
                 !m_engine->Infer()) {
                 LOG_ERROR("HRNetPoseEstimatorInfer: flipped inference failed");
                 return false;
@@ -236,7 +253,9 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
         };
         for (int i = 0; i < B; ++i) {
             float* orig = m_outputHost.data() + i * perPersonOutput;
-            const float* flipped = m_flipOutputHost.data() + i * perPersonOutput;
+            const float* flipped = combineFlipBatch
+                ? m_outputHost.data() + static_cast<size_t>(B + i) * perPersonOutput
+                : m_flipOutputHost.data() + static_cast<size_t>(i) * perPersonOutput;
             const int H = m_param.heatmapHeight;
             const int W = m_param.heatmapWidth;
             if (m_param.numKeypoints > 133) {
