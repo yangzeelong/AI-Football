@@ -229,7 +229,7 @@ public:
     std::unique_ptr<nexusflow::Pipeline> pipeline;
     std::shared_ptr<Source> frameSource;
     std::shared_ptr<Sink> resultSink;
-    // Serializes submission and Flush so frame order matches caller order.
+    // Serializes submission and Drain so frame order matches caller order.
     std::mutex processMutex;
     std::mutex promiseMutex;
     std::unordered_map<uint64_t, Promise<ProcessFutureResult>> pendingPromises;
@@ -425,7 +425,7 @@ ProcessFuture AIFootballPipeline::ProcessAsync(
     return future;
 }
 
-nexusflow::ErrorCode AIFootballPipeline::Flush() {
+nexusflow::ErrorCode AIFootballPipeline::Drain() {
     if (!m_impl || !m_impl->initialized || !m_impl->frameSource ||
         !m_impl->resultSink) {
         return nexusflow::UNINITIALIZED_ERROR;

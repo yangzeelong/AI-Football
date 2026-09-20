@@ -93,7 +93,7 @@ ns::ErrorCode RFDetrDetector::Init() {
 
 ns::ErrorCode RFDetrDetector::DeInit() {
     LOG_TRACE("RFDetrDetector::DeInit");
-    FlushBatch();
+    DrainBatch();
     for (auto& infer : m_inferPool) infer->Release();
     m_inferPool.clear();
     return ns::ErrorCode::SUCCESS;
@@ -103,7 +103,7 @@ ns::ErrorCode RFDetrDetector::DeInit() {
 // Batch policy
 // ---------------------------------------------------------------------------
 
-bool RFDetrDetector::ShouldFlush() const {
+bool RFDetrDetector::ShouldDrain() const {
     if (m_batchBuffer.empty()) return false;
     if (static_cast<int>(m_batchBuffer.size()) >= m_batchParam.maxBatchSize) return true;
     if (m_batchParam.maxRetryNum > 0 && m_framesSinceFlush >= m_batchParam.maxRetryNum) return true;
@@ -114,11 +114,11 @@ bool RFDetrDetector::ShouldFlush() const {
     return elapsed >= m_batchParam.batchTimeoutMs;
 }
 
-void RFDetrDetector::FlushBatch() {
+void RFDetrDetector::DrainBatch() {
     if (m_batchBuffer.empty()) return;
 
     const int B = static_cast<int>(m_batchBuffer.size());
-    LOG_DEBUG("RFDetrDetector: flushing {} frame(s)", B);
+    LOG_DEBUG("RFDetrDetector: draining {} frame(s)", B);
 
     defer {
         m_batchBuffer.clear();
@@ -301,9 +301,9 @@ void RFDetrDetector::Process(ns::Message& inputMessage) {
         return;
     }
 
-    // EOF: flush pending batch, then propagate.
+    // EOF: drain the pending batch, then propagate.
     if (frameMsg->isEnd) {
-        FlushBatch();
+        DrainBatch();
         DetectionMessage out;
         out.videoFrame   = frameMsg->videoFrame;
         out.isEnd        = true;
@@ -323,5 +323,5 @@ void RFDetrDetector::Process(ns::Message& inputMessage) {
     m_batchBuffer.push_back(std::move(bf));
     m_framesSinceFlush++;
 
-    if (ShouldFlush()) FlushBatch();
+    if (ShouldDrain()) DrainBatch();
 }

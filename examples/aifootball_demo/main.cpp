@@ -247,8 +247,8 @@ bool ProcessVideo(const RunOptions& options, DemoResources& resources,
         LOG_ERROR("VideoReader failed while decoding '{}'", options.videoPath);
         return false;
     }
-    if (pipeline.Flush() != nexusflow::SUCCESS) {
-        LOG_ERROR("Failed to flush AI-Football SDK pipeline");
+    if (pipeline.Drain() != nexusflow::SUCCESS) {
+        LOG_ERROR("Failed to drain AI-Football SDK pipeline");
         return false;
     }
     return DrainResults(pendingResults, resources.writer, resources.renderer);

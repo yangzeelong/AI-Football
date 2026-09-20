@@ -159,7 +159,7 @@ public:
     ProcessFuture ProcessAsync(const DecodedFrameView& frame);
     /// Drain all frames submitted before this call, including a partial model
     /// batch. Results are delivered through their ProcessAsync futures.
-    nexusflow::ErrorCode Flush();
+    nexusflow::ErrorCode Drain();
     nexusflow::ErrorCode DeInit();
 
 private:

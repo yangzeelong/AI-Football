@@ -38,8 +38,8 @@ graph:
         # model for values > 1. Static batch=1 engines are automatically clamped.
         maxBatchSize: 4
         instanceCount: 1                 # Each instance owns a TRT context/stream and GPU buffers
-        batchTimeoutMs: 0                # 0 = no timeout, flush only when full or EOF
-        maxRetryNum: 0                   # 0 = disabled; >0 = force flush after N frames (anti-starvation)
+        batchTimeoutMs: 0                # 0 = no timeout, drain only when full or EOF
+        maxRetryNum: 0                   # 0 = disabled; >0 = force drain after N frames (anti-starvation)
 
     - name: PersonTracker
       class: ByteTracker

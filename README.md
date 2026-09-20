@@ -72,7 +72,7 @@ int main() {
     if (pipeline->Init() != nexusflow::SUCCESS) return 1;
     // Fill DecodedFrameView from the host application's decoder, then submit:
     // auto future = pipeline->ProcessAsync(frame);
-    pipeline->Flush();
+    pipeline->Drain();
     pipeline->DeInit();
     return 0;
 }

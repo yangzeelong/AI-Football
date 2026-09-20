@@ -47,7 +47,7 @@ if (!resultFuture.WaitFor(std::chrono::milliseconds(30))) {
     // Keep submitting frames or poll the future later.
 }
 // At end of stream only:
-pipeline->Flush();
+pipeline->Drain();
 const auto output = resultFuture.Get();
 if (output.status == nexusflow::SUCCESS) {
     // Consume output.result.
@@ -60,7 +60,7 @@ future supports `IsReady()`, `Wait()`, `WaitFor(timeout)`, and `Get()`.
 `Get()` consumes the result once. `ProcessFutureResult::status` reports whether
 the frame was processed, dropped, or rejected; the detailed output is in
 `ProcessFutureResult::result` when the status is `nexusflow::SUCCESS`.
-`Flush()` is still only an end-of-stream drain operation and should not be used
+`Drain()` is still only an end-of-stream drain operation and should not be used
 as a per-frame synchronization point.
 
 `DecodedFrameView` accepts packed RGB24. If `dataOwner` is set, the SDK retains
@@ -79,8 +79,8 @@ future with a failure status.
 
 Results are completed in input order while preserving the configured detector
 batch policy. `DeInit()` stops the internal actor graph and completes any
-remaining futures with a failure status; callers should flush and drain results
-before de-initializing.
+remaining futures with a failure status; callers should drain and consume
+results before de-initializing.
 
 `AIFootballContext` contains execution and algorithm-level settings. ROI points use the coordinate
 system described by `roi.width` and `roi.height`; the runtime scales them to

@@ -51,8 +51,8 @@ private:
         std::chrono::steady_clock::time_point enqueueTime;
     };
 
-    void FlushBatch();
-    bool ShouldFlush() const;
+    void DrainBatch();
+    bool ShouldDrain() const;
     bool InferFrames(
         const std::vector<detector::RFDetrDetectorInfer::FrameInput>& inputs,
         std::vector<std::vector<detector::Detection>>& results);
