@@ -100,6 +100,10 @@ bool HRNetPoseEstimatorInfer::Init(const Param& param) {
     m_inputHost.assign(perPersonInput * m_effectiveMaxBatch, 0.0f);
     m_outputHost.assign(perPersonOutput * m_effectiveMaxBatch, 0.0f);
     m_flipOutputHost.assign(perPersonOutput * m_effectiveMaxBatch, 0.0f);
+    m_sampleX0.resize(m_param.inputWidth);
+    m_sampleWx.resize(m_param.inputWidth);
+    m_sampleY0.resize(m_param.inputHeight);
+    m_sampleWy.resize(m_param.inputHeight);
 
     if (m_param.useDark) {
         const int kernel = (m_param.darkBlurKernel % 2 == 1 && m_param.darkBlurKernel >= 3)
@@ -130,6 +134,10 @@ void HRNetPoseEstimatorInfer::Release() {
     m_outputHost.clear();
     m_flipOutputHost.clear();
     m_darkGaussian.clear();
+    m_sampleX0.clear();
+    m_sampleWx.clear();
+    m_sampleY0.clear();
+    m_sampleWy.clear();
     m_effectiveMaxBatch = 1;
 }
 
@@ -324,7 +332,7 @@ HRNetPoseEstimatorInfer::MakeCropTransform(float x0, float y0, float x1, float y
 
 void HRNetPoseEstimatorInfer::PreprocessCrop(const uint8_t* frameRgb, int frameW, int frameH,
                                              const CropTransform& transform,
-                                             float* dstChw) const {
+                                             float* dstChw) {
     const int dstW = m_param.inputWidth;
     const int dstH = m_param.inputHeight;
     const float cropW = transform.scaleW;
@@ -344,29 +352,41 @@ void HRNetPoseEstimatorInfer::PreprocessCrop(const uint8_t* frameRgb, int frameW
     const float invStdG = 1.0f / m_param.stdG;
     const float invStdB = 1.0f / m_param.stdB;
 
+    for (int x = 0; x < dstW; ++x) {
+        const float fx = transform.centerX + (static_cast<float>(x) - 0.5f * dstW) * sx;
+        m_sampleX0[x] = static_cast<int>(std::floor(fx));
+        m_sampleWx[x] = fx - m_sampleX0[x];
+    }
     for (int y = 0; y < dstH; ++y) {
-        float fy = transform.centerY + (static_cast<float>(y) - 0.5f * dstH) * sy;
-        int y0 = static_cast<int>(std::floor(fy));
-        int y1 = y0 + 1;
-        float wy = fy - y0;
-        for (int x = 0; x < dstW; ++x) {
-            float fx = transform.centerX + (static_cast<float>(x) - 0.5f * dstW) * sx;
-            int x0 = static_cast<int>(std::floor(fx));
-            int x1 = x0 + 1;
-            float wx = fx - x0;
+        const float fy = transform.centerY + (static_cast<float>(y) - 0.5f * dstH) * sy;
+        m_sampleY0[y] = static_cast<int>(std::floor(fy));
+        m_sampleWy[y] = fy - m_sampleY0[y];
+    }
 
-            auto sample = [&](int syi, int sxi, int channel) -> float {
-                if (sxi < 0 || sxi >= frameW || syi < 0 || syi >= frameH) return 0.0f;
-                return static_cast<float>(frameRgb[(static_cast<size_t>(syi) * frameW + sxi) * 3 + channel]);
-            };
+    for (int y = 0; y < dstH; ++y) {
+        const int y0 = m_sampleY0[y];
+        int y1 = y0 + 1;
+        const float wy = m_sampleWy[y];
+        for (int x = 0; x < dstW; ++x) {
+            const int x0 = m_sampleX0[x];
+            const int x1 = x0 + 1;
+            const float wx = m_sampleWx[x];
             float w00 = (1 - wx) * (1 - wy), w01 = wx * (1 - wy);
             float w10 = (1 - wx) * wy,       w11 = wx * wy;
-            float r = sample(y0, x0, 0)*w00 + sample(y0, x1, 0)*w01 +
-                      sample(y1, x0, 0)*w10 + sample(y1, x1, 0)*w11;
-            float g = sample(y0, x0, 1)*w00 + sample(y0, x1, 1)*w01 +
-                      sample(y1, x0, 1)*w10 + sample(y1, x1, 1)*w11;
-            float b = sample(y0, x0, 2)*w00 + sample(y0, x1, 2)*w01 +
-                      sample(y1, x0, 2)*w10 + sample(y1, x1, 2)*w11;
+            const uint8_t* p00 = (x0 >= 0 && x0 < frameW && y0 >= 0 && y0 < frameH)
+                ? frameRgb + (static_cast<size_t>(y0) * frameW + x0) * 3 : nullptr;
+            const uint8_t* p01 = (x1 >= 0 && x1 < frameW && y0 >= 0 && y0 < frameH)
+                ? frameRgb + (static_cast<size_t>(y0) * frameW + x1) * 3 : nullptr;
+            const uint8_t* p10 = (x0 >= 0 && x0 < frameW && y1 >= 0 && y1 < frameH)
+                ? frameRgb + (static_cast<size_t>(y1) * frameW + x0) * 3 : nullptr;
+            const uint8_t* p11 = (x1 >= 0 && x1 < frameW && y1 >= 0 && y1 < frameH)
+                ? frameRgb + (static_cast<size_t>(y1) * frameW + x1) * 3 : nullptr;
+            float r = (p00 ? p00[0] : 0.0f)*w00 + (p01 ? p01[0] : 0.0f)*w01 +
+                      (p10 ? p10[0] : 0.0f)*w10 + (p11 ? p11[0] : 0.0f)*w11;
+            float g = (p00 ? p00[1] : 0.0f)*w00 + (p01 ? p01[1] : 0.0f)*w01 +
+                      (p10 ? p10[1] : 0.0f)*w10 + (p11 ? p11[1] : 0.0f)*w11;
+            float b = (p00 ? p00[2] : 0.0f)*w00 + (p01 ? p01[2] : 0.0f)*w01 +
+                      (p10 ? p10[2] : 0.0f)*w10 + (p11 ? p11[2] : 0.0f)*w11;
 
             size_t idx = static_cast<size_t>(y) * dstW + x;
             planeR[idx] = (r - m_param.meanR) * invStdR;

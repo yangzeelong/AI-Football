@@ -74,7 +74,7 @@ private:
                        int imgW, int imgH) const;
     CropTransform MakeCropTransform(float x0, float y0, float x1, float y1) const;
     void PreprocessCrop(const uint8_t* frameRgb, int frameW, int frameH,
-                        const CropTransform& transform, float* dstChw) const;
+                        const CropTransform& transform, float* dstChw);
     void FlipInput(float* chw) const;
     void DarkRefine(const float* heatmap, int H, int W,
                     int px, int py, float& outX, float& outY) const;
@@ -90,6 +90,10 @@ private:
     std::vector<float> m_outputHost;
     std::vector<float> m_flipOutputHost;
     std::vector<float> m_darkGaussian;
+    std::vector<int> m_sampleX0;
+    std::vector<int> m_sampleY0;
+    std::vector<float> m_sampleWx;
+    std::vector<float> m_sampleWy;
 };
 
 } // namespace pose
