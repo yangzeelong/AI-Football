@@ -61,7 +61,7 @@ private:
         float skeletonFastMovingEndpointAlpha = 0.62f;
         float skeletonFastStaticStepPx = 5.0f;
         float skeletonMaxStaticStepPx = 2.5f;
-        float maxLimbStretchRatio = 1.35f;
+        float skeletonLimbTolerance = 0.25f;
     } m_param;
 
     struct TrackHistory {

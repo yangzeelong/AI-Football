@@ -28,6 +28,9 @@ ns::ErrorCode HRNetPoseEstimator::Configure(const ns::Config& config) {
     m_inferParam.numKeypoints      = config.GetValueOrDefault<int>("numKeypoints", 133);
     m_inferParam.stride            = config.GetValueOrDefault<int>("stride", 4);
     m_inferParam.useDark           = config.GetValueOrDefault<bool>("useDark", true);
+    m_inferParam.flipTest          = config.GetValueOrDefault<bool>("flipTest", true);
+    m_inferParam.darkBlurKernel    = config.GetValueOrDefault<int>("darkBlurKernel", 11);
+    m_inferParam.bboxPadding       = config.GetValueOrDefault<float>("bboxPadding", 1.25f);
     m_inferParam.poseBoxExpansion  = config.GetValueOrDefault<bool>("poseBoxExpansion", true);
     m_inferParam.xPadRatio         = config.GetValueOrDefault<float>("xPadRatio", 0.15f);
     m_inferParam.yPadRatio         = config.GetValueOrDefault<float>("yPadRatio", 0.25f);
@@ -43,10 +46,10 @@ ns::ErrorCode HRNetPoseEstimator::Configure(const ns::Config& config) {
     m_inferParam.stdG              = config.GetValueOrDefault<float>("stdG", 57.12f);
     m_inferParam.stdB              = config.GetValueOrDefault<float>("stdB", 57.375f);
 
-    LOG_INFO("HRNetPoseEstimator: engine={}, input={}x{}, K={}, maxBatch={}, instances={}, dark={}",
+    LOG_INFO("HRNetPoseEstimator: engine={}, input={}x{}, K={}, maxBatch={}, instances={}, dark={}, flipTest={}",
              m_inferParam.enginePath, m_inferParam.inputWidth, m_inferParam.inputHeight,
              m_inferParam.numKeypoints, m_inferParam.maxBatch,
-             m_instanceCount, m_inferParam.useDark);
+             m_instanceCount, m_inferParam.useDark, m_inferParam.flipTest);
     return ns::ErrorCode::SUCCESS;
 }
 

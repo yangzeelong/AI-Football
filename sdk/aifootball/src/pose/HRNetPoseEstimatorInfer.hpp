@@ -23,6 +23,9 @@ public:
         int   numKeypoints     = 133;
         int   stride           = 4;
         bool  useDark          = true;
+        bool  flipTest         = true;
+        int   darkBlurKernel   = 11;
+        float bboxPadding      = 1.25f;
         bool  poseBoxExpansion = true;
         float xPadRatio        = 0.15f;
         float yPadRatio        = 0.25f;
@@ -60,13 +63,21 @@ public:
                     std::vector<PersonPose>& results);
 
 private:
+    struct CropTransform {
+        float centerX = 0.0f;
+        float centerY = 0.0f;
+        float scaleW = 0.0f;
+        float scaleH = 0.0f;
+    };
+
     void ExpandPoseBox(float& x0, float& y0, float& x1, float& y1,
                        int imgW, int imgH) const;
+    CropTransform MakeCropTransform(float x0, float y0, float x1, float y1) const;
     void PreprocessCrop(const uint8_t* frameRgb, int frameW, int frameH,
-                        float cx0, float cy0, float cx1, float cy1,
-                        float* dstChw) const;
-    static void DarkRefine(const float* heatmap, int H, int W,
-                           int px, int py, float& outX, float& outY);
+                        const CropTransform& transform, float* dstChw) const;
+    void FlipInput(float* chw) const;
+    void DarkRefine(const float* heatmap, int H, int W,
+                    int px, int py, float& outX, float& outY) const;
     void DecodeHeatmaps(const float* heatmaps, int K, int H, int W,
                         Keypoint2D out[kProjectKeypointCount]) const;
 
@@ -77,6 +88,7 @@ private:
 
     std::vector<float> m_inputHost;
     std::vector<float> m_outputHost;
+    std::vector<float> m_flipOutputHost;
 };
 
 } // namespace pose

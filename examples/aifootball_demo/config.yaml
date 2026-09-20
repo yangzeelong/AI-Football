@@ -71,6 +71,9 @@ graph:
         numKeypoints: 133                # COCO-WholeBody
         stride: 4
         useDark: true                    # DARK sub-pixel refinement
+        flipTest: true                   # Match MMPose heatmap flip-test TTA
+        darkBlurKernel: 11               # MMPose MSRAHeatmap DARK kernel
+        bboxPadding: 1.25                # MMPose GetBBoxCenterScale padding
         poseBoxExpansion: true
         xPadRatio: 0.15
         yPadRatio: 0.25
@@ -105,7 +108,7 @@ graph:
         skeletonFastMovingEndpointAlpha: 0.62
         skeletonFastStaticStepPx: 5.0
         skeletonMaxStaticStepPx: 2.5
-        maxLimbStretchRatio: 1.35
+        skeletonLimbTolerance: 0.25
 
     - name: FootballTracker
       class: FootballTracker

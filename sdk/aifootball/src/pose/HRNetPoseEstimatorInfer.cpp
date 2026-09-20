@@ -99,6 +99,7 @@ bool HRNetPoseEstimatorInfer::Init(const Param& param) {
     const size_t perPersonOutput = static_cast<size_t>(K) * H * W;
     m_inputHost.assign(perPersonInput * m_effectiveMaxBatch, 0.0f);
     m_outputHost.assign(perPersonOutput * m_effectiveMaxBatch, 0.0f);
+    m_flipOutputHost.assign(perPersonOutput * m_effectiveMaxBatch, 0.0f);
 
     LOG_INFO("HRNetPoseEstimatorInfer: requestedBatch={}, effectiveBatch={}, engineBatch={}",
              m_param.maxBatch, m_effectiveMaxBatch, engineBatch > 0 ? engineBatch : -1);
@@ -112,6 +113,7 @@ void HRNetPoseEstimatorInfer::Release() {
     m_ready = false;
     m_inputHost.clear();
     m_outputHost.clear();
+    m_flipOutputHost.clear();
     m_effectiveMaxBatch = 1;
 }
 
@@ -135,9 +137,8 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
     const size_t perPersonOutput = static_cast<size_t>(m_param.numKeypoints) *
                                    m_param.heatmapHeight * m_param.heatmapWidth;
 
-    // --- Preprocess: expand box + bilinear crop + normalize -> CHW ---
-    struct CropBox { float x0, y0, x1, y1; };
-    std::vector<CropBox> crops(B);
+    // --- Preprocess: Python's explicit expansion + MMPose center/scale affine ---
+    std::vector<CropTransform> crops(B);
 
     {
         TIMER_SCOPE_AVERAGE_MS("PoseEstimator.Preprocess", static_cast<uint64_t>(B), 5000);
@@ -145,8 +146,8 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
             const auto& p = persons[i];
             float x0 = p.x0, y0 = p.y0, x1 = p.x1, y1 = p.y1;
             ExpandPoseBox(x0, y0, x1, y1, p.frameW, p.frameH);
-            crops[i] = {x0, y0, x1, y1};
-            PreprocessCrop(p.frameRgb, p.frameW, p.frameH, x0, y0, x1, y1,
+            crops[i] = MakeCropTransform(x0, y0, x1, y1);
+            PreprocessCrop(p.frameRgb, p.frameW, p.frameH, crops[i],
                            m_inputHost.data() + i * perPersonInput);
         }
     }
@@ -166,15 +167,71 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
             LOG_ERROR("HRNetPoseEstimatorInfer: Infer failed");
             return false;
         }
-    }
-
-    size_t outBytes = B * perPersonOutput * sizeof(float);
-    {
-        TIMER_SCOPE_AVERAGE_MS("PoseEstimator.CopyOutput", static_cast<uint64_t>(B), 5000);
         if (!m_engine->CopyOutputToHost(m_param.outputBindingName,
-                                        m_outputHost.data(), outBytes)) {
+                                        m_outputHost.data(),
+                                        B * perPersonOutput * sizeof(float))) {
             LOG_ERROR("HRNetPoseEstimatorInfer: CopyOutputToHost failed");
             return false;
+        }
+    }
+
+    // MMPose's test_cfg enables heatmap flip-test. The flipped pass operates
+    // on the already warped tensor, so only the CHW image needs reversing.
+    if (m_param.flipTest) {
+        for (int i = 0; i < B; ++i) {
+            FlipInput(m_inputHost.data() + i * perPersonInput);
+        }
+        {
+            TIMER_SCOPE_AVERAGE_MS("PoseEstimator.TensorRTFlip", static_cast<uint64_t>(B), 5000);
+            if (!m_engine->SetInputFromHost(m_param.inputBindingName,
+                                            m_inputHost.data(), batchInputBytes, batchDims) ||
+                !m_engine->Infer()) {
+                LOG_ERROR("HRNetPoseEstimatorInfer: flipped inference failed");
+                return false;
+            }
+            if (!m_engine->CopyOutputToHost(m_param.outputBindingName,
+                                            m_flipOutputHost.data(),
+                                            B * perPersonOutput * sizeof(float))) {
+                LOG_ERROR("HRNetPoseEstimatorInfer: flipped output copy failed");
+                return false;
+            }
+        }
+
+        // Equivalent to mmpose.models.utils.tta.flip_heatmaps(...): reverse
+        // x, swap symmetric channels, shift one heatmap pixel right, average.
+        static const int kFlipIndices[133] = {
+             0,  2,  1,  4,  3,  6,  5,  8,  7, 10,  9, 12, 11, 14, 13, 16,
+            15, 20, 21, 22, 17, 18, 19, 39, 38, 37, 36, 35, 34, 33, 32, 31,
+            30, 29, 28, 27, 26, 25, 24, 23, 49, 48, 47, 46, 45, 44, 43, 42,
+            41, 40, 50, 51, 52, 53, 58, 57, 56, 55, 54, 68, 67, 66, 65, 70,
+            69, 62, 61, 60, 59, 64, 63, 77, 76, 75, 74, 73, 72, 71, 82, 81,
+            80, 79, 78, 87, 86, 85, 84, 83, 90, 89, 88, 112, 113, 114, 115,
+            116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128,
+            129, 130, 131, 132, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101,
+            102, 103, 104, 105, 106, 107, 108, 109, 110, 111
+        };
+        for (int i = 0; i < B; ++i) {
+            float* orig = m_outputHost.data() + i * perPersonOutput;
+            const float* flipped = m_flipOutputHost.data() + i * perPersonOutput;
+            const int H = m_param.heatmapHeight;
+            const int W = m_param.heatmapWidth;
+            if (m_param.numKeypoints > 133) {
+                LOG_ERROR("HRNetPoseEstimatorInfer: flip-test supports at most 133 keypoints, got {}",
+                          m_param.numKeypoints);
+                return false;
+            }
+            for (int k = 0; k < m_param.numKeypoints; ++k) {
+                const float* src = flipped + static_cast<size_t>(kFlipIndices[k]) * H * W;
+                float* dst = orig + static_cast<size_t>(k) * H * W;
+                for (int y = 0; y < H; ++y) {
+                    for (int x = 0; x < W; ++x) {
+                        int sourceX = (x == 0) ? (W - 1) : (W - x);
+                        dst[static_cast<size_t>(y) * W + x] =
+                            0.5f * (dst[static_cast<size_t>(y) * W + x] +
+                                     src[static_cast<size_t>(y) * W + sourceX]);
+                    }
+                }
+            }
         }
     }
 
@@ -198,15 +255,15 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
                        pp.keypoints);
 
         // Crop-space -> original frame coords.
-        const CropBox& cb = crops[i];
-        float cropW = cb.x1 - cb.x0;
-        float cropH = cb.y1 - cb.y0;
-        float scaleX = cropW / static_cast<float>(m_param.inputWidth);
-        float scaleY = cropH / static_cast<float>(m_param.inputHeight);
+        const CropTransform& crop = crops[i];
+        float scaleX = crop.scaleW / static_cast<float>(m_param.inputWidth);
+        float scaleY = crop.scaleH / static_cast<float>(m_param.inputHeight);
         for (int k = 0; k < kProjectKeypointCount; ++k) {
             if (pp.keypoints[k].state == KeypointState::Missing) continue;
-            pp.keypoints[k].x = cb.x0 + pp.keypoints[k].x * scaleX;
-            pp.keypoints[k].y = cb.y0 + pp.keypoints[k].y * scaleY;
+            pp.keypoints[k].x = crop.centerX - 0.5f * crop.scaleW +
+                                pp.keypoints[k].x * scaleX;
+            pp.keypoints[k].y = crop.centerY - 0.5f * crop.scaleH +
+                                pp.keypoints[k].y * scaleY;
         }
     }
     }
@@ -232,13 +289,30 @@ void HRNetPoseEstimatorInfer::ExpandPoseBox(float& x0, float& y0, float& x1, flo
     y1 = std::min(static_cast<float>(imgH), y1 + yPad);
 }
 
+HRNetPoseEstimatorInfer::CropTransform
+HRNetPoseEstimatorInfer::MakeCropTransform(float x0, float y0, float x1, float y1) const {
+    CropTransform transform;
+    transform.centerX = 0.5f * (x0 + x1);
+    transform.centerY = 0.5f * (y0 + y1);
+    transform.scaleW = (x1 - x0) * m_param.bboxPadding;
+    transform.scaleH = (y1 - y0) * m_param.bboxPadding;
+    const float aspect = static_cast<float>(m_param.inputWidth) /
+                         static_cast<float>(m_param.inputHeight);
+    if (transform.scaleW > transform.scaleH * aspect) {
+        transform.scaleH = transform.scaleW / aspect;
+    } else {
+        transform.scaleW = transform.scaleH * aspect;
+    }
+    return transform;
+}
+
 void HRNetPoseEstimatorInfer::PreprocessCrop(const uint8_t* frameRgb, int frameW, int frameH,
-                                             float cx0, float cy0, float cx1, float cy1,
+                                             const CropTransform& transform,
                                              float* dstChw) const {
     const int dstW = m_param.inputWidth;
     const int dstH = m_param.inputHeight;
-    const float cropW = cx1 - cx0;
-    const float cropH = cy1 - cy0;
+    const float cropW = transform.scaleW;
+    const float cropH = transform.scaleH;
     if (cropW <= 0 || cropH <= 0) {
         std::fill(dstChw, dstChw + 3 * dstW * dstH, 0.0f);
         return;
@@ -255,28 +329,28 @@ void HRNetPoseEstimatorInfer::PreprocessCrop(const uint8_t* frameRgb, int frameW
     const float invStdB = 1.0f / m_param.stdB;
 
     for (int y = 0; y < dstH; ++y) {
-        float fy = cy0 + (y + 0.5f) * sy - 0.5f;
-        fy = std::max(0.0f, std::min(fy, static_cast<float>(frameH - 1)));
+        float fy = transform.centerY + (static_cast<float>(y) - 0.5f * dstH) * sy;
         int y0 = static_cast<int>(std::floor(fy));
-        int y1 = std::min(y0 + 1, frameH - 1);
+        int y1 = y0 + 1;
         float wy = fy - y0;
         for (int x = 0; x < dstW; ++x) {
-            float fx = cx0 + (x + 0.5f) * sx - 0.5f;
-            fx = std::max(0.0f, std::min(fx, static_cast<float>(frameW - 1)));
+            float fx = transform.centerX + (static_cast<float>(x) - 0.5f * dstW) * sx;
             int x0 = static_cast<int>(std::floor(fx));
-            int x1 = std::min(x0 + 1, frameW - 1);
+            int x1 = x0 + 1;
             float wx = fx - x0;
 
-            const uint8_t* p00 = frameRgb + (static_cast<size_t>(y0) * frameW + x0) * 3;
-            const uint8_t* p01 = frameRgb + (static_cast<size_t>(y0) * frameW + x1) * 3;
-            const uint8_t* p10 = frameRgb + (static_cast<size_t>(y1) * frameW + x0) * 3;
-            const uint8_t* p11 = frameRgb + (static_cast<size_t>(y1) * frameW + x1) * 3;
+            auto sample = [&](int syi, int sxi, int channel) -> float {
+                if (sxi < 0 || sxi >= frameW || syi < 0 || syi >= frameH) return 0.0f;
+                return static_cast<float>(frameRgb[(static_cast<size_t>(syi) * frameW + sxi) * 3 + channel]);
+            };
             float w00 = (1 - wx) * (1 - wy), w01 = wx * (1 - wy);
             float w10 = (1 - wx) * wy,       w11 = wx * wy;
-
-            float r = p00[0]*w00 + p01[0]*w01 + p10[0]*w10 + p11[0]*w11;
-            float g = p00[1]*w00 + p01[1]*w01 + p10[1]*w10 + p11[1]*w11;
-            float b = p00[2]*w00 + p01[2]*w01 + p10[2]*w10 + p11[2]*w11;
+            float r = sample(y0, x0, 0)*w00 + sample(y0, x1, 0)*w01 +
+                      sample(y1, x0, 0)*w10 + sample(y1, x1, 0)*w11;
+            float g = sample(y0, x0, 1)*w00 + sample(y0, x1, 1)*w01 +
+                      sample(y1, x0, 1)*w10 + sample(y1, x1, 1)*w11;
+            float b = sample(y0, x0, 2)*w00 + sample(y0, x1, 2)*w01 +
+                      sample(y1, x0, 2)*w10 + sample(y1, x1, 2)*w11;
 
             size_t idx = static_cast<size_t>(y) * dstW + x;
             planeR[idx] = (r - m_param.meanR) * invStdR;
@@ -286,36 +360,101 @@ void HRNetPoseEstimatorInfer::PreprocessCrop(const uint8_t* frameRgb, int frameW
     }
 }
 
+void HRNetPoseEstimatorInfer::FlipInput(float* chw) const {
+    const size_t plane = static_cast<size_t>(m_param.inputWidth) * m_param.inputHeight;
+    for (int c = 0; c < 3; ++c) {
+        float* row = chw + static_cast<size_t>(c) * plane;
+        for (int y = 0; y < m_param.inputHeight; ++y) {
+            float* begin = row + static_cast<size_t>(y) * m_param.inputWidth;
+            std::reverse(begin, begin + m_param.inputWidth);
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // DARK sub-pixel refinement
 // ---------------------------------------------------------------------------
 
 void HRNetPoseEstimatorInfer::DarkRefine(const float* heatmap, int H, int W,
-                                         int px, int py, float& outX, float& outY) {
+                                         int px, int py, float& outX, float& outY) const {
     outX = static_cast<float>(px);
     outY = static_cast<float>(py);
-    if (px < 1 || px >= W - 1 || py < 1 || py >= H - 1) return;
+    if (px <= 1 || px >= W - 2 || py <= 1 || py >= H - 2) return;
 
-    const float eps = 1e-10f;
-    float L[3][3];
-    for (int i = 0; i < 3; ++i)
-        for (int j = 0; j < 3; ++j)
-            L[i][j] = std::log(std::max(heatmap[static_cast<size_t>(py - 1 + i) * W + (px - 1 + j)], eps));
+    const int kernel = (m_param.darkBlurKernel % 2 == 1 && m_param.darkBlurKernel >= 3)
+                       ? m_param.darkBlurKernel : 11;
+    const int radius = kernel / 2;
+    const float sigma = 0.3f * (0.5f * (kernel - 1) - 1.0f) + 0.8f;
+    std::vector<float> gaussian(kernel);
+    float gaussianSum = 0.0f;
+    for (int i = -radius; i <= radius; ++i) {
+        float value = std::exp(-0.5f * (i * i) / (sigma * sigma));
+        gaussian[i + radius] = value;
+        gaussianSum += value;
+    }
+    for (float& value : gaussian) value /= gaussianSum;
 
-    float gx  = (L[1][2] - L[1][0]) * 0.5f;
-    float gy  = (L[2][1] - L[0][1]) * 0.5f;
-    float hxx = L[1][2] - 2.0f * L[1][1] + L[1][0];
-    float hyy = L[2][1] - 2.0f * L[1][1] + L[0][1];
-    float hxy = (L[2][2] - L[2][0] - L[0][2] + L[0][0]) * 0.25f;
+    // Match MMPose gaussian_blur(): zero-pad, blur, then restore the original
+    // heatmap maximum before taking the logarithm.
+    const int paddedW = W + 2 * radius;
+    const int paddedH = H + 2 * radius;
+    std::vector<float> horizontal(static_cast<size_t>(paddedW) * paddedH, 0.0f);
+    std::vector<float> blurred(static_cast<size_t>(paddedW) * paddedH, 0.0f);
+    for (int y = radius; y < radius + H; ++y) {
+        for (int x = radius; x < radius + W; ++x) {
+            float value = 0.0f;
+            for (int i = -radius; i <= radius; ++i) {
+                int sourceX = x + i;
+                if (sourceX >= radius && sourceX < radius + W) {
+                    value += heatmap[static_cast<size_t>(y - radius) * W + sourceX - radius] *
+                             gaussian[i + radius];
+                }
+            }
+            horizontal[static_cast<size_t>(y) * paddedW + x] = value;
+        }
+    }
+    for (int y = radius; y < radius + H; ++y) {
+        for (int x = radius; x < radius + W; ++x) {
+            float value = 0.0f;
+            for (int i = -radius; i <= radius; ++i) {
+                int sourceY = y + i;
+                if (sourceY >= radius && sourceY < radius + H) {
+                    value += horizontal[static_cast<size_t>(sourceY) * paddedW + x] *
+                             gaussian[i + radius];
+                }
+            }
+            blurred[static_cast<size_t>(y) * paddedW + x] = value;
+        }
+    }
+
+    float originMax = heatmap[0];
+    for (int i = 1; i < H * W; ++i) originMax = std::max(originMax, heatmap[i]);
+    float blurredMax = 0.0f;
+    for (int y = 0; y < H; ++y)
+        for (int x = 0; x < W; ++x)
+            blurredMax = std::max(blurredMax,
+                                  blurred[static_cast<size_t>(y + radius) * paddedW + x + radius]);
+    const float scale = blurredMax > 0.0f ? originMax / blurredMax : 1.0f;
+    auto logBlurred = [&](int x, int y) {
+        float value = blurred[static_cast<size_t>(y + radius) * paddedW + x + radius] * scale;
+        return std::log(std::max(value, 1e-10f));
+    };
+
+    float gx  = (logBlurred(px + 1, py) - logBlurred(px - 1, py)) * 0.5f;
+    float gy  = (logBlurred(px, py + 1) - logBlurred(px, py - 1)) * 0.5f;
+    float hxx = (logBlurred(px + 2, py) - 2.0f * logBlurred(px, py) +
+                 logBlurred(px - 2, py)) * 0.25f;
+    float hyy = (logBlurred(px, py + 2) - 2.0f * logBlurred(px, py) +
+                 logBlurred(px, py - 2)) * 0.25f;
+    float hxy = (logBlurred(px + 1, py + 1) - logBlurred(px + 1, py - 1) -
+                 logBlurred(px - 1, py + 1) + logBlurred(px - 1, py - 1)) * 0.25f;
 
     float det = hxx * hyy - hxy * hxy;
-    if (std::abs(det) < eps) return;
+    if (det == 0.0f) return;
 
     float invDet = 1.0f / det;
     float ox = -invDet * (hyy * gx - hxy * gy);
     float oy = -invDet * (-hxy * gx + hxx * gy);
-    ox = std::max(-0.5f, std::min(0.5f, ox));
-    oy = std::max(-0.5f, std::min(0.5f, oy));
 
     outX = px + ox;
     outY = py + oy;
@@ -365,7 +504,7 @@ void HRNetPoseEstimatorInfer::DecodeHeatmaps(const float* heatmaps, int K, int H
         bool ok = (ka.state == KeypointState::Observed) && (kb.state == KeypointState::Observed);
         out[dst].x = 0.5f * (ka.x + kb.x);
         out[dst].y = 0.5f * (ka.y + kb.y);
-        out[dst].confidence = ok ? 0.5f * (ka.confidence + kb.confidence) : 0.0f;
+        out[dst].confidence = ok ? std::min(ka.confidence, kb.confidence) : 0.0f;
         out[dst].state = ok ? KeypointState::Virtual : KeypointState::Missing;
     };
     midpoint(5, 6, 23);   // neck

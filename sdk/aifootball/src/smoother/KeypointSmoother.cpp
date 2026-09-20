@@ -32,7 +32,8 @@ ns::ErrorCode KeypointSmoother::Configure(const ns::Config& config) {
     m_param.skeletonFastMovingEndpointAlpha = config.GetValueOrDefault<float>("skeletonFastMovingEndpointAlpha", 0.62f);
     m_param.skeletonFastStaticStepPx = config.GetValueOrDefault<float>("skeletonFastStaticStepPx", 5.0f);
     m_param.skeletonMaxStaticStepPx  = config.GetValueOrDefault<float>("skeletonMaxStaticStepPx", 2.5f);
-    m_param.maxLimbStretchRatio = config.GetValueOrDefault<float>("maxLimbStretchRatio", 1.35f);
+    m_param.skeletonLimbTolerance =
+        config.GetValueOrDefault<float>("skeletonLimbTolerance", 0.25f);
     LOG_INFO("KeypointSmoother config: enabled={}, method={}", m_param.enabled, m_param.method);
     return ns::ErrorCode::SUCCESS;
 }
@@ -71,7 +72,7 @@ bool KeypointSmoother::IsEndpointIdx(int i) {
 // ---------------------------------------------------------------------------
 
 bool KeypointSmoother::IsStatic(TrackHistory& h) {
-    if (static_cast<int>(h.bboxCenters.size()) < 2) return true;
+    if (static_cast<int>(h.bboxCenters.size()) < m_param.staticWindow) return false;
     float maxStep = 0.0f;
     for (size_t i = 1; i < h.bboxCenters.size(); ++i) {
         float dx = h.bboxCenters[i].first  - h.bboxCenters[i-1].first;
@@ -133,12 +134,10 @@ void KeypointSmoother::SmoothPerson(const PersonPose& in, TrackHistory& h,
         float dist = std::sqrt(dx*dx + dy*dy);
 
         float alpha;
-        if (cur.confidence < m_param.lowConfidence) {
-            alpha = m_param.lowConfidenceAlpha;
-        } else if (IsAnchorIdx(i)) {
+        if (IsAnchorIdx(i)) {
             alpha = m_param.skeletonAnchorAlpha;
         } else if (IsFastEndpointIdx(i)) {
-            if (isStatic && dist <= m_param.skeletonFastStaticStepPx) {
+            if (dist <= m_param.skeletonFastStaticStepPx) {
                 // Hold previous position (jitter suppression).
                 out.keypoints[i] = prev;
                 out.keypoints[i].confidence = cur.confidence;
@@ -148,18 +147,16 @@ void KeypointSmoother::SmoothPerson(const PersonPose& in, TrackHistory& h,
             alpha = isStatic ? m_param.skeletonFastEndpointAlpha
                              : m_param.skeletonFastMovingEndpointAlpha;
         } else if (IsEndpointIdx(i)) {
+            if (dist <= m_param.skeletonMaxStaticStepPx) {
+                out.keypoints[i] = prev;
+                out.keypoints[i].confidence = cur.confidence;
+                out.keypoints[i].state = cur.state;
+                continue;
+            }
             alpha = isStatic ? m_param.skeletonEndpointAlpha
                              : m_param.skeletonMovingEndpointAlpha;
         } else {
             alpha = isStatic ? m_param.staticAlpha : m_param.movingAlpha;
-        }
-
-        // Deadband: if motion is tiny, hold previous to avoid sub-pixel jitter.
-        if (dist <= m_param.deadbandPx && !IsFastEndpointIdx(i)) {
-            out.keypoints[i] = prev;
-            out.keypoints[i].confidence = cur.confidence;
-            out.keypoints[i].state = cur.state;
-            continue;
         }
 
         Keypoint2D sm;
@@ -171,30 +168,29 @@ void KeypointSmoother::SmoothPerson(const PersonPose& in, TrackHistory& h,
     }
 
     // --- Limb-length constraint ---
-    // Limb chains: (shoulder, elbow, wrist) and (hip, knee, ankle).
+    // Python applies this only in static mode and only to the distal segment.
     static const int kLimbs[4][3] = {
         {5, 7, 9},   // left arm
         {6, 8, 10},  // right arm
         {11, 13, 15},// left leg
         {12, 14, 16} // right leg
     };
-    for (auto& limb : kLimbs) {
+    if (isStatic) for (auto& limb : kLimbs) {
         int a = limb[0], b = limb[1], c = limb[2];
         if (h.prev[a].state == KeypointState::Missing ||
             h.prev[b].state == KeypointState::Missing ||
             h.prev[c].state == KeypointState::Missing) continue;
-        float prevLenAB = std::hypot(h.prev[b].x - h.prev[a].x, h.prev[b].y - h.prev[a].y);
         float prevLenBC = std::hypot(h.prev[c].x - h.prev[b].x, h.prev[c].y - h.prev[b].y);
-        float curLenAB  = std::hypot(out.keypoints[b].x - out.keypoints[a].x,
-                                     out.keypoints[b].y - out.keypoints[a].y);
         float curLenBC  = std::hypot(out.keypoints[c].x - out.keypoints[b].x,
                                      out.keypoints[c].y - out.keypoints[b].y);
-        // If a limb stretched too much, revert the distal endpoint to previous.
-        if (prevLenAB > 1e-3f && curLenAB > m_param.maxLimbStretchRatio * prevLenAB) {
-            out.keypoints[b] = h.prev[b];
-        }
-        if (prevLenBC > 1e-3f && curLenBC > m_param.maxLimbStretchRatio * prevLenBC) {
-            out.keypoints[c] = h.prev[c];
+        if (prevLenBC > 1.0f &&
+            std::abs(curLenBC - prevLenBC) / prevLenBC > m_param.skeletonLimbTolerance) {
+            out.keypoints[c].x = h.prev[c].x +
+                                 m_param.skeletonEndpointAlpha *
+                                 (out.keypoints[c].x - h.prev[c].x);
+            out.keypoints[c].y = h.prev[c].y +
+                                 m_param.skeletonEndpointAlpha *
+                                 (out.keypoints[c].y - h.prev[c].y);
         }
     }
 
@@ -205,7 +201,7 @@ void KeypointSmoother::SmoothPerson(const PersonPose& in, TrackHistory& h,
         bool ok = (ka.state != KeypointState::Missing) && (kb.state != KeypointState::Missing);
         out.keypoints[dst].x = 0.5f * (ka.x + kb.x);
         out.keypoints[dst].y = 0.5f * (ka.y + kb.y);
-        out.keypoints[dst].confidence = ok ? 0.5f * (ka.confidence + kb.confidence) : 0.0f;
+        out.keypoints[dst].confidence = ok ? std::min(ka.confidence, kb.confidence) : 0.0f;
         out.keypoints[dst].state = ok ? KeypointState::Virtual : KeypointState::Missing;
     };
     midpoint(5, 6, 23);   // neck
