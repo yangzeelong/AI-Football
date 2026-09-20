@@ -70,7 +70,8 @@ int main() {
     context.inputQueuePolicy = aifootball::QueuePolicy::Block;
     auto pipeline = aifootball::AIFootballPipeline::Create(context);
     if (pipeline->Init() != nexusflow::SUCCESS) return 1;
-    // Fill DecodedFrameView from the host application's decoder and enqueue it.
+    // Fill DecodedFrameView from the host application's decoder, then submit:
+    // auto future = pipeline->ProcessAsync(frame);
     pipeline->Flush();
     pipeline->DeInit();
     return 0;

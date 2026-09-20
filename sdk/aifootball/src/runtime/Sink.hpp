@@ -5,7 +5,6 @@
 
 #include <chrono>
 #include <condition_variable>
-#include <deque>
 #include <functional>
 #include <map>
 #include <mutex>
@@ -20,14 +19,13 @@ struct ResultPacket {
 /** Internal sink used to return algorithm results to AIFootballPipeline. */
 class Sink final : public nexusflow::Module {
 public:
-    using Callback = std::function<void(ResultPacket)>;
+    using ResultHandler = std::function<void(ResultPacket)>;
 
     explicit Sink(const std::string& name);
 
-    bool WaitNext(ResultPacket& packet, std::chrono::milliseconds timeout);
     void PrepareForEnd();
     bool WaitForEnd(std::chrono::milliseconds timeout);
-    void SetCallback(Callback callback);
+    void SetResultHandler(ResultHandler handler);
     void Close();
 
 protected:
@@ -36,8 +34,7 @@ protected:
 private:
     std::mutex m_mutex;
     std::condition_variable m_condition;
-    std::deque<ResultPacket> m_pending;
-    Callback m_callback;
+    ResultHandler m_resultHandler;
     bool m_endSeen = false;
     bool m_closed = false;
 };

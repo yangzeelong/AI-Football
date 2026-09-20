@@ -1,11 +1,11 @@
 #pragma once
 
+#include <aifootball/Future.hpp>
 #include <nexusflow/ErrorCode.hpp>
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -38,17 +38,17 @@ enum class QueuePolicy {
     Block = 0,
     /// Drop the oldest queued frame and enqueue the current frame.
     DropOldest = 1,
-    /// Drop the current frame; Process returns FAILURE and no result is emitted.
+    /// Drop the current frame; ProcessAsync returns a failure result future.
     DropNew = 2,
 };
 
 /**
  * Non-owning view of one decoded video frame.
  *
- * Process is asynchronous. When dataOwner is set, the SDK retains it until
+ * ProcessAsync is asynchronous. When dataOwner is set, the SDK retains it until
  * the asynchronous result has been delivered, enabling zero-copy integration
  * with caller-owned frame buffers. When dataOwner is empty, the SDK copies the
- * bytes before Process returns.
+ * bytes before ProcessAsync returns.
  */
 struct DecodedFrameView {
     uint64_t frameId = 0;
@@ -112,15 +112,23 @@ struct ProcessResult {
     std::map<std::string, double> moduleTimingsMs;
 };
 
+/** Future value returned for one submitted frame. */
+struct ProcessFutureResult {
+    nexusflow::ErrorCode status = nexusflow::FAILURE;
+    ProcessResult result;
+};
+
+using ProcessFuture = Future<ProcessFutureResult>;
+
 /** Configuration and execution context for one algorithm pipeline. */
 struct AIFootballContext {
     /// YAML graph configuration containing model and algorithm settings.
     std::string configPath;
     /// CUDA device selected before model initialization.
     int deviceId = 0;
-    /// Maximum number of decoded frames buffered before Process applies
+    /// Maximum number of decoded frames buffered before ProcessAsync applies
     /// inputQueuePolicy. 0 means unbounded.
-    std::size_t maxPendingFrames = 64;
+    std::size_t maxPendingFrames = 0;
     /// Behavior when maxPendingFrames has been reached.
     QueuePolicy inputQueuePolicy = QueuePolicy::Block;
     /// Algorithm ROI in source-frame coordinates.
@@ -135,8 +143,6 @@ struct AIFootballContext {
  */
 class AIFootballPipeline {
 public:
-    using ResultCallback = std::function<void(ProcessResult)>;
-
     static std::unique_ptr<AIFootballPipeline> Create(
         const AIFootballContext& context);
 
@@ -147,17 +153,13 @@ public:
 
     nexusflow::ErrorCode Init();
     /// Enqueue one decoded frame without waiting for inference. May block when
-    /// the bounded input queue is full and inputQueuePolicy is Block.
-    nexusflow::ErrorCode Process(const DecodedFrameView& frame);
+    /// the bounded input queue is full and inputQueuePolicy is Block. The
+    /// returned future becomes ready when this frame's result is available, or
+    /// with a failure status when the frame cannot be submitted or is dropped.
+    ProcessFuture ProcessAsync(const DecodedFrameView& frame);
     /// Drain all frames submitted before this call, including a partial model
-    /// batch. This is a synchronization point, not an inference result API.
+    /// batch. Results are delivered through their ProcessAsync futures.
     nexusflow::ErrorCode Flush();
-    /// Retrieve one asynchronous result. timeoutMs=0 performs a non-blocking
-    /// poll; a positive value waits up to that many milliseconds.
-    nexusflow::ErrorCode PollResult(ProcessResult& result,
-                                    uint32_t timeoutMs = 0);
-    /// Select callback delivery instead of queue polling for future results.
-    nexusflow::ErrorCode SetResultCallback(ResultCallback callback);
     nexusflow::ErrorCode DeInit();
 
 private:

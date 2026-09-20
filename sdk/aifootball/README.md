@@ -14,6 +14,7 @@ Include:
 
 ```cpp
 #include <aifootball/AIFootball.hpp>
+#include <chrono>
 ```
 
 The main entry point is `aifootball::AIFootballPipeline`:
@@ -41,38 +42,45 @@ frame.strideBytes = width * 3;
 frame.data = rgb24Bytes;
 frame.dataBytes = static_cast<std::size_t>(width) * height * 3;
 
-const auto status = pipeline->Process(frame); // asynchronous enqueue
-
-aifootball::ProcessResult result;
-pipeline->PollResult(result, 0); // non-blocking; or install a callback
+auto resultFuture = pipeline->ProcessAsync(frame);
+if (!resultFuture.WaitFor(std::chrono::milliseconds(30))) {
+    // Keep submitting frames or poll the future later.
+}
 // At end of stream only:
 pipeline->Flush();
+const auto output = resultFuture.Get();
+if (output.status == nexusflow::SUCCESS) {
+    // Consume output.result.
+}
 pipeline->DeInit();
 ```
 
-`Process()` only enqueues work and returns without waiting for inference, but
-it may block before enqueueing when the bounded input queue is full and
-`QueuePolicy::Block` is selected.
-Results are retrieved asynchronously with `PollResult()` or delivered through
-`SetResultCallback()`. `PollResult(result, 0)` is a non-blocking poll. Call
-`Flush()` once at the end of a stream to drain the final partial detector
-batch; it should not be used as a per-frame synchronization point.
+`ProcessAsync()` enqueues work and returns a move-only `ProcessFuture`. The
+future supports `IsReady()`, `Wait()`, `WaitFor(timeout)`, and `Get()`.
+`Get()` consumes the result once. `ProcessFutureResult::status` reports whether
+the frame was processed, dropped, or rejected; the detailed output is in
+`ProcessFutureResult::result` when the status is `nexusflow::SUCCESS`.
+`Flush()` is still only an end-of-stream drain operation and should not be used
+as a per-frame synchronization point.
 
 `DecodedFrameView` accepts packed RGB24. If `dataOwner` is set, the SDK retains
 that shared owner until the result is delivered and can use the buffer without
 copying. If it is empty, the SDK copies the bytes before returning from
-`Process()` so the caller may immediately reuse its decode buffer.
+`ProcessAsync()` so the caller may immediately reuse its decode buffer.
 
-The input queue is bounded by `AIFootballContext::maxPendingFrames`.
+The input queue is unbounded by default (`maxPendingFrames == 0`). Set
+`AIFootballContext::maxPendingFrames` to a positive value to enable a bound.
 `QueuePolicy::Block` is the default and applies backpressure by blocking
-`Process()` until the internal source queue has room. `QueuePolicy::DropOldest`
-drops the oldest queued input frame and accepts the new frame.
-`QueuePolicy::DropNew` rejects the current frame; `Process()` returns
-`nexusflow::FAILURE` and no result will be emitted for that frame.
+`ProcessAsync()` until the internal source queue has room.
+`QueuePolicy::DropOldest` drops the oldest queued input frame and completes its
+future with a failure status before accepting the new frame.
+`QueuePolicy::DropNew` rejects the current frame and returns an already-ready
+future with a failure status.
 
-Results are emitted in input order when polled, while preserving the configured
-detector batch policy. `DeInit()` stops the internal actor graph; callers should
-flush and drain results before de-initializing.
+Results are completed in input order while preserving the configured detector
+batch policy. `DeInit()` stops the internal actor graph and completes any
+remaining futures with a failure status; callers should flush and drain results
+before de-initializing.
 
 `AIFootballContext` contains execution and algorithm-level settings. ROI points use the coordinate
 system described by `roi.width` and `roi.height`; the runtime scales them to

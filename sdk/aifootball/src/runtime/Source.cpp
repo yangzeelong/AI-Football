@@ -10,7 +10,7 @@ Source::Source(const std::string& name, std::size_t maxPendingFrames,
       m_maxPendingFrames(maxPendingFrames),
       m_queuePolicy(queuePolicy) {}
 
-bool Source::Submit(FrameMessage message) {
+bool Source::Submit(FrameMessage message, FrameMessage* droppedMessage) {
     auto hasRoom = [this] {
         return m_maxPendingFrames == 0 || m_pending.size() < m_maxPendingFrames;
     };
@@ -27,6 +27,7 @@ bool Source::Submit(FrameMessage message) {
             } else if (m_queuePolicy == QueuePolicy::DropOldest) {
                 LOG_WARN("Source: input queue is full ({}), dropping oldest frame",
                          m_maxPendingFrames);
+                if (droppedMessage) *droppedMessage = std::move(m_pending.front());
                 m_pending.pop_front();
             } else {
                 LOG_WARN("Source: input queue is full ({}), dropping current frame",

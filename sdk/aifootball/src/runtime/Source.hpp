@@ -17,7 +17,7 @@ public:
     explicit Source(const std::string& name, std::size_t maxPendingFrames,
                     QueuePolicy queuePolicy);
 
-    bool Submit(FrameMessage message);
+    bool Submit(FrameMessage message, FrameMessage* droppedMessage = nullptr);
     void Close();
 
 protected:

@@ -17,6 +17,7 @@
 #include <cuda_runtime_api.h>
 #endif
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -24,6 +25,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -168,6 +170,28 @@ ProcessResult ConvertResult(const ResultPacket& packet) {
     return output;
 }
 
+ProcessFuture ReadyFuture(nexusflow::ErrorCode status) {
+    Promise<ProcessFutureResult> promise;
+    auto future = promise.GetFuture();
+    ProcessFutureResult result;
+    result.status = status;
+    promise.SetValue(std::move(result));
+    return future;
+}
+
+bool IsValidFrame(const DecodedFrameView& frame) {
+    return frame.frameId <= std::numeric_limits<uint32_t>::max() &&
+           frame.pixelFormat == PixelFormat::RGB24 && frame.width > 0 &&
+           frame.height > 0 && frame.data != nullptr && frame.dataBytes != 0 &&
+           (frame.strideBytes == 0 || frame.strideBytes == frame.width * 3) &&
+           frame.dataBytes >= static_cast<std::size_t>(frame.width) *
+                                  static_cast<std::size_t>(frame.height) * 3;
+}
+
+uint64_t FrameIdOf(const FrameMessage& message) {
+    return message.videoFrame ? message.videoFrame->frameId : 0;
+}
+
 } // namespace
 
 class AIFootballPipeline::Impl {
@@ -197,6 +221,7 @@ public:
         frameSource.reset();
         resultSink.reset();
         initialized = false;
+        CompleteAllPending(nexusflow::FAILURE);
         return result;
     }
 
@@ -206,33 +231,65 @@ public:
     std::shared_ptr<Sink> resultSink;
     // Serializes submission and Flush so frame order matches caller order.
     std::mutex processMutex;
-    std::mutex callbackMutex;
-    AIFootballPipeline::ResultCallback callback;
+    std::mutex promiseMutex;
+    std::unordered_map<uint64_t, Promise<ProcessFutureResult>> pendingPromises;
     bool initialized = false;
 
-    void Deliver(ResultPacket packet) {
-        AIFootballPipeline::ResultCallback current;
-        {
-            std::lock_guard<std::mutex> lock(callbackMutex);
-            current = callback;
-        }
-        if (current) current(ConvertResult(packet));
+    void ReservePendingPromises() {
+        const std::size_t reserveCount = context.maxPendingFrames == 0
+            ? 64 : std::max<std::size_t>(context.maxPendingFrames, 64);
+        pendingPromises.reserve(reserveCount);
     }
 
-    void ConfigureCallback() {
-        if (!resultSink) return;
-        AIFootballPipeline::ResultCallback current;
+    bool RegisterPending(uint64_t frameId,
+                         ProcessFuture& future) {
+        Promise<ProcessFutureResult> promise;
+        future = promise.GetFuture();
+        std::lock_guard<std::mutex> lock(promiseMutex);
+        const auto inserted = pendingPromises.emplace(frameId, std::move(promise));
+        return inserted.second;
+    }
+
+    void CompletePending(uint64_t frameId, nexusflow::ErrorCode status,
+                         ProcessResult result = ProcessResult{}) {
+        Promise<ProcessFutureResult> promise;
         {
-            std::lock_guard<std::mutex> lock(callbackMutex);
-            current = callback;
+            std::lock_guard<std::mutex> lock(promiseMutex);
+            const auto it = pendingPromises.find(frameId);
+            if (it == pendingPromises.end()) {
+                LOG_WARN("AI-Football SDK: no pending future for frame {}", frameId);
+                return;
+            }
+            promise = std::move(it->second);
+            pendingPromises.erase(it);
         }
-        if (current) {
-            resultSink->SetCallback([this](ResultPacket packet) {
-                Deliver(std::move(packet));
-            });
-        } else {
-            resultSink->SetCallback(nullptr);
+        ProcessFutureResult value;
+        value.status = status;
+        value.result = std::move(result);
+        promise.TrySetValue(std::move(value));
+    }
+
+    void CompleteAllPending(nexusflow::ErrorCode status) {
+        std::vector<Promise<ProcessFutureResult>> promises;
+        {
+            std::lock_guard<std::mutex> lock(promiseMutex);
+            promises.reserve(pendingPromises.size());
+            for (auto& entry : pendingPromises) {
+                promises.push_back(std::move(entry.second));
+            }
+            pendingPromises.clear();
         }
+        for (auto& promise : promises) {
+            ProcessFutureResult value;
+            value.status = status;
+            promise.TrySetValue(std::move(value));
+        }
+    }
+
+    void Deliver(ResultPacket packet) {
+        ProcessResult result = ConvertResult(packet);
+        const uint64_t frameId = result.frameId;
+        CompletePending(frameId, nexusflow::SUCCESS, std::move(result));
     }
 };
 
@@ -273,7 +330,10 @@ nexusflow::ErrorCode AIFootballPipeline::Init() {
             kInputModuleName, m_impl->context.maxPendingFrames,
             m_impl->context.inputQueuePolicy);
         m_impl->resultSink = std::make_shared<Sink>(kOutputModuleName);
-        m_impl->ConfigureCallback();
+        m_impl->ReservePendingPromises();
+        m_impl->resultSink->SetResultHandler([impl = m_impl.get()](ResultPacket packet) {
+            impl->Deliver(std::move(packet));
+        });
 
         nexusflow::PipelineBuilder builder;
         builder.AddModule(m_impl->frameSource);
@@ -317,24 +377,26 @@ nexusflow::ErrorCode AIFootballPipeline::Init() {
     return nexusflow::FAILURE;
 }
 
-nexusflow::ErrorCode AIFootballPipeline::Process(const DecodedFrameView& frame) {
+ProcessFuture AIFootballPipeline::ProcessAsync(
+    const DecodedFrameView& frame) {
     if (!m_impl || !m_impl->initialized || !m_impl->frameSource ||
         !m_impl->resultSink) {
-        return nexusflow::UNINITIALIZED_ERROR;
+        return ReadyFuture(nexusflow::UNINITIALIZED_ERROR);
     }
-    if (frame.frameId > std::numeric_limits<uint32_t>::max() ||
-        frame.pixelFormat != PixelFormat::RGB24 || frame.width <= 0 ||
-        frame.height <= 0 || frame.data == nullptr || frame.dataBytes == 0 ||
-        (frame.strideBytes != 0 && frame.strideBytes != frame.width * 3) ||
-        frame.dataBytes < static_cast<std::size_t>(frame.width) *
-                              static_cast<std::size_t>(frame.height) * 3) {
+    if (!IsValidFrame(frame)) {
         LOG_ERROR("AI-Football SDK: invalid RGB24 frame id={}, size={}x{}, stride={}, bytes={}",
                   frame.frameId, frame.width, frame.height,
                   frame.strideBytes, frame.dataBytes);
-        return nexusflow::FAILURE;
+        return ReadyFuture(nexusflow::FAILURE);
     }
 
     std::lock_guard<std::mutex> processLock(m_impl->processMutex);
+    ProcessFuture future;
+    if (!m_impl->RegisterPending(frame.frameId, future)) {
+        LOG_ERROR("AI-Football SDK: duplicate pending frame id={}", frame.frameId);
+        return ReadyFuture(nexusflow::FAILURE);
+    }
+
     auto videoFrame = std::make_shared<VideoFrame>();
     videoFrame->frameId = static_cast<uint32_t>(frame.frameId);
     if (frame.dataOwner) {
@@ -352,8 +414,15 @@ nexusflow::ErrorCode AIFootballPipeline::Process(const DecodedFrameView& frame) 
     FrameMessage message;
     message.videoFrame = std::move(videoFrame);
     message.timestampSec = frame.timestampSec;
-    return m_impl->frameSource->Submit(std::move(message))
-        ? nexusflow::SUCCESS : nexusflow::FAILURE;
+    FrameMessage droppedMessage;
+    if (!m_impl->frameSource->Submit(std::move(message), &droppedMessage)) {
+        m_impl->CompletePending(frame.frameId, nexusflow::FAILURE);
+        return future;
+    }
+    if (droppedMessage.videoFrame) {
+        m_impl->CompletePending(FrameIdOf(droppedMessage), nexusflow::FAILURE);
+    }
+    return future;
 }
 
 nexusflow::ErrorCode AIFootballPipeline::Flush() {
@@ -367,36 +436,13 @@ nexusflow::ErrorCode AIFootballPipeline::Flush() {
     FrameMessage endMessage;
     endMessage.isEnd = true;
     if (!m_impl->frameSource->Submit(std::move(endMessage))) {
+        m_impl->CompleteAllPending(nexusflow::FAILURE);
         return nexusflow::FAILURE;
     }
-    return m_impl->resultSink->WaitForEnd(std::chrono::minutes(5))
-        ? nexusflow::SUCCESS : nexusflow::FAILURE;
-}
-
-nexusflow::ErrorCode AIFootballPipeline::PollResult(ProcessResult& result,
-                                                   uint32_t timeoutMs) {
-    if (!m_impl || !m_impl->initialized || !m_impl->resultSink) {
-        return nexusflow::UNINITIALIZED_ERROR;
-    }
-    ResultPacket packet;
-    const auto timeout = std::chrono::milliseconds(timeoutMs);
-    if (!m_impl->resultSink->WaitNext(packet, timeout)) {
+    if (!m_impl->resultSink->WaitForEnd(std::chrono::minutes(5))) {
+        m_impl->CompleteAllPending(nexusflow::FAILURE);
         return nexusflow::FAILURE;
     }
-    result = ConvertResult(packet);
-    return nexusflow::SUCCESS;
-}
-
-nexusflow::ErrorCode AIFootballPipeline::SetResultCallback(
-    ResultCallback callback) {
-    if (!m_impl || !m_impl->initialized || !m_impl->resultSink) {
-        return nexusflow::UNINITIALIZED_ERROR;
-    }
-    {
-        std::lock_guard<std::mutex> lock(m_impl->callbackMutex);
-        m_impl->callback = std::move(callback);
-    }
-    m_impl->ConfigureCallback();
     return nexusflow::SUCCESS;
 }
 

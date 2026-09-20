@@ -12,6 +12,7 @@
 #include <atomic>
 #include <csignal>
 #include <cstdint>
+#include <deque>
 #include <exception>
 #include <iomanip>
 #include <iostream>
@@ -127,36 +128,57 @@ bool PrepareResources(const RunOptions& options, DemoResources& resources) {
     return true;
 }
 
-bool WriteReadyResults(aifootball::AIFootballPipeline& pipeline,
-                       aifootball_demo::JsonlWriter& writer,
-                       aifootball_demo::VideoRenderer& renderer,
-                       int& pendingFrames) {
-    while (pendingFrames > 0) {
-        aifootball::ProcessResult result;
-        if (pipeline.PollResult(result, 0) != nexusflow::SUCCESS) break;
-        writer.Write(result);
-        if (!renderer.Write(result)) return false;
-        --pendingFrames;
+using ResultFuture = aifootball::ProcessFuture;
+
+bool HandleResult(aifootball::ProcessFutureResult value,
+                  aifootball_demo::JsonlWriter& writer,
+                  aifootball_demo::VideoRenderer& renderer) {
+    if (value.status != nexusflow::SUCCESS) {
+        LOG_ERROR("AI-Football SDK failed for frame {} with status {}",
+                  value.result.frameId, value.status);
+        return false;
+    }
+    writer.Write(value.result);
+    if (!renderer.Write(value.result)) {
+        LOG_ERROR("Failed to render SDK result for frame {}",
+                  value.result.frameId);
+        return false;
     }
     return true;
 }
 
-bool DrainResults(aifootball::AIFootballPipeline& pipeline,
+bool HandleFutureResult(ResultFuture& future,
+                        aifootball_demo::JsonlWriter& writer,
+                        aifootball_demo::VideoRenderer& renderer) {
+    try {
+        return HandleResult(future.Get(), writer, renderer);
+    } catch (const std::exception& error) {
+        LOG_ERROR("Failed to consume AI-Football SDK future: {}", error.what());
+        return false;
+    }
+}
+
+bool WriteReadyResults(std::deque<ResultFuture>& pendingResults,
+                       aifootball_demo::JsonlWriter& writer,
+                       aifootball_demo::VideoRenderer& renderer) {
+    while (!pendingResults.empty() && pendingResults.front().IsReady()) {
+        if (!HandleFutureResult(pendingResults.front(), writer, renderer)) {
+            return false;
+        }
+        pendingResults.pop_front();
+    }
+    return true;
+}
+
+bool DrainResults(std::deque<ResultFuture>& pendingResults,
                   aifootball_demo::JsonlWriter& writer,
-                  aifootball_demo::VideoRenderer& renderer,
-                  int& pendingFrames) {
-    while (pendingFrames > 0) {
-        aifootball::ProcessResult result;
-        if (pipeline.PollResult(result, 300000) != nexusflow::SUCCESS) {
-            LOG_ERROR("Failed to poll pending SDK result");
+                  aifootball_demo::VideoRenderer& renderer) {
+    while (!pendingResults.empty()) {
+        pendingResults.front().Wait();
+        if (!HandleFutureResult(pendingResults.front(), writer, renderer)) {
             return false;
         }
-        writer.Write(result);
-        if (!renderer.Write(result)) {
-            LOG_ERROR("Failed to render SDK result for frame {}", result.frameId);
-            return false;
-        }
-        --pendingFrames;
+        pendingResults.pop_front();
     }
     return true;
 }
@@ -164,7 +186,7 @@ bool DrainResults(aifootball::AIFootballPipeline& pipeline,
 bool ProcessVideo(const RunOptions& options, DemoResources& resources,
                   aifootball::AIFootballPipeline& pipeline,
                   int& processedFrames) {
-    int pendingFrames = 0;
+    std::deque<ResultFuture> pendingResults;
     bool stoppedByLimit = false;
     bool failed = false;
     const bool decoded = resources.reader.Decode(
@@ -178,20 +200,39 @@ bool ProcessVideo(const RunOptions& options, DemoResources& resources,
                 return false;
             }
 
-            if (!resources.renderer.SubmitFrame(frame)) {
-                failed = true;
-                return false;
+            auto future = pipeline.ProcessAsync(frame);
+            if (future.IsReady()) {
+                try {
+                    auto value = future.Get();
+                    if (value.status != nexusflow::SUCCESS) {
+                        LOG_ERROR("AI-Football SDK failed for frame {} with status {}",
+                                  frame.frameId, value.status);
+                        failed = true;
+                        return false;
+                    }
+                    if (!resources.renderer.SubmitFrame(frame) ||
+                        !HandleResult(std::move(value), resources.writer,
+                                      resources.renderer)) {
+                        failed = true;
+                        return false;
+                    }
+                } catch (const std::exception& error) {
+                    LOG_ERROR("Failed to consume AI-Football SDK future: {}",
+                              error.what());
+                    failed = true;
+                    return false;
+                }
+            } else {
+                if (!resources.renderer.SubmitFrame(frame)) {
+                    failed = true;
+                    return false;
+                }
+                pendingResults.push_back(std::move(future));
             }
-            if (pipeline.Process(frame) != nexusflow::SUCCESS) {
-                LOG_ERROR("AI-Football SDK input queue is full or closed at frame {}",
-                          frame.frameId);
-                failed = true;
-                return false;
-            }
-            ++pendingFrames;
+
             ++processedFrames;
-            if (!WriteReadyResults(pipeline, resources.writer,
-                                   resources.renderer, pendingFrames)) {
+            if (!WriteReadyResults(pendingResults, resources.writer,
+                                   resources.renderer)) {
                 failed = true;
                 return false;
             }
@@ -210,8 +251,7 @@ bool ProcessVideo(const RunOptions& options, DemoResources& resources,
         LOG_ERROR("Failed to flush AI-Football SDK pipeline");
         return false;
     }
-    return DrainResults(pipeline, resources.writer, resources.renderer,
-                        pendingFrames);
+    return DrainResults(pendingResults, resources.writer, resources.renderer);
 }
 
 int RunDemo(const RunOptions& options) {
