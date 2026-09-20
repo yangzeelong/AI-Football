@@ -101,6 +101,21 @@ bool HRNetPoseEstimatorInfer::Init(const Param& param) {
     m_outputHost.assign(perPersonOutput * m_effectiveMaxBatch, 0.0f);
     m_flipOutputHost.assign(perPersonOutput * m_effectiveMaxBatch, 0.0f);
 
+    if (m_param.useDark) {
+        const int kernel = (m_param.darkBlurKernel % 2 == 1 && m_param.darkBlurKernel >= 3)
+                           ? m_param.darkBlurKernel : 11;
+        const int radius = kernel / 2;
+        const float sigma = 0.3f * (0.5f * (kernel - 1) - 1.0f) + 0.8f;
+        m_darkGaussian.resize(kernel);
+        float gaussianSum = 0.0f;
+        for (int i = -radius; i <= radius; ++i) {
+            const float value = std::exp(-0.5f * (i * i) / (sigma * sigma));
+            m_darkGaussian[i + radius] = value;
+            gaussianSum += value;
+        }
+        for (float& value : m_darkGaussian) value /= gaussianSum;
+    }
+
     LOG_INFO("HRNetPoseEstimatorInfer: requestedBatch={}, effectiveBatch={}, engineBatch={}",
              m_param.maxBatch, m_effectiveMaxBatch, engineBatch > 0 ? engineBatch : -1);
 
@@ -114,6 +129,7 @@ void HRNetPoseEstimatorInfer::Release() {
     m_inputHost.clear();
     m_outputHost.clear();
     m_flipOutputHost.clear();
+    m_darkGaussian.clear();
     m_effectiveMaxBatch = 1;
 }
 
@@ -384,60 +400,30 @@ void HRNetPoseEstimatorInfer::DarkRefine(const float* heatmap, int H, int W,
     const int kernel = (m_param.darkBlurKernel % 2 == 1 && m_param.darkBlurKernel >= 3)
                        ? m_param.darkBlurKernel : 11;
     const int radius = kernel / 2;
-    const float sigma = 0.3f * (0.5f * (kernel - 1) - 1.0f) + 0.8f;
-    std::vector<float> gaussian(kernel);
-    float gaussianSum = 0.0f;
-    for (int i = -radius; i <= radius; ++i) {
-        float value = std::exp(-0.5f * (i * i) / (sigma * sigma));
-        gaussian[i + radius] = value;
-        gaussianSum += value;
-    }
-    for (float& value : gaussian) value /= gaussianSum;
+    const float* gaussian = m_darkGaussian.data();
 
-    // Match MMPose gaussian_blur(): zero-pad, blur, then restore the original
-    // heatmap maximum before taking the logarithm.
-    const int paddedW = W + 2 * radius;
-    const int paddedH = H + 2 * radius;
-    std::vector<float> horizontal(static_cast<size_t>(paddedW) * paddedH, 0.0f);
-    std::vector<float> blurred(static_cast<size_t>(paddedW) * paddedH, 0.0f);
-    for (int y = radius; y < radius + H; ++y) {
-        for (int x = radius; x < radius + W; ++x) {
-            float value = 0.0f;
-            for (int i = -radius; i <= radius; ++i) {
-                int sourceX = x + i;
-                if (sourceX >= radius && sourceX < radius + W) {
-                    value += heatmap[static_cast<size_t>(y - radius) * W + sourceX - radius] *
-                             gaussian[i + radius];
-                }
+    // DARK only uses a 5x5 neighborhood around the heatmap peak. The positive
+    // scale restoration in MMPose becomes an additive constant inside log(),
+    // so it cancels from the gradients and Hessian used for the offset.
+    auto blurredAt = [&](int x, int y) {
+        float value = 0.0f;
+        for (int dy = -radius; dy <= radius; ++dy) {
+            const int sourceY = y + dy;
+            if (sourceY < 0 || sourceY >= H) continue;
+            float horizontal = 0.0f;
+            for (int dx = -radius; dx <= radius; ++dx) {
+                const int sourceX = x + dx;
+                if (sourceX < 0 || sourceX >= W) continue;
+                horizontal += heatmap[static_cast<size_t>(sourceY) * W + sourceX] *
+                              gaussian[dx + radius];
             }
-            horizontal[static_cast<size_t>(y) * paddedW + x] = value;
+            value += horizontal * gaussian[dy + radius];
         }
-    }
-    for (int y = radius; y < radius + H; ++y) {
-        for (int x = radius; x < radius + W; ++x) {
-            float value = 0.0f;
-            for (int i = -radius; i <= radius; ++i) {
-                int sourceY = y + i;
-                if (sourceY >= radius && sourceY < radius + H) {
-                    value += horizontal[static_cast<size_t>(sourceY) * paddedW + x] *
-                             gaussian[i + radius];
-                }
-            }
-            blurred[static_cast<size_t>(y) * paddedW + x] = value;
-        }
-    }
+        return value;
+    };
 
-    float originMax = heatmap[0];
-    for (int i = 1; i < H * W; ++i) originMax = std::max(originMax, heatmap[i]);
-    float blurredMax = 0.0f;
-    for (int y = 0; y < H; ++y)
-        for (int x = 0; x < W; ++x)
-            blurredMax = std::max(blurredMax,
-                                  blurred[static_cast<size_t>(y + radius) * paddedW + x + radius]);
-    const float scale = blurredMax > 0.0f ? originMax / blurredMax : 1.0f;
     auto logBlurred = [&](int x, int y) {
-        float value = blurred[static_cast<size_t>(y + radius) * paddedW + x + radius] * scale;
-        return std::log(std::max(value, 1e-10f));
+        return std::log(std::max(blurredAt(x, y), 1e-10f));
     };
 
     float gx  = (logBlurred(px + 1, py) - logBlurred(px - 1, py)) * 0.5f;
@@ -465,7 +451,7 @@ void HRNetPoseEstimatorInfer::DarkRefine(const float* heatmap, int H, int W,
 // ---------------------------------------------------------------------------
 
 void HRNetPoseEstimatorInfer::DecodeHeatmaps(const float* heatmaps, int K, int H, int W,
-                                             Keypoint2D out[kProjectKeypointCount]) const {
+                                             Keypoint2D out[kProjectKeypointCount]) {
     const int* wbMap = GetWholebodyToProject26();
     const size_t planeSize = static_cast<size_t>(H) * W;
 

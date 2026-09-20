@@ -79,7 +79,7 @@ private:
     void DarkRefine(const float* heatmap, int H, int W,
                     int px, int py, float& outX, float& outY) const;
     void DecodeHeatmaps(const float* heatmaps, int K, int H, int W,
-                        Keypoint2D out[kProjectKeypointCount]) const;
+                        Keypoint2D out[kProjectKeypointCount]);
 
     Param m_param;
     std::unique_ptr<inference::IInferenceEngine> m_engine;
@@ -89,6 +89,7 @@ private:
     std::vector<float> m_inputHost;
     std::vector<float> m_outputHost;
     std::vector<float> m_flipOutputHost;
+    std::vector<float> m_darkGaussian;
 };
 
 } // namespace pose
