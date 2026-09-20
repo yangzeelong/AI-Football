@@ -6,12 +6,15 @@
 
 #include <aifootball/AIFootball.hpp>
 #include <nexusflow/Logging.hpp>
+#include <nexusflow/TimerRegistry.hpp>
 
 #include <algorithm>
 #include <atomic>
 #include <csignal>
 #include <cstdint>
 #include <exception>
+#include <iomanip>
+#include <iostream>
 #include <string>
 
 namespace {
@@ -29,6 +32,7 @@ struct RunOptions {
     int stride = 1;
     int deviceId = 0;
     bool render = false;
+    bool profileTimers = false;
 };
 
 struct DemoResources {
@@ -50,7 +54,36 @@ RunOptions ReadOptions(const app::CommandParser& cli) {
     options.stride = std::max(1, cli.GetInt("stride", 1));
     options.deviceId = cli.GetInt("device", 0);
     options.render = cli.IsFlagSet("render");
+    options.profileTimers = cli.IsFlagSet("profile_timers");
     return options;
+}
+
+void PrintTimerSnapshot() {
+    auto stats = nexusflow::TimerRegistry::Instance().Snapshot();
+    std::sort(stats.begin(), stats.end(), [](const auto& lhs, const auto& rhs) {
+        return lhs.totalMs > rhs.totalMs;
+    });
+
+    std::cout << "\nTimer profile:\n";
+    std::cout << std::left << std::setw(32) << "name"
+              << std::right << std::setw(10) << "samples"
+              << std::setw(12) << "work"
+              << std::setw(14) << "avg_ms"
+              << std::setw(14) << "item_ms"
+              << std::setw(14) << "total_ms"
+              << std::setw(12) << "min_ms"
+              << std::setw(12) << "max_ms" << '\n';
+    std::cout << std::fixed << std::setprecision(3);
+    for (const auto& item : stats) {
+        std::cout << std::left << std::setw(32) << item.name
+                  << std::right << std::setw(10) << item.samples
+                  << std::setw(12) << item.workUnits
+                  << std::setw(14) << item.AvgBatchMs()
+                  << std::setw(14) << item.AvgItemMs()
+                  << std::setw(14) << item.totalMs
+                  << std::setw(12) << item.minMs
+                  << std::setw(12) << item.maxMs << '\n';
+    }
 }
 
 bool PrepareResources(const RunOptions& options, DemoResources& resources) {
@@ -209,6 +242,7 @@ int RunDemo(const RunOptions& options) {
             LOG_ERROR("Failed to deinitialize AI-Football SDK pipeline");
             return 2;
         }
+        if (options.profileTimers) PrintTimerSnapshot();
         LOG_INFO("AI-Football SDK demo processed {} frames, observations='{}'",
                  processedFrames, resources.observationsPath);
         return 0;
@@ -237,6 +271,8 @@ int main(int argc, char* argv[]) {
     cli.AddArgument("--verbose", "-V", "Enable DEBUG-level logging", false,
                     app::CommandParser::FlagMarker());
     cli.AddArgument("--quiet", "-q", "Suppress INFO-level logging", false,
+                    app::CommandParser::FlagMarker());
+    cli.AddArgument("--profile_timers", "", "Print internal timer profile at exit", false,
                     app::CommandParser::FlagMarker());
     if (!cli.Parse()) {
         cli.PrintHelp();
