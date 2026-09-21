@@ -4,6 +4,7 @@
 #include "inference/IInferenceEngine.hpp"
 
 #include <memory>
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -63,6 +64,16 @@ public:
                     std::vector<PersonPose>& results);
 
 private:
+    struct HostFloatBuffer {
+        std::vector<float> fallback;
+        float* pinned = nullptr;
+        size_t size = 0;
+        bool usingPinned = false;
+
+        float* Data() { return usingPinned ? pinned : fallback.data(); }
+        const float* Data() const { return usingPinned ? pinned : fallback.data(); }
+    };
+
     struct CropTransform {
         float centerX = 0.0f;
         float centerY = 0.0f;
@@ -80,15 +91,18 @@ private:
                     int px, int py, float& outX, float& outY) const;
     void DecodeHeatmaps(const float* heatmaps, int K, int H, int W,
                         Keypoint2D out[kProjectKeypointCount]);
+    bool EnsureHostBuffer(HostFloatBuffer& buffer, size_t floats,
+                          const char* name);
+    void ReleaseHostBuffer(HostFloatBuffer& buffer);
 
     Param m_param;
     std::unique_ptr<inference::IInferenceEngine> m_engine;
     bool m_ready = false;
     int m_effectiveMaxBatch = 1;
 
-    std::vector<float> m_inputHost;
-    std::vector<float> m_outputHost;
-    std::vector<float> m_flipOutputHost;
+    HostFloatBuffer m_inputHost;
+    HostFloatBuffer m_outputHost;
+    HostFloatBuffer m_flipOutputHost;
     std::vector<float> m_darkGaussian;
     std::vector<int> m_sampleX0;
     std::vector<int> m_sampleY0;

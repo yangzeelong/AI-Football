@@ -1,5 +1,6 @@
 .*
 build
+build-*
 install/
 !README.md
 !.clang-format

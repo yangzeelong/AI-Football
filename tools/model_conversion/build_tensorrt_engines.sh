@@ -82,7 +82,7 @@ case "$kind" in
     if [[ "$has_dynamic_batch" -eq 1 ]]; then
       common+=(
         --minShapes=images:1x3x384x288
-        --optShapes=images:4x3x384x288
+        --optShapes=images:"${max_batch}"x3x384x288
         --maxShapes=images:"${max_batch}"x3x384x288
       )
     fi
@@ -91,7 +91,7 @@ case "$kind" in
     if [[ "$has_dynamic_batch" -eq 1 ]]; then
       common+=(
         --minShapes=image:1x3x"${input_size}"x"${input_size}"
-        --optShapes=image:1x3x"${input_size}"x"${input_size}"
+        --optShapes=image:"${max_batch}"x3x"${input_size}"x"${input_size}"
         --maxShapes=image:"${max_batch}"x3x"${input_size}"x"${input_size}"
       )
     fi

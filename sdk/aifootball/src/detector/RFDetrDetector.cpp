@@ -105,7 +105,15 @@ ns::ErrorCode RFDetrDetector::DeInit() {
 
 bool RFDetrDetector::ShouldDrain() const {
     if (m_batchBuffer.empty()) return false;
-    if (static_cast<int>(m_batchBuffer.size()) >= m_batchParam.maxBatchSize) return true;
+    // With multiple inference instances, collect enough frames for one full
+    // batch per instance so InferFrames can dispatch concurrent full chunks.
+    const std::size_t instanceCount = std::max<std::size_t>(
+        1, m_inferPool.size());
+    const std::size_t perInstanceBatch = m_inferPool.empty()
+        ? static_cast<std::size_t>(std::max(1, m_batchParam.maxBatchSize))
+        : static_cast<std::size_t>(std::max(1, m_inferPool.front()->MaxBatch()));
+    const std::size_t batchCapacity = perInstanceBatch * instanceCount;
+    if (m_batchBuffer.size() >= batchCapacity) return true;
     if (m_batchParam.maxRetryNum > 0 && m_framesSinceFlush >= m_batchParam.maxRetryNum) return true;
     if (m_batchParam.batchTimeoutMs <= 0) return false;
 

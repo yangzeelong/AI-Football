@@ -5,6 +5,7 @@
 #include "common/MyMessage.hpp"
 #include "HRNetPoseEstimatorInfer.hpp"
 
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <vector>
@@ -34,13 +35,22 @@ protected:
     void Process(ns::Message& inputMessage) override;
 
 private:
+    struct PendingFrame {
+        TrackedDetectionMessage message;
+        nexusflow::MessageMeta metadata;
+    };
+
     bool InferPersons(
         const std::vector<pose::HRNetPoseEstimatorInfer::PersonInput>& inputs,
         std::vector<PersonPose>& results);
+    void DrainPending();
 
     pose::HRNetPoseEstimatorInfer::Param m_inferParam;
     std::vector<std::unique_ptr<pose::HRNetPoseEstimatorInfer>> m_inferPool;
     int m_instanceCount = 1;
+    int m_batchFrameCount = 4;
+    std::vector<PendingFrame> m_pendingFrames;
+    std::size_t m_pendingPersons = 0;
 };
 
 NEXUSFLOW_REGISTER_MODULE(HRNetPoseEstimator);

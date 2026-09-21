@@ -1,5 +1,4 @@
 #include "HRNetPoseEstimator.hpp"
-#include "common/Defer.hpp"
 #include "common/MyMessage.hpp"
 
 #include <nexusflow/Logging.hpp>
@@ -37,6 +36,7 @@ ns::ErrorCode HRNetPoseEstimator::Configure(const ns::Config& config) {
     m_inferParam.minPadPx          = config.GetValueOrDefault<float>("minPadPx", 12.0f);
     m_inferParam.maxBatch          = config.GetValueOrDefault<int>("maxBatch", 16);
     m_inferParam.maxBatch          = std::max(1, m_inferParam.maxBatch);
+    m_batchFrameCount              = std::max(1, config.GetValueOrDefault<int>("batchFrameCount", 4));
     m_instanceCount                = std::max(1, config.GetValueOrDefault<int>("instanceCount", 1));
     m_inferParam.keypointConfThr   = config.GetValueOrDefault<float>("keypointConfThr", 0.05f);
     m_inferParam.meanR             = config.GetValueOrDefault<float>("meanR", 123.675f);
@@ -46,15 +46,18 @@ ns::ErrorCode HRNetPoseEstimator::Configure(const ns::Config& config) {
     m_inferParam.stdG              = config.GetValueOrDefault<float>("stdG", 57.12f);
     m_inferParam.stdB              = config.GetValueOrDefault<float>("stdB", 57.375f);
 
-    LOG_INFO("HRNetPoseEstimator: engine={}, input={}x{}, K={}, maxBatch={}, instances={}, dark={}, flipTest={}",
+    LOG_INFO("HRNetPoseEstimator: engine={}, input={}x{}, K={}, maxBatch={}, batchFrames={}, instances={}, dark={}, flipTest={}",
              m_inferParam.enginePath, m_inferParam.inputWidth, m_inferParam.inputHeight,
              m_inferParam.numKeypoints, m_inferParam.maxBatch,
-             m_instanceCount, m_inferParam.useDark, m_inferParam.flipTest);
+             m_batchFrameCount, m_instanceCount, m_inferParam.useDark,
+             m_inferParam.flipTest);
     return ns::ErrorCode::SUCCESS;
 }
 
 ns::ErrorCode HRNetPoseEstimator::Init() {
     LOG_TRACE("HRNetPoseEstimator::Init");
+    m_pendingFrames.clear();
+    m_pendingPersons = 0;
 
     if (m_inferParam.enginePath.empty()) {
         LOG_WARN("HRNetPoseEstimator: enginePath empty, poses will be empty");
@@ -80,6 +83,8 @@ ns::ErrorCode HRNetPoseEstimator::Init() {
 
 ns::ErrorCode HRNetPoseEstimator::DeInit() {
     LOG_TRACE("HRNetPoseEstimator::DeInit");
+    m_pendingFrames.clear();
+    m_pendingPersons = 0;
     for (auto& infer : m_inferPool) infer->Release();
     m_inferPool.clear();
     return ns::ErrorCode::SUCCESS;
@@ -100,62 +105,115 @@ void HRNetPoseEstimator::Process(ns::Message& inputMessage) {
         return;
     }
 
-    PoseMessage out;
-    out.videoFrame       = trkMsg->videoFrame;
-    out.balls            = trkMsg->balls;
-    out.rejectedBalls    = trkMsg->rejectedBalls;
-    out.rawCounts        = trkMsg->rawCounts;
-    out.filteredCounts   = trkMsg->filteredCounts;
-    out.activeTrackCount = trkMsg->activeTrackCount;
-    out.lostTrackCount   = trkMsg->lostTrackCount;
-    out.isEnd            = trkMsg->isEnd;
-    out.timestamp        = trkMsg->timestamp;
-    out.timestampSec     = trkMsg->timestampSec;
-
-    defer { Broadcast(nexusflow::Message(std::move(out))); };
-
-    if (trkMsg->isEnd) return;
-
-    const auto& vf = trkMsg->videoFrame;
-
-    // Fallback: emit persons with missing keypoints if engine not ready.
-    if (m_inferPool.empty() || !m_inferPool.front()->IsReady() || trkMsg->persons.empty() ||
-        !vf || vf->DataSize() == 0 || vf->width <= 0 || vf->height <= 0 || vf->channels != 3) {
-        for (const auto& d : trkMsg->persons) {
-            PersonPose pp;
-            pp.trackId = d.trackId;
-            pp.x0 = d.x0; pp.y0 = d.y0; pp.x1 = d.x1; pp.y1 = d.y1;
-            pp.detectionConfidence = d.score;
-            out.persons.push_back(pp);
-        }
+    if (trkMsg->isEnd) {
+        DrainPending();
+        PoseMessage out;
+        out.videoFrame = trkMsg->videoFrame;
+        out.isEnd = true;
+        out.timestamp = trkMsg->timestamp;
+        out.timestampSec = trkMsg->timestampSec;
+        Broadcast(nexusflow::Message(std::move(out)));
         return;
     }
 
-    // Build input list for the infer class.
-    const uint8_t* rgb = vf->Data();
-    std::vector<pose::HRNetPoseEstimatorInfer::PersonInput> inputs;
-    inputs.reserve(trkMsg->persons.size());
-    for (const auto& d : trkMsg->persons) {
-        inputs.push_back({rgb, vf->width, vf->height, d.x0, d.y0, d.x1, d.y1, d.trackId, d.score});
-    }
+    PendingFrame pending;
+    pending.message = std::move(*trkMsg);
+    pending.metadata = inputMessage.GetMetaData();
+    m_pendingPersons += pending.message.persons.size();
+    m_pendingFrames.push_back(std::move(pending));
 
-    // Run inference.
-    std::vector<PersonPose> results;
-    if (InferPersons(inputs, results)) {
-        out.persons = std::move(results);
-    } else {
-        // Fallback on failure.
-        for (const auto& d : trkMsg->persons) {
-            PersonPose pp;
-            pp.trackId = d.trackId;
-            pp.x0 = d.x0; pp.y0 = d.y0; pp.x1 = d.x1; pp.y1 = d.y1;
-            pp.detectionConfidence = d.score;
-            out.persons.push_back(pp);
+    // Gather enough work for one batch per inference instance. This keeps the
+    // instance pool useful instead of draining at the single-instance limit
+    // and splitting the work into undersized chunks.
+    const std::size_t instanceCount = std::max<std::size_t>(
+        1, m_inferPool.size());
+    const std::size_t effectiveBatch = m_inferPool.empty()
+        ? 1 : static_cast<std::size_t>(std::max(1, m_inferPool.front()->MaxBatch()));
+    const std::size_t frameCapacity =
+        static_cast<std::size_t>(m_batchFrameCount) * instanceCount;
+    const std::size_t personCapacity = effectiveBatch * instanceCount;
+    if (m_pendingFrames.size() >= frameCapacity ||
+        m_pendingPersons >= personCapacity) {
+        DrainPending();
+    }
+}
+
+void HRNetPoseEstimator::DrainPending() {
+    if (m_pendingFrames.empty()) return;
+
+    std::vector<PendingFrame> pending;
+    pending.swap(m_pendingFrames);
+    m_pendingPersons = 0;
+
+    std::vector<pose::HRNetPoseEstimatorInfer::PersonInput> inputs;
+    std::vector<std::pair<std::size_t, std::size_t>> inputOwners;
+    inputs.reserve(32);
+    inputOwners.reserve(32);
+    for (std::size_t frameIndex = 0; frameIndex < pending.size(); ++frameIndex) {
+        const auto& frame = pending[frameIndex].message;
+        const auto& videoFrame = frame.videoFrame;
+        if (!videoFrame || videoFrame->DataSize() == 0 || videoFrame->width <= 0 ||
+            videoFrame->height <= 0 || videoFrame->channels != 3) {
+            continue;
+        }
+        for (std::size_t personIndex = 0;
+             personIndex < frame.persons.size(); ++personIndex) {
+            const auto& person = frame.persons[personIndex];
+            inputs.push_back({videoFrame->Data(), videoFrame->width,
+                              videoFrame->height, person.x0, person.y0,
+                              person.x1, person.y1, person.trackId, person.score});
+            inputOwners.emplace_back(frameIndex, personIndex);
         }
     }
 
-    LOG_DEBUG("HRNetPoseEstimator: frame={} persons={}",
-              vf ? vf->frameId : 0, out.persons.size());
+    std::vector<PersonPose> results;
+    const bool inferred = !inputs.empty() && !m_inferPool.empty() &&
+                          m_inferPool.front()->IsReady() &&
+                          InferPersons(inputs, results) &&
+                          results.size() == inputs.size();
+
+    std::vector<std::vector<PersonPose>> frameResults(pending.size());
+    if (inferred) {
+        for (std::size_t i = 0; i < results.size(); ++i) {
+            frameResults[inputOwners[i].first].push_back(std::move(results[i]));
+        }
+    }
+
+    for (std::size_t frameIndex = 0; frameIndex < pending.size(); ++frameIndex) {
+        const auto& frame = pending[frameIndex].message;
+        PoseMessage out;
+        out.videoFrame = frame.videoFrame;
+        out.balls = frame.balls;
+        out.rejectedBalls = frame.rejectedBalls;
+        out.rawCounts = frame.rawCounts;
+        out.filteredCounts = frame.filteredCounts;
+        out.activeTrackCount = frame.activeTrackCount;
+        out.lostTrackCount = frame.lostTrackCount;
+        out.timestamp = frame.timestamp;
+        out.timestampSec = frame.timestampSec;
+        if (inferred) {
+            out.persons = std::move(frameResults[frameIndex]);
+        } else {
+            for (const auto& person : frame.persons) {
+                PersonPose pose;
+                pose.trackId = person.trackId;
+                pose.x0 = person.x0;
+                pose.y0 = person.y0;
+                pose.x1 = person.x1;
+                pose.y1 = person.y1;
+                pose.detectionConfidence = person.score;
+                out.persons.push_back(std::move(pose));
+            }
+        }
+
+        nexusflow::Message output(std::move(out));
+        output.MetaData() = pending[frameIndex].metadata;
+        Broadcast(output);
+        LOG_DEBUG("HRNetPoseEstimator: frame={} persons={}",
+                  frame.videoFrame ? frame.videoFrame->frameId : 0,
+                  frame.persons.size());
+    }
+
 }
 
 bool HRNetPoseEstimator::InferPersons(

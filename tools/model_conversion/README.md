@@ -84,6 +84,11 @@ tools/model_conversion/build_tensorrt_engines.sh rfdetr \
   --input-size 960 --max-batch 4
 ```
 
+The engine builder optimizes the TensorRT profile at `max-batch`, not batch 1.
+This is the project performance baseline: all throughput comparisons must use
+a dynamic-batch engine whose requested batch is actually aggregated by the
+caller. Static batch-1 engines are useful only for diagnostic comparisons.
+
 The dynamic RF-DETR exporter also replaces two shape constructions from the
 installed RF-DETR package that are traced as batch-1 constants by the legacy
 TorchScript exporter. This keeps the generated graph valid when TensorRT

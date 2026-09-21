@@ -4,6 +4,10 @@
 #include <nexusflow/Logging.hpp>
 #include <nexusflow/TimerRegistry.hpp>
 
+#ifdef WITH_CUDA
+#include <cuda_runtime_api.h>
+#endif
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -97,9 +101,16 @@ bool HRNetPoseEstimatorInfer::Init(const Param& param) {
     // Pre-allocate host buffers for max batch.
     const size_t perPersonInput  = static_cast<size_t>(3) * m_param.inputHeight * m_param.inputWidth;
     const size_t perPersonOutput = static_cast<size_t>(K) * H * W;
-    m_inputHost.assign(perPersonInput * m_effectiveMaxBatch, 0.0f);
-    m_outputHost.assign(perPersonOutput * m_effectiveMaxBatch, 0.0f);
-    m_flipOutputHost.assign(perPersonOutput * m_effectiveMaxBatch, 0.0f);
+    if (!EnsureHostBuffer(m_inputHost, perPersonInput * m_effectiveMaxBatch,
+                          "PoseEstimator.InputHost") ||
+        !EnsureHostBuffer(m_outputHost, perPersonOutput * m_effectiveMaxBatch,
+                          "PoseEstimator.OutputHost") ||
+        !EnsureHostBuffer(m_flipOutputHost,
+                          perPersonOutput * m_effectiveMaxBatch,
+                          "PoseEstimator.FlipOutputHost")) {
+        Release();
+        return false;
+    }
     m_sampleX0.resize(m_param.inputWidth);
     m_sampleWx.resize(m_param.inputWidth);
     m_sampleY0.resize(m_param.inputHeight);
@@ -130,15 +141,60 @@ bool HRNetPoseEstimatorInfer::Init(const Param& param) {
 void HRNetPoseEstimatorInfer::Release() {
     if (m_engine) { m_engine->Release(); m_engine.reset(); }
     m_ready = false;
-    m_inputHost.clear();
-    m_outputHost.clear();
-    m_flipOutputHost.clear();
+    ReleaseHostBuffer(m_inputHost);
+    ReleaseHostBuffer(m_outputHost);
+    ReleaseHostBuffer(m_flipOutputHost);
     m_darkGaussian.clear();
     m_sampleX0.clear();
     m_sampleWx.clear();
     m_sampleY0.clear();
     m_sampleWy.clear();
     m_effectiveMaxBatch = 1;
+}
+
+bool HRNetPoseEstimatorInfer::EnsureHostBuffer(HostFloatBuffer& buffer,
+                                               size_t floats,
+                                               const char* name) {
+    if (floats == 0) return false;
+    if (buffer.size >= floats && buffer.Data() != nullptr) return true;
+
+    ReleaseHostBuffer(buffer);
+#ifdef WITH_CUDA
+    void* allocated = nullptr;
+    const size_t bytes = floats * sizeof(float);
+    if (cudaHostAlloc(&allocated, bytes, cudaHostAllocDefault) == cudaSuccess) {
+        buffer.pinned = static_cast<float*>(allocated);
+        buffer.size = floats;
+        buffer.usingPinned = true;
+        LOG_DEBUG("HRNetPoseEstimatorInfer: allocated pinned host buffer '{}' ({} bytes)",
+                  name, bytes);
+        return true;
+    }
+    LOG_WARN("HRNetPoseEstimatorInfer: pinned host allocation failed for '{}'; using pageable memory",
+             name);
+#endif
+    try {
+        buffer.fallback.assign(floats, 0.0f);
+    } catch (const std::exception& error) {
+        LOG_ERROR("HRNetPoseEstimatorInfer: host allocation failed for '{}': {}",
+                  name, error.what());
+        return false;
+    }
+    buffer.size = floats;
+    buffer.usingPinned = false;
+    return true;
+}
+
+void HRNetPoseEstimatorInfer::ReleaseHostBuffer(HostFloatBuffer& buffer) {
+#ifdef WITH_CUDA
+    if (buffer.usingPinned && buffer.pinned != nullptr) {
+        cudaFreeHost(buffer.pinned);
+    }
+#endif
+    buffer.pinned = nullptr;
+    buffer.size = 0;
+    buffer.usingPinned = false;
+    buffer.fallback.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -172,7 +228,7 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
             ExpandPoseBox(x0, y0, x1, y1, p.frameW, p.frameH);
             crops[i] = MakeCropTransform(x0, y0, x1, y1);
             PreprocessCrop(p.frameRgb, p.frameW, p.frameH, crops[i],
-                           m_inputHost.data() + i * perPersonInput);
+                           m_inputHost.Data() + i * perPersonInput);
         }
     }
 
@@ -183,9 +239,9 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
     const int engineBatch = combineFlipBatch ? 2 * B : B;
     if (combineFlipBatch) {
         for (int i = 0; i < B; ++i) {
-            float* flippedInput = m_inputHost.data() + static_cast<size_t>(B + i) * perPersonInput;
+            float* flippedInput = m_inputHost.Data() + static_cast<size_t>(B + i) * perPersonInput;
             std::memcpy(flippedInput,
-                        m_inputHost.data() + static_cast<size_t>(i) * perPersonInput,
+                        m_inputHost.Data() + static_cast<size_t>(i) * perPersonInput,
                         perPersonInput * sizeof(float));
             FlipInput(flippedInput);
         }
@@ -198,7 +254,7 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
     {
         TIMER_SCOPE_AVERAGE_MS("PoseEstimator.TensorRT", static_cast<uint64_t>(engineBatch), 5000);
         if (!m_engine->SetInputFromHost(m_param.inputBindingName,
-                                        m_inputHost.data(), batchInputBytes, batchDims)) {
+                                        m_inputHost.Data(), batchInputBytes, batchDims)) {
             LOG_ERROR("HRNetPoseEstimatorInfer: SetInputFromHost failed");
             return false;
         }
@@ -207,7 +263,7 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
             return false;
         }
         if (!m_engine->CopyOutputToHost(m_param.outputBindingName,
-                                        m_outputHost.data(),
+                                        m_outputHost.Data(),
                                         static_cast<size_t>(engineBatch) * perPersonOutput * sizeof(float))) {
             LOG_ERROR("HRNetPoseEstimatorInfer: CopyOutputToHost failed");
             return false;
@@ -221,17 +277,17 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
             inference::Dims flipBatchDims(B, 3, m_param.inputHeight, m_param.inputWidth);
             const size_t flipBatchInputBytes = static_cast<size_t>(B) * perPersonInput * sizeof(float);
             for (int i = 0; i < B; ++i) {
-                FlipInput(m_inputHost.data() + static_cast<size_t>(i) * perPersonInput);
+                FlipInput(m_inputHost.Data() + static_cast<size_t>(i) * perPersonInput);
             }
             TIMER_SCOPE_AVERAGE_MS("PoseEstimator.TensorRTFlip", static_cast<uint64_t>(B), 5000);
             if (!m_engine->SetInputFromHost(m_param.inputBindingName,
-                                            m_inputHost.data(), flipBatchInputBytes, flipBatchDims) ||
+                                            m_inputHost.Data(), flipBatchInputBytes, flipBatchDims) ||
                 !m_engine->Infer()) {
                 LOG_ERROR("HRNetPoseEstimatorInfer: flipped inference failed");
                 return false;
             }
             if (!m_engine->CopyOutputToHost(m_param.outputBindingName,
-                                            m_flipOutputHost.data(),
+                                            m_flipOutputHost.Data(),
                                             B * perPersonOutput * sizeof(float))) {
                 LOG_ERROR("HRNetPoseEstimatorInfer: flipped output copy failed");
                 return false;
@@ -252,10 +308,10 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
             102, 103, 104, 105, 106, 107, 108, 109, 110, 111
         };
         for (int i = 0; i < B; ++i) {
-            float* orig = m_outputHost.data() + i * perPersonOutput;
+            float* orig = m_outputHost.Data() + i * perPersonOutput;
             const float* flipped = combineFlipBatch
-                ? m_outputHost.data() + static_cast<size_t>(B + i) * perPersonOutput
-                : m_flipOutputHost.data() + static_cast<size_t>(i) * perPersonOutput;
+                ? m_outputHost.Data() + static_cast<size_t>(B + i) * perPersonOutput
+                : m_flipOutputHost.Data() + static_cast<size_t>(i) * perPersonOutput;
             const int H = m_param.heatmapHeight;
             const int W = m_param.heatmapWidth;
             if (m_param.numKeypoints > 133) {
@@ -283,7 +339,7 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
         TIMER_SCOPE_AVERAGE_MS("PoseEstimator.Postprocess", static_cast<uint64_t>(B), 5000);
         results.resize(B);
         for (int i = 0; i < B; ++i) {
-        const float* hm = m_outputHost.data() + i * perPersonOutput;
+        const float* hm = m_outputHost.Data() + i * perPersonOutput;
         PersonPose& pp = results[i];
 
         pp.trackId = persons[i].trackId;

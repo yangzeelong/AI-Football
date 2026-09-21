@@ -16,7 +16,7 @@ graph:
     - name: Detector
       class: RFDetrDetector
       config:
-        enginePath: /home/hx1/yzl/Work/AI-Football/models/rfdetr/rf-detr-small-960-b4.engine
+        enginePath: /home/hx1/yzl/Work/AI-Football/models/rfdetr/rf-detr-small-960-b4-opt4.engine
         inputBindingName: image
         outputBindingName: detections    # baked [B,N,6]; auto-detected if absent
         logitsBindingName: pred_logits   # raw format fallback
@@ -79,7 +79,8 @@ graph:
         yPadRatio: 0.25
         minPadPx: 12.0
         maxBatch: 16
-        instanceCount: 1                 # Each instance owns a TRT context/stream and GPU buffers
+        batchFrameCount: 4             # Aggregate detector frames before pose inference
+        instanceCount: 2                 # Each instance owns a TRT context/stream and GPU buffers
         keypointConfThr: 0.05
         # ImageNet normalization (0..255 scale)
         meanR: 123.675
