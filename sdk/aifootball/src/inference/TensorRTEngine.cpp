@@ -355,6 +355,26 @@ bool TensorRTEngine::EnsureOutputBuffer(const std::string& name, size_t bytes) {
 bool TensorRTEngine::CopyOutputToHost(const std::string& name,
                                       void* hostPtr,
                                       size_t bytes) {
+    if (!EnqueueOutputCopy(name, hostPtr, bytes)) return false;
+    cudaStreamSynchronize(m_stream);
+    return true;
+}
+
+bool TensorRTEngine::CopyOutputsToHost(const std::vector<HostCopy>& copies) {
+    if (copies.empty()) return true;
+
+    // Enqueue every transfer first, then synchronize once. Multi-output models
+    // would otherwise pay a full device drain per tensor.
+    for (const HostCopy& copy : copies) {
+        if (!EnqueueOutputCopy(copy.name, copy.hostPtr, copy.bytes)) return false;
+    }
+    cudaStreamSynchronize(m_stream);
+    return true;
+}
+
+bool TensorRTEngine::EnqueueOutputCopy(const std::string& name,
+                                       void* hostPtr,
+                                       size_t bytes) {
     auto it = m_outputBuffers.find(name);
     if (it == m_outputBuffers.end() || !it->second.devicePtr) return false;
     if (bytes > it->second.sizeBytes) {
@@ -362,12 +382,8 @@ bool TensorRTEngine::CopyOutputToHost(const std::string& name,
                   name, bytes, it->second.sizeBytes);
         return false;
     }
-    if (cudaMemcpyAsync(hostPtr, it->second.devicePtr, bytes,
-                        cudaMemcpyDeviceToHost, m_stream) != cudaSuccess) {
-        return false;
-    }
-    cudaStreamSynchronize(m_stream);
-    return true;
+    return cudaMemcpyAsync(hostPtr, it->second.devicePtr, bytes,
+                           cudaMemcpyDeviceToHost, m_stream) == cudaSuccess;
 }
 
 // ---------------------------------------------------------------------------
@@ -423,6 +439,8 @@ void* TensorRTEngine::PrepareInputDevice(const std::string&, size_t, const Dims&
 void* TensorRTEngine::GetCudaStream() const { return nullptr; }
 bool TensorRTEngine::Infer() { return false; }
 bool TensorRTEngine::CopyOutputToHost(const std::string&, void*, size_t) { return false; }
+bool TensorRTEngine::CopyOutputsToHost(const std::vector<HostCopy>&) { return false; }
+bool TensorRTEngine::EnqueueOutputCopy(const std::string&, void*, size_t) { return false; }
 
 #endif // WITH_TENSORRT
 

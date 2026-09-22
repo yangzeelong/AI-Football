@@ -160,6 +160,31 @@ public:
     virtual bool CopyOutputToHost(const std::string& name,
                                   void* hostPtr,
                                   size_t bytes) = 0;
+
+    /// One host copy request for CopyOutputsToHost().
+    struct HostCopy {
+        std::string name;
+        void* hostPtr = nullptr;
+        size_t bytes = 0;
+    };
+
+    /**
+     * @brief Copy several output tensors to host with a single synchronization.
+     *
+     * Models with more than one output (RF-DETR emits `pred_boxes` and
+     * `pred_logits`) otherwise pay one device synchronization per tensor. The
+     * default implementation keeps per-tensor behavior for backends that
+     * cannot batch the transfers; TensorRT enqueues every copy on its stream
+     * and synchronizes once.
+     */
+    virtual bool CopyOutputsToHost(const std::vector<HostCopy>& copies) {
+        for (const HostCopy& copy : copies) {
+            if (!CopyOutputToHost(copy.name, copy.hostPtr, copy.bytes)) {
+                return false;
+            }
+        }
+        return true;
+    }
 };
 
 } // namespace inference

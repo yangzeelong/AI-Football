@@ -293,13 +293,13 @@ bool RFDetrDetectorInfer::InferBatch(const std::vector<FrameInput>& frames,
 
             if (i == 0) {
                 TIMER_SCOPE_AVERAGE_MS("Detector.CopyOutput", static_cast<uint64_t>(B), 5000);
-                bool okL = m_engine->CopyOutputToHost(m_param.logitsBindingName,
-                                                      m_logitsHost.Data(),
-                                                      totalLogits * sizeof(float));
-                bool okB = m_engine->CopyOutputToHost(m_param.boxesBindingName,
-                                                      m_boxesHost.Data(),
-                                                      totalBoxes * sizeof(float));
-                if (!okL || !okB) {
+                // Both tensors travel on one stream sync; RF-DETR has no reason
+                // to drain the device once per output tensor.
+                if (!m_engine->CopyOutputsToHost(
+                        {{m_param.logitsBindingName, m_logitsHost.Data(),
+                          totalLogits * sizeof(float)},
+                         {m_param.boxesBindingName, m_boxesHost.Data(),
+                          totalBoxes * sizeof(float)}})) {
                     LOG_ERROR("RFDetrDetectorInfer: failed to copy raw batch outputs");
                     return false;
                 }

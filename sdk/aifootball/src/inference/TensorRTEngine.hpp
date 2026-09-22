@@ -69,6 +69,7 @@ public:
     bool CopyOutputToHost(const std::string& name,
                           void* hostPtr,
                           size_t bytes) override;
+    bool CopyOutputsToHost(const std::vector<HostCopy>& copies) override;
 
 private:
 #ifdef WITH_TENSORRT
@@ -80,6 +81,8 @@ private:
     bool CreateContext();
     bool EnsureInputBuffer(const std::string& name, size_t bytes);
     bool EnsureOutputBuffer(const std::string& name, size_t bytes);
+    /// Validate and enqueue one device-to-host copy without synchronizing.
+    bool EnqueueOutputCopy(const std::string& name, void* hostPtr, size_t bytes);
 
     static Dims     ConvertDims(const nvinfer1::Dims& trtDims);
     static DataType ConvertDType(nvinfer1::DataType trtType);
