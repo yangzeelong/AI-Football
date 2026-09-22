@@ -26,6 +26,11 @@ public:
     bool Write(const aifootball::ProcessResult& result);
     void Close();
 
+    /// Outline the algorithm ROI on every frame. Points are in ROI context
+    /// coordinates (roi.width x roi.height) and are mapped onto the frame, the
+    /// same way the tracker maps detections into ROI space.
+    void SetRoi(const aifootball::RoiContext& roi);
+
 private:
     bool InitializeEncoder();
     bool EncodeFrame(std::string& rgb);
@@ -33,6 +38,7 @@ private:
     void FinalizeEncoder();
     void CleanupEncoder();
     static void DrawOverlay(std::string& rgb, int width, int height,
+                            const aifootball::RoiContext& roi,
                             const aifootball::ProcessResult& result);
 
     struct CachedFrame {
@@ -47,6 +53,7 @@ private:
     bool m_headerWritten = false;
     bool m_encoderFailed = false;
     std::string m_outputPath;
+    aifootball::RoiContext m_roi;
     double m_fps = 25.0;
     int m_width = 0;
     int m_height = 0;

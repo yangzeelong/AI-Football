@@ -164,6 +164,9 @@ bool PrepareResources(const RunOptions& options,
         LOG_ERROR("Failed to initialize video renderer '{}'", renderPath);
         return false;
     }
+    // Same polygon the tracker filters against, so the overlay shows what the
+    // pipeline actually kept.
+    resources.renderer.SetRoi(config.Context().roi);
     return true;
 }
 

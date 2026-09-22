@@ -15,8 +15,10 @@ extern "C" {
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <utility>
+#include <vector>
 
 namespace aifootball_app {
 namespace {
@@ -73,6 +75,94 @@ void DrawRect(std::string& image, int width, int height, float x0, float y0,
     DrawLine(image, width, height, right, top, right, bottom, r, g, b);
     DrawLine(image, width, height, right, bottom, left, bottom, r, g, b);
     DrawLine(image, width, height, left, bottom, left, top, r, g, b);
+}
+
+/// 5x7 dot matrix glyph, one byte per column with bit 0 on the top row. Only
+/// the characters the overlay labels use are listed; DrawGlyph skips the rest.
+struct Glyph {
+    char character;
+    uint8_t columns[5];
+};
+
+const Glyph kFont[] = {
+    {' ', {0x00, 0x00, 0x00, 0x00, 0x00}},
+    {'.', {0x00, 0x60, 0x60, 0x00, 0x00}},
+    {'=', {0x14, 0x14, 0x14, 0x14, 0x14}},
+    {'0', {0x3E, 0x51, 0x49, 0x45, 0x3E}},
+    {'1', {0x00, 0x42, 0x7F, 0x40, 0x00}},
+    {'2', {0x42, 0x61, 0x51, 0x49, 0x46}},
+    {'3', {0x21, 0x41, 0x45, 0x4B, 0x31}},
+    {'4', {0x18, 0x14, 0x12, 0x7F, 0x10}},
+    {'5', {0x27, 0x45, 0x45, 0x45, 0x39}},
+    {'6', {0x3C, 0x4A, 0x49, 0x49, 0x30}},
+    {'7', {0x01, 0x71, 0x09, 0x05, 0x03}},
+    {'8', {0x36, 0x49, 0x49, 0x49, 0x36}},
+    {'9', {0x06, 0x49, 0x49, 0x29, 0x1E}},
+    {'a', {0x20, 0x54, 0x54, 0x54, 0x78}},
+    {'b', {0x7F, 0x48, 0x44, 0x44, 0x38}},
+    {'c', {0x38, 0x44, 0x44, 0x44, 0x20}},
+    {'d', {0x38, 0x44, 0x44, 0x48, 0x7F}},
+    {'e', {0x38, 0x54, 0x54, 0x54, 0x18}},
+    {'i', {0x00, 0x44, 0x7D, 0x40, 0x00}},
+    {'l', {0x00, 0x41, 0x7F, 0x40, 0x00}},
+    {'n', {0x7C, 0x08, 0x04, 0x04, 0x78}},
+    {'o', {0x38, 0x44, 0x44, 0x44, 0x38}},
+    {'p', {0x7C, 0x14, 0x14, 0x14, 0x08}},
+    {'r', {0x7C, 0x08, 0x04, 0x04, 0x08}},
+    {'s', {0x48, 0x54, 0x54, 0x54, 0x20}},
+    {'t', {0x04, 0x3F, 0x44, 0x40, 0x20}},
+    {'v', {0x1C, 0x20, 0x40, 0x20, 0x1C}},
+};
+
+void DrawText(std::string& image, int width, int height, const char* text,
+              int x, int y, int scale, uint8_t r, uint8_t g, uint8_t b) {
+    int cursor = x;
+    for (const char* ch = text; ch != nullptr && *ch != '\0'; ++ch) {
+        for (const auto& glyph : kFont) {
+            if (glyph.character != *ch) continue;
+            for (int column = 0; column < 5; ++column) {
+                const uint8_t bits = glyph.columns[column];
+                for (int row = 0; row < 7; ++row) {
+                    if ((bits & (1u << row)) == 0) continue;
+                    for (int dy = 0; dy < scale; ++dy) {
+                        for (int dx = 0; dx < scale; ++dx) {
+                            SetPixel(image, width, height,
+                                     cursor + column * scale + dx,
+                                     y + row * scale + dy, r, g, b);
+                        }
+                    }
+                }
+            }
+            break;
+        }
+        cursor += 6 * scale;  // Five columns plus one of spacing.
+    }
+}
+
+void DrawRoi(std::string& image, int width, int height,
+             const aifootball::RoiContext& roi) {
+    if (!roi.enabled || roi.points.size() < 3) return;
+    const float scaleX = roi.width > 0
+        ? static_cast<float>(width) / static_cast<float>(roi.width) : 1.0f;
+    const float scaleY = roi.height > 0
+        ? static_cast<float>(height) / static_cast<float>(roi.height) : 1.0f;
+    std::vector<std::pair<int, int>> polygon;
+    polygon.reserve(roi.points.size());
+    for (const auto& point : roi.points) {
+        polygon.push_back(std::make_pair(
+            static_cast<int>(std::lround(point.x * scaleX)),
+            static_cast<int>(std::lround(point.y * scaleY))));
+    }
+    for (std::size_t i = 0; i < polygon.size(); ++i) {
+        const std::pair<int, int>& from = polygon[i];
+        const std::pair<int, int>& to = polygon[(i + 1) % polygon.size()];
+        DrawLine(image, width, height, from.first, from.second, to.first,
+                 to.second, 0, 255, 255);
+    }
+    for (const auto& vertex : polygon) {
+        DrawPoint(image, width, height, vertex.first, vertex.second, 5, 0, 255,
+                  255);
+    }
 }
 
 void DrawPose(std::string& image, int width, int height,
@@ -167,7 +257,7 @@ bool VideoRenderer::Write(const aifootball::ProcessResult& result) {
     std::string rendered = cached.owner
         ? std::string(reinterpret_cast<const char*>(cached.data), cached.bytes)
         : std::move(cached.ownedCopy);
-    DrawOverlay(rendered, m_width, m_height, result);
+    DrawOverlay(rendered, m_width, m_height, m_roi, result);
     if (!EncodeFrame(rendered)) {
         m_encoderFailed = true;
         LOG_ERROR("VideoRenderer: rendering disabled after encoding failure");
@@ -248,19 +338,50 @@ bool VideoRenderer::InitializeEncoder() {
     return true;
 }
 
+void VideoRenderer::SetRoi(const aifootball::RoiContext& roi) {
+    m_roi = roi;
+    LOG_INFO("VideoRenderer: ROI {} with {} point(s)",
+             roi.enabled ? "enabled" : "disabled", roi.points.size());
+}
+
 void VideoRenderer::DrawOverlay(
     std::string& rgb, int width, int height,
+    const aifootball::RoiContext& roi,
     const aifootball::ProcessResult& result) {
+    DrawRoi(rgb, width, height, roi);
     for (const auto& person : result.persons) {
         DrawRect(rgb, width, height, person.bbox[0], person.bbox[1],
                  person.bbox[2], person.bbox[3], 50, 230, 80);
         DrawPose(rgb, width, height, person);
     }
     for (const auto& ball : result.balls) {
-        DrawRect(rgb, width, height, ball.bbox[0], ball.bbox[1],
-                 ball.bbox[2], ball.bbox[3], 255, 80, 40);
-        DrawPoint(rgb, width, height, static_cast<int>(std::lround(ball.center[0])),
-                  static_cast<int>(std::lround(ball.center[1])), 5, 255, 80, 40);
+        const int cx = static_cast<int>(std::lround(ball.center[0]));
+        const int cy = static_cast<int>(std::lround(ball.center[1]));
+        if (ball.trackId >= 0) {
+            // The tracked ball carries the marker the Python renderer uses: a
+            // filled circle labelled with its ID and state, orange while
+            // observed and blue once it is only predicted.
+            const bool observed =
+                ball.state == aifootball::BallTrackState::Observed;
+            const uint8_t blue = observed ? 40 : 255;
+            DrawPoint(rgb, width, height, cx, cy, 8, 255, 80, blue);
+            char label[48] = {};
+            std::snprintf(label, sizeof(label), "ball id=%d %s", ball.trackId,
+                          observed ? "observed" : "predicted");
+            DrawText(rgb, width, height, label, cx + 12,
+                     std::max(0, cy - 20), 2, 255, 80, blue);
+            continue;
+        }
+        // A candidate the tracker did not follow: box plus confidence, so it
+        // is never read as the tracked ball.
+        DrawRect(rgb, width, height, ball.bbox[0], ball.bbox[1], ball.bbox[2],
+                 ball.bbox[3], 255, 80, 40);
+        char label[24] = {};
+        std::snprintf(label, sizeof(label), "%.2f", ball.confidence);
+        DrawText(rgb, width, height, label,
+                 static_cast<int>(std::lround(ball.bbox[0])),
+                 std::max(0, static_cast<int>(std::lround(ball.bbox[1])) - 18),
+                 2, 255, 80, 40);
     }
 }
 
