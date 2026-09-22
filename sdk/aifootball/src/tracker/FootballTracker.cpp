@@ -238,6 +238,9 @@ void FootballTracker::Process(ns::Message& inputMessage) {
     // Public raw_detection_counts follows Python's post-ROI/application
     // detection count. Keep detector-level rawCounts internal to diagnostics.
     out.rawCounts        = smMsg->filteredCounts;
+    out.filteredCounts   = smMsg->filteredCounts;
+    out.detectorCounts   = smMsg->rawCounts;
+    out.rejectedBalls    = smMsg->rejectedBalls;
     out.activeTrackCount = smMsg->activeTrackCount;
     out.lostTrackCount   = smMsg->lostTrackCount;
     out.isEnd            = smMsg->isEnd;
@@ -250,9 +253,10 @@ void FootballTracker::Process(ns::Message& inputMessage) {
     // detections separate until now so the normal ByteTracker filtering and
     // raw count semantics remain unchanged.
     std::vector<Detection> candidates = smMsg->balls;
-    for (const auto& detection : smMsg->rejectedBalls) {
-        if (!IsRescuableBall(detection, *smMsg)) continue;
-        candidates.push_back(detection);
+    for (const auto& rejected : smMsg->rejectedBalls) {
+        if (!IsRescuableBall(rejected.detection, *smMsg)) continue;
+        candidates.push_back(rejected.detection);
+        ++out.rescuedBallCount;
         ++out.rawCounts.total;
         ++out.rawCounts.ball;
     }

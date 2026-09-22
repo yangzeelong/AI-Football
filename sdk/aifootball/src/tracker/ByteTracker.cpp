@@ -405,7 +405,7 @@ void ByteTracker::Process(ns::Message& inputMessage) {
     // Python ROI -> filter order directly.
     std::vector<Detection> personDetections;
     std::vector<Detection> acceptedBalls;
-    std::vector<Detection> rejectedBalls;
+    std::vector<RejectedBall> rejectedBalls;
     personDetections.reserve(detMsg->detections.size());
     acceptedBalls.reserve(detMsg->detections.size());
     rejectedBalls.reserve(detMsg->detections.size());
@@ -429,9 +429,17 @@ void ByteTracker::Process(ns::Message& inputMessage) {
 
         const float width = detection.x1 - detection.x0;
         const float height = detection.y1 - detection.y0;
-        if (detection.score < m_param.ballMinConfidence ||
-            width < m_param.ballMinWidthPx || height < m_param.ballMinHeightPx) {
-            rejectedBalls.push_back(detection);
+        const bool failedConfidence = detection.score < m_param.ballMinConfidence;
+        const bool failedSize =
+            width < m_param.ballMinWidthPx || height < m_param.ballMinHeightPx;
+        if (failedConfidence || failedSize) {
+            // Record which filter rejected it: the debug overlay colours the
+            // box by reason, and the counters feed its filter line.
+            RejectedBall rejected;
+            rejected.detection = detection;
+            rejected.failedConfidence = failedConfidence;
+            rejected.failedSize = failedSize;
+            rejectedBalls.push_back(rejected);
             continue;
         }
         acceptedBalls.push_back(detection);

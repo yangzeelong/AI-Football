@@ -87,6 +87,8 @@ struct Glyph {
 const Glyph kFont[] = {
     {' ', {0x00, 0x00, 0x00, 0x00, 0x00}},
     {'.', {0x00, 0x60, 0x60, 0x00, 0x00}},
+    {':', {0x00, 0x36, 0x36, 0x00, 0x00}},
+    {'+', {0x08, 0x08, 0x3E, 0x08, 0x08}},
     {'=', {0x14, 0x14, 0x14, 0x14, 0x14}},
     {'0', {0x3E, 0x51, 0x49, 0x45, 0x3E}},
     {'1', {0x00, 0x42, 0x7F, 0x40, 0x00}},
@@ -103,15 +105,22 @@ const Glyph kFont[] = {
     {'c', {0x38, 0x44, 0x44, 0x44, 0x20}},
     {'d', {0x38, 0x44, 0x44, 0x48, 0x7F}},
     {'e', {0x38, 0x54, 0x54, 0x54, 0x18}},
+    {'f', {0x00, 0x08, 0x7E, 0x09, 0x02}},
+    {'g', {0x0C, 0x52, 0x52, 0x52, 0x3E}},
     {'i', {0x00, 0x44, 0x7D, 0x40, 0x00}},
+    {'k', {0x7F, 0x08, 0x14, 0x22, 0x41}},
     {'l', {0x00, 0x41, 0x7F, 0x40, 0x00}},
+    {'m', {0x7C, 0x04, 0x18, 0x04, 0x78}},
     {'n', {0x7C, 0x08, 0x04, 0x04, 0x78}},
     {'o', {0x38, 0x44, 0x44, 0x44, 0x38}},
     {'p', {0x7C, 0x14, 0x14, 0x14, 0x08}},
     {'r', {0x7C, 0x08, 0x04, 0x04, 0x08}},
     {'s', {0x48, 0x54, 0x54, 0x54, 0x20}},
     {'t', {0x04, 0x3F, 0x44, 0x40, 0x20}},
+    {'u', {0x3C, 0x40, 0x40, 0x40, 0x3C}},
     {'v', {0x1C, 0x20, 0x40, 0x20, 0x1C}},
+    {'w', {0x1C, 0x20, 0x18, 0x20, 0x1C}},
+    {'z', {0x44, 0x64, 0x54, 0x4C, 0x44}},
 };
 
 void DrawText(std::string& image, int width, int height, const char* text,
@@ -136,6 +145,55 @@ void DrawText(std::string& image, int width, int height, const char* text,
             break;
         }
         cursor += 6 * scale;  // Five columns plus one of spacing.
+    }
+}
+
+/// Label size used by every text in the overlay.
+const int kLabelScale = 2;
+/// One glyph cell: five columns plus one of spacing, times the scale.
+const int kGlyphAdvance = 6;
+
+int TextWidth(const std::string& text, int scale) {
+    return static_cast<int>(text.size()) * kGlyphAdvance * scale;
+}
+
+void FillRect(std::string& image, int width, int height, int x0, int y0,
+              int x1, int y1, uint8_t r, uint8_t g, uint8_t b, float alpha) {
+    const float keep = 1.0f - alpha;
+    for (int y = y0; y <= y1; ++y) {
+        for (int x = x0; x <= x1; ++x) {
+            if (x < 0 || y < 0 || x >= width || y >= height) continue;
+            const std::size_t offset =
+                (static_cast<std::size_t>(y) * width + x) * 3;
+            image[offset] = static_cast<char>(static_cast<uint8_t>(
+                static_cast<unsigned char>(image[offset]) * keep + r * alpha));
+            image[offset + 1] = static_cast<char>(static_cast<uint8_t>(
+                static_cast<unsigned char>(image[offset + 1]) * keep + g * alpha));
+            image[offset + 2] = static_cast<char>(static_cast<uint8_t>(
+                static_cast<unsigned char>(image[offset + 2]) * keep + b * alpha));
+        }
+    }
+}
+
+/// Text block on a dimmed background, mirroring the Python debug panel.
+void DrawPanel(std::string& image, int width, int height,
+               const std::vector<std::string>& lines, int x, int y) {
+    if (lines.empty()) return;
+    int textWidth = 0;
+    for (const auto& line : lines) {
+        textWidth = std::max(textWidth, TextWidth(line, kLabelScale));
+    }
+    const int padding = 10;
+    const int lineHeight = 7 * kLabelScale + 8;
+    const int bottom = y + static_cast<int>(lines.size() - 1) * lineHeight +
+                       7 * kLabelScale;
+    FillRect(image, width, height, x - padding, y - padding,
+             x + textWidth + padding, bottom + padding, 0, 0, 0, 0.6f);
+    int cursorY = y;
+    for (const auto& line : lines) {
+        DrawText(image, width, height, line.c_str(), x, cursorY, kLabelScale,
+                 255, 255, 255);
+        cursorY += lineHeight;
     }
 }
 
@@ -257,7 +315,7 @@ bool VideoRenderer::Write(const aifootball::ProcessResult& result) {
     std::string rendered = cached.owner
         ? std::string(reinterpret_cast<const char*>(cached.data), cached.bytes)
         : std::move(cached.ownedCopy);
-    DrawOverlay(rendered, m_width, m_height, m_roi, result);
+    DrawOverlay(rendered, result);
     if (!EncodeFrame(rendered)) {
         m_encoderFailed = true;
         LOG_ERROR("VideoRenderer: rendering disabled after encoding failure");
@@ -345,15 +403,36 @@ void VideoRenderer::SetRoi(const aifootball::RoiContext& roi) {
 }
 
 void VideoRenderer::DrawOverlay(
-    std::string& rgb, int width, int height,
-    const aifootball::RoiContext& roi,
-    const aifootball::ProcessResult& result) {
-    DrawRoi(rgb, width, height, roi);
+    std::string& rgb, const aifootball::ProcessResult& result) const {
+    DrawRoi(rgb, m_width, m_height, m_roi);
     for (const auto& person : result.persons) {
-        DrawRect(rgb, width, height, person.bbox[0], person.bbox[1],
+        DrawRect(rgb, m_width, m_height, person.bbox[0], person.bbox[1],
                  person.bbox[2], person.bbox[3], 50, 230, 80);
-        DrawPose(rgb, width, height, person);
+        DrawPose(rgb, m_width, m_height, person);
     }
+    // Balls the box filters dropped, coloured by reason like Python does:
+    // red = confidence, magenta = size, purple = both.
+    int filteredByConfidence = 0;
+    int filteredBySize = 0;
+    for (const auto& rejected : result.rejectedBalls) {
+        uint8_t red = 255, green = 0, blue = 0;
+        const char* reason = "conf";
+        if (rejected.failedConfidence && rejected.failedSize) {
+            red = 160; green = 32; blue = 240; reason = "conf+area";
+        } else if (!rejected.failedConfidence) {
+            red = 255; green = 0; blue = 255; reason = "area";
+        }
+        if (rejected.failedConfidence) ++filteredByConfidence;
+        if (rejected.failedSize) ++filteredBySize;
+        DrawRect(rgb, m_width, m_height, rejected.bbox[0], rejected.bbox[1],
+                 rejected.bbox[2], rejected.bbox[3], red, green, blue);
+        DrawText(rgb, m_width, m_height, reason,
+                 static_cast<int>(std::lround(rejected.bbox[0])),
+                 std::max(0, static_cast<int>(std::lround(rejected.bbox[1])) - 18),
+                 kLabelScale, red, green, blue);
+    }
+    int trackedBalls = 0;
+    const char* ballState = "missing";
     for (const auto& ball : result.balls) {
         const int cx = static_cast<int>(std::lround(ball.center[0]));
         const int cy = static_cast<int>(std::lround(ball.center[1]));
@@ -364,25 +443,59 @@ void VideoRenderer::DrawOverlay(
             const bool observed =
                 ball.state == aifootball::BallTrackState::Observed;
             const uint8_t blue = observed ? 40 : 255;
-            DrawPoint(rgb, width, height, cx, cy, 8, 255, 80, blue);
+            ++trackedBalls;
+            ballState = observed ? "observed" : "predicted";
+            DrawPoint(rgb, m_width, m_height, cx, cy, 8, 255, 80, blue);
             char label[48] = {};
             std::snprintf(label, sizeof(label), "ball id=%d %s", ball.trackId,
                           observed ? "observed" : "predicted");
-            DrawText(rgb, width, height, label, cx + 12,
-                     std::max(0, cy - 20), 2, 255, 80, blue);
+            DrawText(rgb, m_width, m_height, label, cx + 12,
+                     std::max(0, cy - 20), kLabelScale, 255, 80, blue);
             continue;
         }
         // A candidate the tracker did not follow: box plus confidence, so it
         // is never read as the tracked ball.
-        DrawRect(rgb, width, height, ball.bbox[0], ball.bbox[1], ball.bbox[2],
+        DrawRect(rgb, m_width, m_height, ball.bbox[0], ball.bbox[1], ball.bbox[2],
                  ball.bbox[3], 255, 80, 40);
         char label[24] = {};
         std::snprintf(label, sizeof(label), "%.2f", ball.confidence);
-        DrawText(rgb, width, height, label,
+        DrawText(rgb, m_width, m_height, label,
                  static_cast<int>(std::lround(ball.bbox[0])),
                  std::max(0, static_cast<int>(std::lround(ball.bbox[1])) - 18),
-                 2, 255, 80, 40);
+                 kLabelScale, 255, 80, 40);
     }
+
+    char header[96] = {};
+    std::snprintf(header, sizeof(header), "frame=%llu time=%.2fs det=%d",
+                  static_cast<unsigned long long>(result.frameId),
+                  result.timestampSec,
+                  result.filteredCounts.total + result.rescuedBallCount);
+    DrawText(rgb, m_width, m_height, header, 24, 12, kLabelScale, 50, 230, 80);
+    char fps[32] = {};
+    std::snprintf(fps, sizeof(fps), "fps=%.2f", m_fps);
+    DrawText(rgb, m_width, m_height, fps, 24, 40, kLabelScale, 50, 230, 80);
+
+    // Same three lines as the Python debug panel: what the detector found,
+    // what survived the ROI and the filters, and what is tracked now.
+    char ballLine[160] = {};
+    std::snprintf(ballLine, sizeof(ballLine),
+                  "ball: raw=%d roi=%d kept=%d rescued=%d tracked=%d state=%s",
+                  result.detectorCounts.ball,
+                  result.filteredCounts.ball +
+                      static_cast<int>(result.rejectedBalls.size()),
+                  result.filteredCounts.ball, result.rescuedBallCount,
+                  trackedBalls, ballState);
+    char filterLine[96] = {};
+    std::snprintf(filterLine, sizeof(filterLine),
+                  "filter: conf=%d size=%d total=%d", filteredByConfidence,
+                  filteredBySize,
+                  static_cast<int>(result.rejectedBalls.size()));
+    char personLine[96] = {};
+    std::snprintf(personLine, sizeof(personLine), "persons: det=%d track=%d",
+                  result.filteredCounts.person,
+                  static_cast<int>(result.persons.size()));
+    const std::vector<std::string> lines = {ballLine, filterLine, personLine};
+    DrawPanel(rgb, m_width, m_height, lines, 24, 90);
 }
 
 bool VideoRenderer::EncodeFrame(std::string& rgb) {

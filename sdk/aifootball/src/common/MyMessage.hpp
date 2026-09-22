@@ -151,6 +151,14 @@ struct DetectionCounts {
     int ball = 0;
 };
 
+// Ball detection dropped by the application-level box filters, carrying which
+// filter rejected it so a debug overlay can colour it the way Python does.
+struct RejectedBall {
+    Detection detection;
+    bool failedConfidence = false;
+    bool failedSize = false;
+};
+
 struct DetectionMessage {
     VideoFramePtr videoFrame;              // Shared immutable decoded frame
     std::vector<Detection> detections;     // Detections in *original frame* coords
@@ -195,7 +203,7 @@ struct TrackedDetectionMessage {
     // Ball detections rejected by the application-level confidence/size
     // filter. Python evaluates these after pose estimation and may rescue
     // them when they have sufficient person/foot support.
-    std::vector<Detection> rejectedBalls;
+    std::vector<RejectedBall> rejectedBalls;
     DetectionCounts rawCounts;        // copied from the upstream detector
     // Counts after ROI and application-level detection filters. Unlike
     // persons.size(), this remains stable when tracking suppresses a track.
@@ -257,7 +265,7 @@ struct PoseMessage {
     VideoFramePtr videoFrame;
     std::vector<PersonPose> persons;
     std::vector<Detection>  balls;      // pass-through from upstream tracker
-    std::vector<Detection>  rejectedBalls;
+    std::vector<RejectedBall> rejectedBalls;
     DetectionCounts rawCounts;
     DetectionCounts filteredCounts;
     int   activeTrackCount = 0;
@@ -310,7 +318,7 @@ struct SmoothedPoseMessage {
     VideoFramePtr videoFrame;
     std::vector<PersonPose> persons;
     std::vector<Detection>  balls;
-    std::vector<Detection>  rejectedBalls;
+    std::vector<RejectedBall> rejectedBalls;
     DetectionCounts rawCounts;
     DetectionCounts filteredCounts;
     int   activeTrackCount = 0;
@@ -357,6 +365,12 @@ struct BallTrackMessage {
     std::vector<PersonPose> persons;   // pass-through from smoother
     std::vector<BallTrack>  balls;     // tracked ball(s) this frame
     DetectionCounts rawCounts;
+    // Diagnostics for the renderer: what the ROI never saw, what the box
+    // filters dropped, and how many of those the tracker brought back.
+    DetectionCounts filteredCounts;
+    DetectionCounts detectorCounts;
+    std::vector<RejectedBall> rejectedBalls;
+    int   rescuedBallCount = 0;
     int   activeTrackCount = 0;
     int   lostTrackCount   = 0;
     bool  isEnd = false;

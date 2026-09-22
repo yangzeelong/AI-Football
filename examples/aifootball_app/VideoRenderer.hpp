@@ -37,9 +37,8 @@ private:
     void DrainPackets();
     void FinalizeEncoder();
     void CleanupEncoder();
-    static void DrawOverlay(std::string& rgb, int width, int height,
-                            const aifootball::RoiContext& roi,
-                            const aifootball::ProcessResult& result);
+    void DrawOverlay(std::string& rgb,
+                     const aifootball::ProcessResult& result) const;
 
     struct CachedFrame {
         const uint8_t* data = nullptr;

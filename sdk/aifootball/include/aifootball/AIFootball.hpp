@@ -102,6 +102,15 @@ struct DetectionCounts {
     int ball = 0;
 };
 
+/** Ball detection dropped by the application-level box filters. */
+struct RejectedBallResult {
+    std::array<float, 4> bbox{{0.0f, 0.0f, 0.0f, 0.0f}};
+    float confidence = 0.0f;
+    /// Which filter rejected it, so a debug overlay can say why.
+    bool failedConfidence = false;
+    bool failedSize = false;
+};
+
 /** Algorithm output corresponding to one input frame. */
 struct ProcessResult {
     uint64_t frameId = 0;
@@ -109,6 +118,18 @@ struct ProcessResult {
     std::vector<PersonResult> persons;
     std::vector<BallResult> balls;
     DetectionCounts rawCounts;
+    /// Counts straight from the detector, before the ROI and the filters.
+    /// rawCounts above is the post-ROI count, which is what the observations
+    /// JSONL publishes as `raw_detection_counts`.
+    DetectionCounts detectorCounts;
+    /// Detections kept after the ROI and the box filters.
+    DetectionCounts filteredCounts;
+    /// Balls the box filters dropped, after the ROI. Diagnostics only: they
+    /// are not part of the tracked output.
+    std::vector<RejectedBallResult> rejectedBalls;
+    /// Rejected balls the tracker brought back because pose support was
+    /// strong enough.
+    int rescuedBallCount = 0;
     std::map<std::string, double> moduleTimingsMs;
 };
 

@@ -137,6 +137,13 @@ ProcessResult ConvertResult(const ResultPacket& packet) {
     output.rawCounts.total = input.rawCounts.total;
     output.rawCounts.person = input.rawCounts.person;
     output.rawCounts.ball = input.rawCounts.ball;
+    output.filteredCounts.total = input.filteredCounts.total;
+    output.filteredCounts.person = input.filteredCounts.person;
+    output.filteredCounts.ball = input.filteredCounts.ball;
+    output.detectorCounts.total = input.detectorCounts.total;
+    output.detectorCounts.person = input.detectorCounts.person;
+    output.detectorCounts.ball = input.detectorCounts.ball;
+    output.rescuedBallCount = input.rescuedBallCount;
     output.moduleTimingsMs = packet.moduleTimingsMs;
     // SdkInput measures the framework worker wait, not algorithm work. Keep
     // only timings belonging to the public algorithm modules.
@@ -168,6 +175,17 @@ ProcessResult ConvertResult(const ResultPacket& packet) {
         result.confidence = ball.confidence;
         result.state = ConvertBallState(ball.state);
         output.balls.push_back(std::move(result));
+    }
+
+    output.rejectedBalls.reserve(input.rejectedBalls.size());
+    for (const auto& rejected : input.rejectedBalls) {
+        RejectedBallResult result;
+        result.bbox = {{rejected.detection.x0, rejected.detection.y0,
+                        rejected.detection.x1, rejected.detection.y1}};
+        result.confidence = rejected.detection.score;
+        result.failedConfidence = rejected.failedConfidence;
+        result.failedSize = rejected.failedSize;
+        output.rejectedBalls.push_back(std::move(result));
     }
     return output;
 }
