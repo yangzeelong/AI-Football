@@ -13,7 +13,7 @@ struct AVFrame;
 struct AVPacket;
 struct SwsContext;
 
-namespace aifootball_demo {
+namespace aifootball_app {
 
 /** Optional offline renderer for frames and results produced by the SDK. */
 class VideoRenderer {
@@ -61,4 +61,4 @@ private:
     SwsContext* m_swsCtx = nullptr;
 };
 
-} // namespace aifootball_demo
+} // namespace aifootball_app

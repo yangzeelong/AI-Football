@@ -5,7 +5,7 @@
 #include <fstream>
 #include <string>
 
-namespace aifootball_demo {
+namespace aifootball_app {
 
 class JsonlWriter {
 public:
@@ -20,4 +20,4 @@ private:
     std::string m_cameraId;
 };
 
-} // namespace aifootball_demo
+} // namespace aifootball_app

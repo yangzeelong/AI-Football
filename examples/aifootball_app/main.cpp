@@ -1,5 +1,5 @@
 #include "CommandParser.hpp"
-#include "DemoConfig.hpp"
+#include "AppConfig.hpp"
 #include "JsonlWriter.hpp"
 #include "VideoReader.hpp"
 #include "VideoRenderer.hpp"
@@ -36,18 +36,19 @@ struct RunOptions {
     bool profileTimers = false;
 };
 
-struct DemoResources {
-    aifootball_demo::VideoReader reader;
-    aifootball_demo::JsonlWriter writer;
-    aifootball_demo::VideoRenderer renderer;
+struct AppResources {
+    aifootball_app::VideoReader reader;
+    aifootball_app::JsonlWriter writer;
+    aifootball_app::VideoRenderer renderer;
     std::string observationsPath;
 };
 
-RunOptions ReadOptions(const app::CommandParser& cli) {
+RunOptions ReadOptions(const app::CommandParser& cli,
+                       const aifootball_app::AppConfig& config) {
     RunOptions options;
-    options.configPath = cli.Get("config");
+    options.configPath = config.Path();
     options.videoPath = cli.Get("video_path").empty()
-        ? aifootball_demo::LoadVideoPath(options.configPath)
+        ? config.VideoPath()
         : cli.Get("video_path");
     options.outputDir = cli.Get("output_dir");
     options.renderPath = cli.Get("render_path");
@@ -87,24 +88,29 @@ void PrintTimerSnapshot() {
     }
 }
 
-bool PrepareResources(const RunOptions& options, DemoResources& resources) {
+bool PrepareResources(const RunOptions& options,
+                      const aifootball_app::AppConfig& config,
+                      AppResources& resources) {
     if (options.videoPath.empty()) {
         LOG_ERROR("No video path provided and graph.modules has no VideoReader path");
         return false;
     }
-    if (!aifootball_demo::EnsureDirectory(options.outputDir)) {
+    if (!aifootball_app::EnsureDirectory(options.outputDir)) {
         LOG_ERROR("Failed to create output directory '{}'", options.outputDir);
         return false;
+    }
+    if (config.RgbRingSize() > 0) {
+        resources.reader.SetRgbRingSize(
+            static_cast<std::size_t>(config.RgbRingSize()));
     }
     if (!resources.reader.Open(options.videoPath)) {
         LOG_ERROR("Failed to open/decode video '{}'", options.videoPath);
         return false;
     }
 
-    const std::string cameraId =
-        aifootball_demo::LoadCameraId(options.configPath);
+    const std::string& cameraId = config.CameraId();
     resources.observationsPath =
-        aifootball_demo::JoinPath(options.outputDir, "observations.jsonl");
+        aifootball_app::JoinPath(options.outputDir, "observations.jsonl");
     if (!resources.writer.Open(resources.observationsPath, options.videoPath,
                                resources.reader.fps(), resources.reader.width(),
                                resources.reader.height(), options.stride,
@@ -115,7 +121,7 @@ bool PrepareResources(const RunOptions& options, DemoResources& resources) {
     }
 
     const std::string renderPath = options.renderPath.empty()
-        ? aifootball_demo::JoinPath(options.outputDir, "rendered.mp4")
+        ? aifootball_app::JoinPath(options.outputDir, "rendered.mp4")
         : options.renderPath;
     const double renderFps =
         resources.reader.fps() / static_cast<double>(options.stride);
@@ -131,8 +137,8 @@ bool PrepareResources(const RunOptions& options, DemoResources& resources) {
 using ResultFuture = aifootball::ProcessFuture;
 
 bool HandleResult(aifootball::ProcessFutureResult value,
-                  aifootball_demo::JsonlWriter& writer,
-                  aifootball_demo::VideoRenderer& renderer) {
+                  aifootball_app::JsonlWriter& writer,
+                  aifootball_app::VideoRenderer& renderer) {
     if (value.status != nexusflow::SUCCESS) {
         LOG_ERROR("AI-Football SDK failed for frame {} with status {}",
                   value.result.frameId, value.status);
@@ -148,8 +154,8 @@ bool HandleResult(aifootball::ProcessFutureResult value,
 }
 
 bool HandleFutureResult(ResultFuture& future,
-                        aifootball_demo::JsonlWriter& writer,
-                        aifootball_demo::VideoRenderer& renderer) {
+                        aifootball_app::JsonlWriter& writer,
+                        aifootball_app::VideoRenderer& renderer) {
     try {
         return HandleResult(future.Get(), writer, renderer);
     } catch (const std::exception& error) {
@@ -159,8 +165,8 @@ bool HandleFutureResult(ResultFuture& future,
 }
 
 bool WriteReadyResults(std::deque<ResultFuture>& pendingResults,
-                       aifootball_demo::JsonlWriter& writer,
-                       aifootball_demo::VideoRenderer& renderer) {
+                       aifootball_app::JsonlWriter& writer,
+                       aifootball_app::VideoRenderer& renderer) {
     while (!pendingResults.empty() && pendingResults.front().IsReady()) {
         if (!HandleFutureResult(pendingResults.front(), writer, renderer)) {
             return false;
@@ -171,8 +177,8 @@ bool WriteReadyResults(std::deque<ResultFuture>& pendingResults,
 }
 
 bool DrainResults(std::deque<ResultFuture>& pendingResults,
-                  aifootball_demo::JsonlWriter& writer,
-                  aifootball_demo::VideoRenderer& renderer) {
+                  aifootball_app::JsonlWriter& writer,
+                  aifootball_app::VideoRenderer& renderer) {
     while (!pendingResults.empty()) {
         pendingResults.front().Wait();
         if (!HandleFutureResult(pendingResults.front(), writer, renderer)) {
@@ -183,12 +189,17 @@ bool DrainResults(std::deque<ResultFuture>& pendingResults,
     return true;
 }
 
-bool ProcessVideo(const RunOptions& options, DemoResources& resources,
+bool ProcessVideo(const RunOptions& options, AppResources& resources,
                   aifootball::AIFootballPipeline& pipeline,
                   int& processedFrames) {
     std::deque<ResultFuture> pendingResults;
     bool stoppedByLimit = false;
     bool failed = false;
+    // Producer-side budget: packet read + software decode + color conversion +
+    // pipeline submit + JSONL write for results that are already ready. It is
+    // measured between two callbacks, so it includes the decoder loop.
+    std::chrono::steady_clock::time_point lastFrameEnd =
+        std::chrono::steady_clock::now();
     const bool decoded = resources.reader.Decode(
         [&](const aifootball::DecodedFrameView& frame) {
             if (g_stop.load(std::memory_order_relaxed)) return false;
@@ -236,11 +247,18 @@ bool ProcessVideo(const RunOptions& options, DemoResources& resources,
                 failed = true;
                 return false;
             }
+            const auto frameEnd = std::chrono::steady_clock::now();
+            nexusflow::TimerRegistry::Instance().AddSample(
+                "App.ProduceInterval",
+                std::chrono::duration<double, std::milli>(
+                    frameEnd - lastFrameEnd).count(),
+                1);
+            lastFrameEnd = frameEnd;
             return true;
         });
 
     if (failed) {
-        LOG_ERROR("AI-Football demo processing failed for '{}'", options.videoPath);
+        LOG_ERROR("AI-Football app processing failed for '{}'", options.videoPath);
         return false;
     }
     if (!decoded && !stoppedByLimit) {
@@ -254,16 +272,15 @@ bool ProcessVideo(const RunOptions& options, DemoResources& resources,
     return DrainResults(pendingResults, resources.writer, resources.renderer);
 }
 
-int RunDemo(const RunOptions& options) {
+int RunApp(const RunOptions& options, const aifootball_app::AppConfig& config) {
     std::signal(SIGINT, HandleSignal);
     std::signal(SIGTERM, HandleSignal);
 
-    DemoResources resources;
-    if (!PrepareResources(options, resources)) return 2;
+    AppResources resources;
+    if (!PrepareResources(options, config, resources)) return 2;
 
     try {
-        aifootball::AIFootballContext context =
-            aifootball_demo::LoadContext(options.configPath);
+        aifootball::AIFootballContext context = config.Context();
         context.configPath = options.configPath;
         context.deviceId = options.deviceId;
 
@@ -283,7 +300,7 @@ int RunDemo(const RunOptions& options) {
             return 2;
         }
         if (options.profileTimers) PrintTimerSnapshot();
-        LOG_INFO("AI-Football SDK demo processed {} frames, observations='{}'",
+        LOG_INFO("AI-Football SDK app processed {} frames, observations='{}'",
                  processedFrames, resources.observationsPath);
         return 0;
     } catch (const std::exception& error) {
@@ -299,7 +316,7 @@ int main(int argc, char* argv[]) {
     cli.AddPositional("config", "Path to config.yaml", true);
     cli.AddArgument("--video_path", "-v", "Override video path from config");
     cli.AddArgument("--output_dir", "-o", "Output directory", false,
-                    "output/sdk_demo");
+                    "output/sdk_app");
     cli.AddArgument("--max_frames", "-n", "Stop after N decoded frames (0 = all)",
                     false, "0");
     cli.AddArgument("--stride", "-S", "Process every Nth decoded frame", false,
@@ -329,5 +346,13 @@ int main(int argc, char* argv[]) {
         : cli.IsFlagSet("quiet") ? nexusflow::logger::LogLevel::WARN
                                   : nexusflow::logger::LogLevel::INFO;
     nexusflow::logger::InitializeGlobalLogger(logParams);
-    return RunDemo(ReadOptions(cli));
+
+    try {
+        // Parse the configuration once and share it with every consumer.
+        const aifootball_app::AppConfig config(cli.Get("config"));
+        return RunApp(ReadOptions(cli, config), config);
+    } catch (const std::exception& error) {
+        LOG_ERROR("Fatal: {}", error.what());
+        return 2;
+    }
 }

@@ -2,7 +2,7 @@
 
 #include <json/json.h>
 
-namespace aifootball_demo {
+namespace aifootball_app {
 namespace {
 
 Json::Value FloatArray(const std::array<float, 4>& values) {
@@ -127,4 +127,4 @@ void JsonlWriter::Close() {
     }
 }
 
-} // namespace aifootball_demo
+} // namespace aifootball_app

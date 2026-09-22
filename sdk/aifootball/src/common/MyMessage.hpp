@@ -13,7 +13,7 @@
 // --- Base ---
 struct VideoFrame {
     uint32_t frameId = 0;
-    std::string frameData; // Owned contiguous RGB24 bytes for file/demo input.
+    std::string frameData; // Owned contiguous RGB24 bytes for file/app input.
     const uint8_t* externalData = nullptr; // Non-owning SDK input view.
     std::size_t externalDataBytes = 0;
     std::shared_ptr<const void> externalOwner; // Optional lifetime anchor.

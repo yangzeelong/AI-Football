@@ -14,10 +14,10 @@ if(TARGET aifootball_sdk)
 
     add_executable(pose_benchmark
         pose_benchmark.cpp
-        ${PROJECT_SOURCE_DIR}/examples/aifootball_demo/VideoReader.cpp)
+        ${PROJECT_SOURCE_DIR}/examples/aifootball_app/VideoReader.cpp)
     target_include_directories(pose_benchmark PRIVATE
         "${PROJECT_SOURCE_DIR}/sdk/aifootball/src"
-        "${PROJECT_SOURCE_DIR}/examples/aifootball_demo"
+        "${PROJECT_SOURCE_DIR}/examples/aifootball_app"
         "${AIFOOTBALL_BENCHMARK_FFMPEG_INCLUDE_DIR}")
     target_link_libraries(pose_benchmark PRIVATE
         aifootball_sdk

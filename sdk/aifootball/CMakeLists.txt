@@ -60,7 +60,7 @@ else()
         "${CMAKE_CURRENT_SOURCE_DIR}/src/detector/RFDetrCudaPreprocess.cu")
 endif()
 
-# Video demux/decode and rendering belong to the offline demo, not to the
+# Video demux/decode and rendering belong to the offline app, not to the
 # embeddable algorithm SDK runtime.
 list(FILTER AIFOOTBALL_CPP_FILES EXCLUDE REGEX ".*/video/.*\\.cpp$")
 list(FILTER AIFOOTBALL_CPP_FILES EXCLUDE REGEX ".*/output/.*\\.cpp$")

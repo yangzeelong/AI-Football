@@ -30,28 +30,28 @@ The AI-Football pipeline is exposed as the `aifootball_sdk` target. The public
 entry point is [`sdk/aifootball/include/aifootball/AIFootball.hpp`](sdk/aifootball/include/aifootball/AIFootball.hpp);
 model modules and TensorRT/CUDA details remain private to the SDK target.
 
-Build the SDK and its integration demo with:
+Build the SDK and its integration app with:
 
 ```bash
 cmake -S . -B build -DWITH_AIFOOTBALL_SDK=ON
-cmake --build build --target aifootball_sdk aifootball_demo --parallel 4
+cmake --build build --target aifootball_sdk aifootball_app --parallel 4
 ```
 
-Run the demo with a YAML configuration:
+Run the app with a YAML configuration:
 
 ```bash
-./build/examples/aifootball_demo/aifootball_demo \
-  examples/aifootball_demo/config.yaml \
+./build/examples/aifootball_app/aifootball_app \
+  examples/aifootball_app/config.yaml \
   --video_path data/射门1-1080p60.mov \
-  --output_dir output/sdk_demo
+  --output_dir output/sdk_app
 ```
 
-The SDK demo does not render video by default. Enable the offline demo renderer
+The SDK app does not render video by default. Enable the offline app renderer
 explicitly when needed:
 
 ```bash
-./build/examples/aifootball_demo/aifootball_demo \
-  examples/aifootball_demo/config.yaml \
+./build/examples/aifootball_app/aifootball_app \
+  examples/aifootball_app/config.yaml \
   --output_dir output/sdk_debug
 python3 tools/render_jsonl.py \
   --observations output/sdk_debug/observations.jsonl \

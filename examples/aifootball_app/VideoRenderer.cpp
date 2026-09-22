@@ -1,6 +1,6 @@
 #include "VideoRenderer.hpp"
 
-#include "DemoConfig.hpp"
+#include "AppConfig.hpp"
 
 #include <nexusflow/Logging.hpp>
 
@@ -18,7 +18,7 @@ extern "C" {
 #include <cstring>
 #include <utility>
 
-namespace aifootball_demo {
+namespace aifootball_app {
 namespace {
 
 std::string AvError(int error) {
@@ -320,4 +320,4 @@ void VideoRenderer::CleanupEncoder() {
     m_outputFrameIndex = 0;
 }
 
-} // namespace aifootball_demo
+} // namespace aifootball_app

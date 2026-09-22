@@ -6,7 +6,7 @@ including detector, pose, tracker, or TensorRT implementation headers.
 
 The SDK does not open files, demux/decode video, render frames, or write
 observations. Those responsibilities stay in the embedding application or in
-the offline demo.
+the offline app.
 
 ## Public API
 
@@ -94,15 +94,15 @@ frame coordinate system described by `roi.width` and `roi.height`.
 
 ```bash
 cmake -S . -B build -DWITH_AIFOOTBALL_SDK=ON
-cmake --build build --target aifootball_sdk aifootball_demo --parallel 4
+cmake --build build --target aifootball_sdk aifootball_app --parallel 4
 ```
 
 The SDK target links the locally detected FFmpeg, CUDA, and TensorRT
 dependencies. The public headers are installed under `include/aifootball`.
 
-## Demo
+## App
 
-`examples/aifootball_demo` is an offline integration executable. It owns
+`examples/aifootball_app` is an offline integration executable. It owns
 FFmpeg decoding, writes `observations.jsonl` after calling the SDK, and can
 optionally render detections to MP4. Its `VideoReader` creates an owned RGB24
 buffer per decoded frame and passes it through `DecodedFrameView::dataOwner`,
@@ -111,20 +111,20 @@ default:
 
 ```bash
 python3 tools/render_jsonl.py \
-  --observations output/sdk_demo/observations.jsonl \
-  --output output/sdk_demo/rendered.mp4
+  --observations output/sdk_app/observations.jsonl \
+  --output output/sdk_app/rendered.mp4
 ```
 
 Example:
 
 ```bash
-build/examples/aifootball_demo/aifootball_demo \
-  examples/aifootball_demo/config.yaml \
+build/examples/aifootball_app/aifootball_app \
+  examples/aifootball_app/config.yaml \
   --video_path data/射门1-1080p60.mov \
-  --output_dir output/sdk_demo
+  --output_dir output/sdk_app
 
-build/examples/aifootball_demo/aifootball_demo \
-  examples/aifootball_demo/config.yaml \
+build/examples/aifootball_app/aifootball_app \
+  examples/aifootball_app/config.yaml \
   --output_dir output/sdk_debug \
   --render
 ```

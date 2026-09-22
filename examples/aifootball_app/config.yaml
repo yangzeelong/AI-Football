@@ -7,6 +7,12 @@ graph:
       config:
         videoPath: data/射门1-1080p60.mov
         stride: 1
+        # Decoded RGB frames kept for reuse by the decoder. A slot is recycled
+        # only after the pipeline drops its last reference, so this must cover
+        # algorithm.maxPendingFrames plus the frames in flight inside the
+        # pipeline. Measured with maxPendingFrames=32: 56 slots still allocate a
+        # fresh 1080p buffer (~6 MB) for every frame, 64 and above reuse.
+        rgbRingSize: 64
 
     - name: VideoDecoder
       class: VideoDecoder
@@ -16,7 +22,7 @@ graph:
     - name: Detector
       class: RFDetrDetector
       config:
-        enginePath: /home/hx1/yzl/Work/AI-Football/models/rfdetr/rf-detr-small-960-b4-opt4.engine
+        enginePath: /home/hx1/yzl/Work/AI-Football/models/rfdetr/rf-detr-small-960-fp16-b8-fp32io.engine
         inputBindingName: image
         outputBindingName: detections    # baked [B,N,6]; auto-detected if absent
         logitsBindingName: pred_logits   # raw format fallback
@@ -61,14 +67,14 @@ graph:
     - name: PoseEstimator
       class: HRNetPoseEstimator
       config:
-        enginePath: /home/hx1/yzl/Work/AI-Football/models/mmpose/hrnet/hrnet-w48-dark.engine
+        enginePath: /home/hx1/yzl/Work/AI-Football/models/mmpose/hrnet/hrnet-w48-dark-ch23-fp16-b8-fp32io.engine
         inputBindingName: images
         outputBindingName: heatmaps
         inputWidth: 288                  # W
         inputHeight: 384                 # H
         heatmapWidth: 72                 # W/4
         heatmapHeight: 96                # H/4
-        numKeypoints: 133                # COCO-WholeBody
+        numKeypoints: 23                 # COCO-WholeBody body channels kept by the export
         stride: 4
         useDark: true                    # DARK sub-pixel refinement
         flipTest: true                   # Match MMPose heatmap flip-test TTA
@@ -78,7 +84,7 @@ graph:
         xPadRatio: 0.15
         yPadRatio: 0.25
         minPadPx: 12.0
-        maxBatch: 16
+        maxBatch: 8                     # Engine profile max is 8; do not exceed it
         batchFrameCount: 4             # Aggregate detector frames before pose inference
         instanceCount: 2                 # Each instance owns a TRT context/stream and GPU buffers
         keypointConfThr: 0.05
@@ -161,9 +167,16 @@ graph:
     - from: VideoRenderer
       to: AlarmPusher
 
-# Algorithm configuration is parsed by the SDK demo and passed through the
+# Algorithm configuration is parsed by the SDK app and passed through the
 # public AIFootballContext API. Coordinates use the source video resolution.
 algorithm:
+  # Bound the asynchronous input queue. Every frame submitted but not yet
+  # consumed pins one decoded frame (~6 MB at 1080p), so an unbounded queue lets
+  # the decoder run far ahead of the slowest stage and exhaust memory.
+  # 0 = unbounded. QueuePolicy::Block (the default) turns the bound into
+  # backpressure by blocking ProcessAsync().
+  maxPendingFrames: 32
+  inputQueuePolicy: block
   roi:
     enabled: true
     width: 1920
