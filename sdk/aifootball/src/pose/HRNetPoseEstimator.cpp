@@ -17,6 +17,7 @@ HRNetPoseEstimator::~HRNetPoseEstimator() = default;
 
 ns::ErrorCode HRNetPoseEstimator::Configure(const ns::Config& config) {
     LOG_TRACE("HRNetPoseEstimator::Configure");
+    m_inferParam.moduleName        = GetModuleName();
     m_inferParam.enginePath        = config.GetValueOrDefault<std::string>("enginePath", "");
     m_inferParam.inputBindingName  = config.GetValueOrDefault<std::string>("inputBindingName", "images");
     m_inferParam.outputBindingName = config.GetValueOrDefault<std::string>("outputBindingName", "heatmaps");

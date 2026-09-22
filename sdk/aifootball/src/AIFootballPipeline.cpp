@@ -85,7 +85,9 @@ std::vector<ModuleSpec> LoadAlgorithmSpecs(const std::string& configPath,
             }
         }
 
-        if (name == "ByteTracker" || name == "PersonTracker") {
+        // Keyed on the implementation class, not the instance name, so
+        // renaming a module in the graph does not silently drop the ROI config.
+        if (className == "ByteTracker") {
             spec.config.Add("roiEnabled", context.roi.enabled);
             spec.config.Add("roiWidth", context.roi.width);
             spec.config.Add("roiHeight", context.roi.height);
@@ -346,6 +348,11 @@ nexusflow::ErrorCode AIFootballPipeline::Init() {
                           spec.name, spec.className);
                 return nexusflow::FAILURE;
             }
+            // Timers and messages are labelled with the configured module name,
+            // so state the mapping once at startup. It is normally identical to
+            // the class, but instance names stay free to differ.
+            LOG_INFO("AI-Football SDK: module '{}' -> {}",
+                     spec.name, spec.className);
             builder.AddModule(module).Connect(previous, spec.name);
             previous = spec.name;
         }

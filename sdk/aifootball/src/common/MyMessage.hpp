@@ -99,7 +99,7 @@ struct PacketMessage {
     }
 };
 
-// FrameMessage: decoded frame input for Detector and downstream modules.
+// FrameMessage: decoded frame input for RFDetrDetector and downstream modules.
 struct FrameMessage {
     VideoFramePtr videoFrame;
     bool isKeyFrame = false;
@@ -122,7 +122,7 @@ struct FrameMessage {
     }
 };
 
-// --- Detection (output of Detector module) ---
+// --- Detection (output of the RFDetrDetector module) ---
 //
 // Uses float coordinates in the *original frame* space so that downstream
 // modules (tracker, pose estimator, ROI filter) do not need to know about
@@ -176,7 +176,7 @@ struct DetectionMessage {
 // Backward compatibility alias
 using DecoderMessage = FrameMessage;
 
-// --- Tracked detection (output of PersonTracker / ByteTracker) ---
+// --- Tracked detection (output of ByteTracker) ---
 //
 // Same as DetectionMessage but each Detection carries a valid trackId (>= 0)
 // and track state info. Non-person detections (e.g. sports ball) are passed
@@ -196,7 +196,7 @@ struct TrackedDetectionMessage {
     // filter. Python evaluates these after pose estimation and may rescue
     // them when they have sufficient person/foot support.
     std::vector<Detection> rejectedBalls;
-    DetectionCounts rawCounts;        // copied from upstream Detector
+    DetectionCounts rawCounts;        // copied from the upstream detector
     // Counts after ROI and application-level detection filters. Unlike
     // persons.size(), this remains stable when tracking suppresses a track.
     DetectionCounts filteredCounts;

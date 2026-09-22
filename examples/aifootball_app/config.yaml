@@ -19,7 +19,7 @@ graph:
       config:
         pixelFormat: rgb24
 
-    - name: Detector
+    - name: RFDetrDetector
       class: RFDetrDetector
       config:
         enginePath: /home/hx1/yzl/Work/AI-Football/models/rfdetr/rf-detr-small-960-fp16-b8-fp32io.engine
@@ -47,7 +47,7 @@ graph:
         batchTimeoutMs: 0                # 0 = no timeout, drain only when full or EOF
         maxRetryNum: 0                   # 0 = disabled; >0 = force drain after N frames (anti-starvation)
 
-    - name: PersonTracker
+    - name: ByteTracker
       class: ByteTracker
       config:
         trackActivationThreshold: 0.25
@@ -64,7 +64,7 @@ graph:
         ballMinWidthPx: 2.0
         ballMinHeightPx: 2.0
 
-    - name: PoseEstimator
+    - name: HRNetPoseEstimator
       class: HRNetPoseEstimator
       config:
         enginePath: /home/hx1/yzl/Work/AI-Football/models/mmpose/hrnet/hrnet-w48-dark-ch23-fp16-b8-fp32io.engine
@@ -151,12 +151,12 @@ graph:
     - from: VideoReader
       to: VideoDecoder
     - from: VideoDecoder
-      to: Detector
-    - from: Detector
-      to: PersonTracker
-    - from: PersonTracker
-      to: PoseEstimator
-    - from: PoseEstimator
+      to: RFDetrDetector
+    - from: RFDetrDetector
+      to: ByteTracker
+    - from: ByteTracker
+      to: HRNetPoseEstimator
+    - from: HRNetPoseEstimator
       to: KeypointSmoother
     - from: KeypointSmoother
       to: FootballTracker
