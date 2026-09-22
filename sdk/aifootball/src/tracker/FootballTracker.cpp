@@ -260,6 +260,7 @@ void FootballTracker::Process(ns::Message& inputMessage) {
         ++out.rawCounts.total;
         ++out.rawCounts.ball;
     }
+    out.ballDetections = candidates;
 
     // --- Select best ball detection ---
     const Detection* best = nullptr;

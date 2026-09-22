@@ -177,6 +177,17 @@ ProcessResult ConvertResult(const ResultPacket& packet) {
         output.balls.push_back(std::move(result));
     }
 
+    output.ballDetections.reserve(input.ballDetections.size());
+    for (const auto& detection : input.ballDetections) {
+        BallResult result;
+        result.trackId = detection.trackId;
+        result.bbox = {{detection.x0, detection.y0, detection.x1, detection.y1}};
+        result.center = {{detection.centerX(), detection.centerY()}};
+        result.confidence = detection.score;
+        result.state = BallTrackState::Observed;
+        output.ballDetections.push_back(std::move(result));
+    }
+
     output.rejectedBalls.reserve(input.rejectedBalls.size());
     for (const auto& rejected : input.rejectedBalls) {
         RejectedBallResult result;

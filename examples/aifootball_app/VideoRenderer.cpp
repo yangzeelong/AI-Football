@@ -148,6 +148,11 @@ void DrawText(std::string& image, int width, int height, const char* text,
     }
 }
 
+/// Seconds the reported processing rate averages over. Long enough that the
+/// batch rhythm of the pipeline (detector and pose run in waves) averages out,
+/// short enough to show a slowdown while it happens.
+const double kProcessingWindowSeconds = 5.0;
+
 /// Label size used by every text in the overlay.
 const int kLabelScale = 2;
 /// One glyph cell: five columns plus one of spacing, times the scale.
@@ -304,6 +309,25 @@ bool VideoRenderer::SubmitFrame(const aifootball::DecodedFrameView& frame) {
 
 bool VideoRenderer::Write(const aifootball::ProcessResult& result) {
     if (!m_enabled) return true;
+    // Throughput over the trailing window: this is what the overlay reports
+    // as fps.
+    const std::chrono::steady_clock::time_point now =
+        std::chrono::steady_clock::now();
+    m_writeTimes.push_back(now);
+    while (m_writeTimes.size() > 1 &&
+           std::chrono::duration<double>(now - m_writeTimes.front()).count() >
+               kProcessingWindowSeconds) {
+        m_writeTimes.pop_front();
+    }
+    if (m_writeTimes.size() > 1) {
+        const double seconds = std::chrono::duration<double>(
+            now - m_writeTimes.front()).count();
+        if (seconds > 0.0) {
+            m_processingFps =
+                static_cast<double>(m_writeTimes.size() - 1) / seconds;
+        }
+    }
+
     auto it = m_frames.find(result.frameId);
     if (it == m_frames.end()) {
         LOG_ERROR("VideoRenderer: no cached RGB frame for result {}", result.frameId);
@@ -431,38 +455,38 @@ void VideoRenderer::DrawOverlay(
                  std::max(0, static_cast<int>(std::lround(rejected.bbox[1])) - 18),
                  kLabelScale, red, green, blue);
     }
+    // Every ball detection the frame was processed from. Drawn as boxes with
+    // their confidence, the layer Python labels "sports ball 0.62".
+    for (const auto& detection : result.ballDetections) {
+        DrawRect(rgb, m_width, m_height, detection.bbox[0], detection.bbox[1],
+                 detection.bbox[2], detection.bbox[3], 255, 80, 40);
+        char label[24] = {};
+        std::snprintf(label, sizeof(label), "%.2f", detection.confidence);
+        DrawText(rgb, m_width, m_height, label,
+                 static_cast<int>(std::lround(detection.bbox[0])),
+                 std::max(0, static_cast<int>(std::lround(detection.bbox[1])) - 18),
+                 kLabelScale, 255, 80, 40);
+    }
+
     int trackedBalls = 0;
     const char* ballState = "missing";
     for (const auto& ball : result.balls) {
+        if (ball.trackId < 0) continue;  // Already drawn as a detection above.
+        // The tracked ball carries the marker the Python renderer uses: a
+        // filled circle labelled with its ID and state, orange while observed
+        // and blue once it is only predicted.
         const int cx = static_cast<int>(std::lround(ball.center[0]));
         const int cy = static_cast<int>(std::lround(ball.center[1]));
-        if (ball.trackId >= 0) {
-            // The tracked ball carries the marker the Python renderer uses: a
-            // filled circle labelled with its ID and state, orange while
-            // observed and blue once it is only predicted.
-            const bool observed =
-                ball.state == aifootball::BallTrackState::Observed;
-            const uint8_t blue = observed ? 40 : 255;
-            ++trackedBalls;
-            ballState = observed ? "observed" : "predicted";
-            DrawPoint(rgb, m_width, m_height, cx, cy, 8, 255, 80, blue);
-            char label[48] = {};
-            std::snprintf(label, sizeof(label), "ball id=%d %s", ball.trackId,
-                          observed ? "observed" : "predicted");
-            DrawText(rgb, m_width, m_height, label, cx + 12,
-                     std::max(0, cy - 20), kLabelScale, 255, 80, blue);
-            continue;
-        }
-        // A candidate the tracker did not follow: box plus confidence, so it
-        // is never read as the tracked ball.
-        DrawRect(rgb, m_width, m_height, ball.bbox[0], ball.bbox[1], ball.bbox[2],
-                 ball.bbox[3], 255, 80, 40);
-        char label[24] = {};
-        std::snprintf(label, sizeof(label), "%.2f", ball.confidence);
-        DrawText(rgb, m_width, m_height, label,
-                 static_cast<int>(std::lround(ball.bbox[0])),
-                 std::max(0, static_cast<int>(std::lround(ball.bbox[1])) - 18),
-                 kLabelScale, 255, 80, 40);
+        const bool observed = ball.state == aifootball::BallTrackState::Observed;
+        const uint8_t blue = observed ? 40 : 255;
+        ++trackedBalls;
+        ballState = observed ? "observed" : "predicted";
+        DrawPoint(rgb, m_width, m_height, cx, cy, 8, 255, 80, blue);
+        char label[48] = {};
+        std::snprintf(label, sizeof(label), "ball id=%d %s", ball.trackId,
+                      observed ? "observed" : "predicted");
+        DrawText(rgb, m_width, m_height, label, cx + 12,
+                 std::max(0, cy - 20), kLabelScale, 255, 80, blue);
     }
 
     char header[96] = {};
@@ -471,8 +495,8 @@ void VideoRenderer::DrawOverlay(
                   result.timestampSec,
                   result.filteredCounts.total + result.rescuedBallCount);
     DrawText(rgb, m_width, m_height, header, 24, 12, kLabelScale, 50, 230, 80);
-    char fps[32] = {};
-    std::snprintf(fps, sizeof(fps), "fps=%.2f", m_fps);
+    char fps[48] = {};
+    std::snprintf(fps, sizeof(fps), "fps=%.2f processing", m_processingFps);
     DrawText(rgb, m_width, m_height, fps, 24, 40, kLabelScale, 50, 230, 80);
 
     // Same three lines as the Python debug panel: what the detector found,

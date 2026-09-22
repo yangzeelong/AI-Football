@@ -117,6 +117,10 @@ struct ProcessResult {
     double timestampSec = 0.0;
     std::vector<PersonResult> persons;
     std::vector<BallResult> balls;
+    /// Ball detections the frame was processed from: kept by the filters plus
+    /// the rescued ones, i.e. the boxes to draw before marking the tracked
+    /// ball. Diagnostics only, and not part of the observations JSONL.
+    std::vector<BallResult> ballDetections;
     DetectionCounts rawCounts;
     /// Counts straight from the detector, before the ROI and the filters.
     /// rawCounts above is the post-ROI count, which is what the observations

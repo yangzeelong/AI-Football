@@ -2,7 +2,9 @@
 
 #include <aifootball/AIFootball.hpp>
 
+#include <chrono>
 #include <cstdint>
+#include <deque>
 #include <map>
 #include <memory>
 #include <string>
@@ -58,6 +60,14 @@ private:
     int m_height = 0;
     int64_t m_outputFrameIndex = 0;
     std::map<uint64_t, CachedFrame> m_frames;
+    /// Pipeline throughput over a trailing time window. The overlay shows this
+    /// rather than the output frame rate, which is a constant taken from the
+    /// config and says nothing about the run. A time window rather than a
+    /// frame count or the last interval: results arrive in bursts whenever the
+    /// consumer drains a backlog, and a burst short enough would report the
+    /// renderer's own speed instead of the pipeline's.
+    std::deque<std::chrono::steady_clock::time_point> m_writeTimes;
+    double m_processingFps = 0.0;
 
     AVFormatContext* m_formatCtx = nullptr;
     AVCodecContext* m_codecCtx = nullptr;

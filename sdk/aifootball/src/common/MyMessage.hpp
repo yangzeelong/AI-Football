@@ -364,6 +364,10 @@ struct BallTrackMessage {
     VideoFramePtr videoFrame;
     std::vector<PersonPose> persons;   // pass-through from smoother
     std::vector<BallTrack>  balls;     // tracked ball(s) this frame
+    // Ball detections the pipeline worked from: kept by the filters, plus the
+    // rejected ones the tracker rescued. Python draws exactly this set as
+    // detection boxes before it marks the tracked ball.
+    std::vector<Detection>  ballDetections;
     DetectionCounts rawCounts;
     // Diagnostics for the renderer: what the ROI never saw, what the box
     // filters dropped, and how many of those the tracker brought back.
