@@ -103,6 +103,17 @@ void PrintThroughput(
     const double startupSec = secondsBetween(runStarted, processingStarted);
     const double processingSec = secondsBetween(processingStarted, processingEnded);
 
+    const double perFrameMs = processedFrames > 0
+        ? processingSec * 1000.0 / static_cast<double>(processedFrames)
+        : 0.0;
+    // The renderer runs on the consumer thread inside this window. Its own time
+    // is reported as consumer occupancy rather than subtracted from per frame:
+    // the pipeline keeps working while it draws, so the subtraction would
+    // understate the throughput the run actually achieved. Run without
+    // --render for the pipeline-only figure.
+    const double renderMs = resources.renderer.RenderMsPerFrame();
+    const uint64_t renderedFrames = resources.renderer.RenderedFrames();
+
     std::cout << "\nThroughput:\n";
     std::cout << std::fixed << std::setprecision(3)
               << "  startup        : " << startupSec << " s\n"
@@ -113,12 +124,12 @@ void PrintThroughput(
                       ? static_cast<double>(processedFrames) / processingSec
                       : 0.0)
               << " FPS\n"
-              << "  per frame      : "
-              << (processedFrames > 0
-                      ? processingSec * 1000.0 / static_cast<double>(processedFrames)
-                      : 0.0)
-              << " ms\n"
-              << "  observations   : " << resources.observationsPath << '\n';
+              << "  per frame      : " << perFrameMs << " ms\n";
+    if (renderedFrames > 0) {
+        std::cout << "  render         : " << renderMs << " ms/frame over "
+                  << renderedFrames << " frames (consumer thread)\n";
+    }
+    std::cout << "  observations   : " << resources.observationsPath << '\n';
 }
 
 bool PrepareResources(const RunOptions& options,

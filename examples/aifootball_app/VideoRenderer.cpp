@@ -336,6 +336,11 @@ bool VideoRenderer::Write(const aifootball::ProcessResult& result) {
     CachedFrame cached = std::move(it->second);
     m_frames.erase(it);
     if (m_encoderFailed) return false;
+    // Everything from here on exists only because of rendering, so it is timed
+    // separately: the app reports its per-frame figure both with and without
+    // this cost.
+    const std::chrono::steady_clock::time_point renderStarted =
+        std::chrono::steady_clock::now();
     std::string rendered = cached.owner
         ? std::string(reinterpret_cast<const char*>(cached.data), cached.bytes)
         : std::move(cached.ownedCopy);
@@ -345,7 +350,16 @@ bool VideoRenderer::Write(const aifootball::ProcessResult& result) {
         LOG_ERROR("VideoRenderer: rendering disabled after encoding failure");
         return false;
     }
+    m_renderMs += std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - renderStarted).count();
+    ++m_renderFrames;
     return true;
+}
+
+double VideoRenderer::RenderMsPerFrame() const {
+    return m_renderFrames == 0
+        ? 0.0
+        : m_renderMs / static_cast<double>(m_renderFrames);
 }
 
 void VideoRenderer::Close() {
