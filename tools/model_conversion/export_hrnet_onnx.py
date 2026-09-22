@@ -22,6 +22,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--opset", type=int, default=17)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--dynamic-batch", action="store_true")
+    parser.add_argument(
+        "--output-channels",
+        type=int,
+        default=23,
+        help=(
+            "Keep only the first N heatmap channels. The C++ decoder only reads "
+            "COCO-WholeBody body channels 0..22, so carrying the remaining 110 "
+            "channels moves 5.8x more data device-to-host for nothing on every "
+            "pose forward. Pass 0 to keep the full channel set."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -105,9 +116,10 @@ def main() -> None:
     model = load_model(config_path, checkpoint_path, args.device)
 
     class HeatmapWrapper(nn.Module):
-        def __init__(self, inner):
+        def __init__(self, inner, output_channels):
             super().__init__()
             self.inner = inner
+            self.output_channels = output_channels
 
         def forward(self, images):
             output = self.inner.forward(images, data_samples=None, mode="tensor")
@@ -124,9 +136,16 @@ def main() -> None:
                 raise RuntimeError(
                     f"Expected rank-4 heatmaps, got {getattr(output, 'shape', None)}"
                 )
+            if self.output_channels > 0:
+                if output.shape[1] < self.output_channels:
+                    raise RuntimeError(
+                        f"Requested {self.output_channels} output channels but the "
+                        f"model produced {output.shape[1]}"
+                    )
+                output = output[:, : self.output_channels]
             return output
 
-    wrapper = HeatmapWrapper(model).eval()
+    wrapper = HeatmapWrapper(model, args.output_channels).eval()
     sample = torch.zeros(
         1, 3, args.height, args.width, dtype=torch.float32, device=args.device)
     output_path.parent.mkdir(parents=True, exist_ok=True)

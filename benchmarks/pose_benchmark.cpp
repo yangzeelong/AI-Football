@@ -20,12 +20,12 @@ namespace {
 
 struct Options {
     std::string enginePath =
-        "/home/hx1/yzl/Work/AI-Football/models/mmpose/hrnet/hrnet-w48-dark.engine";
+        "/home/hx1/yzl/Work/AI-Football/models/mmpose/hrnet/hrnet-w48-dark-fp16-b8-fp32io.engine";
     std::string videoPath = "data/射门1-1080p60.mov";
     int iterations = 100;
     bool flipTest = true;
     bool requireDynamicBatch = true;
-    std::vector<int> batches{1, 4, 8, 16};
+    std::vector<int> batches{1, 4, 8};
 };
 
 void PrintUsage(const char* program) {
@@ -35,7 +35,7 @@ void PrintUsage(const char* program) {
         << "  --video PATH        RGB source video used for one real frame\n"
         << "  --iterations N      Timed iterations per batch (default: 100)\n"
         << "  --flip 0|1          Enable MMPose flip-test (default: 1)\n"
-        << "  --batches LIST      Comma-separated batch sizes (default: 1,4,8,16)\n"
+        << "  --batches LIST      Comma-separated batch sizes (default: 1,4,8)\n"
         << "  --allow-static      Allow a static batch-1 engine\n"
         << "  --help              Show this help\n";
 }
@@ -104,7 +104,7 @@ bool ParseOptions(int argc, char** argv, Options& options) {
 
 bool LoadFirstFrame(const std::string& path,
                    aifootball::DecodedFrameView& frame) {
-    aifootball_demo::VideoReader reader;
+    aifootball_app::VideoReader reader;
     if (!reader.Open(path)) {
         std::cerr << "Failed to open video: " << path << '\n';
         return false;

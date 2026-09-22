@@ -8,7 +8,7 @@ AI-Football pipeline.
 | Model | ONNX input | ONNX output | TensorRT binding names |
 | --- | --- | --- | --- |
 | RF-DETR small | `image`, `B x 3 x S x S`, float32 NCHW | raw `pred_boxes` + `pred_logits` | input `image`; outputs `pred_boxes` / `pred_logits` |
-| HRNet-W48-DARK | `images`, `B x 3 x 384 x 288`, float32 NCHW | `heatmaps`, `[B,133,96,72]` | `images` / `heatmaps` |
+| HRNet-W48-DARK | `images`, `B x 3 x 384 x 288`, float32 NCHW | `heatmaps`, `[B,23,96,72]` | `images` / `heatmaps` |
 
 The C++ preprocessing matches RF-DETR's Python inference path: RGB values are
 scaled to `[0, 1]`, ImageNet-normalized, and resized directly to `512 x 512`
@@ -29,22 +29,75 @@ python -m pip install -r /home/hx1/yzl/Work/AI-Football/requirements.txt
 
 TensorRT and `trtexec` must be installed on the conversion machine as well.
 TensorRT 11.1 removed the legacy `--fp16` command-line switch, so the
-builder uses the precision encoded by the ONNX graph.
+builder uses the precision encoded by the ONNX graph. See the FP16 section
+below for the supported way to request a float16 engine.
+
+## FP16 Engines
+
+Pass `--fp16` to `build_tensorrt_engines.sh` to build float16 kernels. The
+script converts the graph first (`convert_fp16_onnx.py`), because TensorRT 11
+takes the precision from the graph instead of a builder flag:
+
+```bash
+tools/model_conversion/build_tensorrt_engines.sh hrnet \
+  --onnx /home/hx1/yzl/Work/AI-Football/models/mmpose/hrnet/hrnet-w48-dark.onnx \
+  --engine /home/hx1/yzl/Work/AI-Football/models/mmpose/hrnet/hrnet-w48-dark-fp16-b8-fp32io.engine \
+  --max-batch 8 --opt-batch 4 \
+  --fp16 --python /root/miniconda3/envs/ai-football/bin/python
+
+tools/model_conversion/build_tensorrt_engines.sh rfdetr \
+  --onnx /home/hx1/yzl/Work/AI-Football/models/rfdetr/onnx/rf-detr-small-960-dynamic.onnx \
+  --engine /home/hx1/yzl/Work/AI-Football/models/rfdetr/rf-detr-small-960-fp16-b8-fp32io.engine \
+  --input-size 960 --max-batch 8 --opt-batch 4 \
+  --fp16 --python /root/miniconda3/envs/ai-football/bin/python
+```
+
+`--opt-batch` defaults to `--max-batch`; set it when the caller usually
+aggregates a smaller batch than the profile maximum, as the pose pipeline does
+with `batchFrameCount: 4`.
+
+The `fp32io` suffix is a runtime requirement, not a naming convention:
+`inference/IInferenceEngine` only accepts float32 host buffers, and the CUDA
+RF-DETR preprocess kernel refuses fp16 input bindings. Engines whose graph
+inputs and outputs were converted to fp16 as well (the Python AI-Football
+artifacts) therefore fail to load with a byte-size mismatch, e.g.
+`input 'images' byte size mismatch, expected=663552 request=1327104`. Use
+`--io-precision fp16` with `convert_fp16_onnx.py` only for consumers that read
+and write half tensors themselves.
+
+Numerically sensitive operators (`Softmax`, `LayerNormalization`, `Erf`,
+`ReduceSum`, `Sqrt`, `Resize`) stay in float32 to avoid fp16 accumulation
+error; override with repeated `--block-op`.
 
 ## HRNet-W48-DARK
+
+The exporter trims the heatmap output to the channels the decoder reads
+(`--output-channels`, default 23 = COCO-WholeBody body keypoints 0..22). The
+remaining 110 channels are copied device-to-host and averaged by the flip-test
+path on every pose forward, so carrying them costs throughput and buys nothing.
+Pass `--output-channels 0` to keep all 133 channels.
 
 ```bash
 python tools/model_conversion/export_hrnet_onnx.py \
   --config /home/hx1/yzl/Work/AI-Football/models/mmpose/configs/wholebody_2d_keypoint/topdown_heatmap/coco-wholebody/td-hm_hrnet-w48_dark-8xb32-210e_coco-wholebody-384x288.py \
   --checkpoint /home/hx1/yzl/Work/AI-Football/models/mmpose/hrnet/hrnet_w48_coco_wholebody_384x288_dark-f5726563_20200918.pth \
-  --output /home/hx1/yzl/Work/AI-Football/models/mmpose/hrnet/hrnet-w48-dark.onnx \
+  --output /home/hx1/yzl/Work/AI-Football/models/mmpose/hrnet/hrnet-w48-dark-ch23.onnx \
   --height 384 --width 288 --opset 18 --device cuda:0 --dynamic-batch
 
 tools/model_conversion/build_tensorrt_engines.sh hrnet \
-  --onnx /home/hx1/yzl/Work/AI-Football/models/mmpose/hrnet/hrnet-w48-dark.onnx \
-  --engine /home/hx1/yzl/Work/AI-Football/models/mmpose/hrnet/hrnet-w48-dark.engine \
-  --max-batch 16
+  --onnx /home/hx1/yzl/Work/AI-Football/models/mmpose/hrnet/hrnet-w48-dark-ch23.onnx \
+  --engine /home/hx1/yzl/Work/AI-Football/models/mmpose/hrnet/hrnet-w48-dark-ch23-fp16-b8-fp32io.engine \
+  --max-batch 8 --opt-batch 4 --fp16 \
+  --python /root/miniconda3/envs/ai-football/bin/python
 ```
+
+The trim is verifiable at three levels: the sliced ONNX equals
+`full_onnx[:, :23]` exactly, its deviation from the PyTorch model is unchanged
+from the full export, and a C++ run of the trimmed engine reproduces the
+133-channel engine's observations bit for bit.
+
+`HRNetPoseEstimator` reads `numKeypoints` from the engine output, so the
+`numKeypoints` entry in `config.yaml` is documentation only.
 
 ## RF-DETR
 
@@ -134,19 +187,23 @@ baked detection tensor containing six values per query.
 
 ## C++ Configuration
 
-Point `examples/aifootball_demo/config.yaml` at the generated engines. The checked-in integration
+Point `examples/aifootball_app/config.yaml` at the generated engines. The checked-in integration
 configuration already points to the generated engines under AI-Football:
 
 ```yaml
-enginePath: models/rfdetr/rf-detr-small.engine
-enginePath: models/mmpose/hrnet/hrnet-w48-dark.engine
+enginePath: /home/hx1/yzl/Work/AI-Football/models/rfdetr/rf-detr-small-960-fp16-b8-fp32io.engine
+enginePath: /home/hx1/yzl/Work/AI-Football/models/mmpose/hrnet/hrnet-w48-dark-fp16-b8-fp32io.engine
 ```
+
+Set `RFDetrDetector.maxBatchSize` and `HRNetPoseEstimator.maxBatch` to values
+the engine profile can serve. A dynamic engine reports no static batch, so the
+modules do not clamp `maxBatch` to the profile maximum on their own.
 
 From the Nexusflow repository root, build and run the complete pipeline:
 
 ```bash
 cmake --build build --parallel 4
-build/examples/aifootball_demo/aifootball_demo examples/aifootball_demo/config.yaml
+build/examples/aifootball_app/aifootball_app examples/aifootball_app/config.yaml
 ```
 
 The sample configuration reads `data/input.mp4` and writes

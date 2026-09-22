@@ -32,12 +32,23 @@ results.
 
 ```bash
 build-release/bin/pose_benchmark \
-  --engine /home/hx1/yzl/Work/AI-Football/models/mmpose/hrnet/hrnet-w48-dark.engine \
+  --engine /home/hx1/yzl/Work/AI-Football/models/mmpose/hrnet/hrnet-w48-dark-fp16-b8-fp32io.engine \
   --video data/射门1-1080p60.mov \
   --iterations 30 \
-  --flip 0 \
-  --batches 1,4,8,16
+  --flip 1 \
+  --batches 1,4,8
 ```
 
-Use `--flip 1` to measure the additional cost of MMPose flip-test TTA. This
-benchmark excludes detector, tracker, and pipeline scheduling overhead.
+Use `--flip 0` to measure the pose forward pass without MMPose flip-test TTA.
+This benchmark excludes detector, tracker, and pipeline scheduling overhead.
+
+Reference run on the fp16 engine (`--flip 1`, 30 iterations, RTX 5070 Ti):
+
+| batch | avg batch (ms) | avg person (ms) | persons/sec |
+| ---: | ---: | ---: | ---: |
+| 1 | 4.98 | 4.98 | 201 |
+| 4 | 13.61 | 3.40 | 294 |
+| 8 | 27.55 | 3.44 | 290 |
+
+Throughput saturates from batch 4 onward, and flip-test TTA doubles the
+TensorRT time (about 1.03 ms per person per pass).
