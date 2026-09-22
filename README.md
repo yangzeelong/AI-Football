@@ -41,7 +41,7 @@ Run the app with a YAML configuration:
 
 ```bash
 ./build/examples/aifootball_app/aifootball_app \
-  examples/aifootball_app/config.yaml \
+  examples/aifootball_app/config/config.yaml \
   --video_path data/射门1-1080p60.mov \
   --output_dir output/sdk_app
 ```
@@ -51,7 +51,7 @@ explicitly when needed:
 
 ```bash
 ./build/examples/aifootball_app/aifootball_app \
-  examples/aifootball_app/config.yaml \
+  examples/aifootball_app/config/config.yaml \
   --output_dir output/sdk_debug
 python3 tools/render_jsonl.py \
   --observations output/sdk_debug/observations.jsonl \

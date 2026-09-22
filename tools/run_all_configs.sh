@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 #
-# Run the three demo configs one after another, render each, and stitch the
-# results into a single side-by-side video so they can be compared in one
-# playback.
+# Run every config under examples/aifootball_app/config one after another,
+# render each, and stitch the results into a single side-by-side video so they
+# can be compared in one playback. The directory decides what runs: drop a file
+# in and it is picked up, remove one and it is skipped.
 #
-#   ./tools/run_three_configs.sh [frames] [output_root]
+#   ./tools/run_all_configs.sh [frames] [output_root]
 #
-# Defaults to 300 frames into output/three_configs. Each config writes its own
+# Defaults to 300 frames into output/configs. Each config writes its own
 # directory plus a run log; the comparison video lands in <output_root>.
 #
 # OpenCV is needed for the stitching step (cv2 in any environment that has it);
@@ -18,15 +19,10 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 frames="${1:-300}"
-out_root="${2:-output/three_configs}"
+out_root="${2:-output/configs}"
 app="build-release/bin/aifootball_app"
 python="${PYTHON:-python3}"
-
-configs=(
-    examples/aifootball_app/config.yaml
-    examples/aifootball_app/config.rfdetr960_hrnetw32_256.yaml
-    examples/aifootball_app/config.ref_rfdetr960_hrnetw48d384.yaml
-)
+config_dir="examples/aifootball_app/config"
 
 if [[ ! -x "$app" ]]; then
     echo "missing $app, build first: cmake --build build-release" >&2
@@ -37,10 +33,24 @@ if ! command -v "$python" >/dev/null 2>&1; then
     exit 1
 fi
 
-mkdir -p "$out_root"
+# Everything the config directory holds, in a stable order.
+configs=()
+while IFS= read -r file; do
+    configs+=("$file")
+done < <(find "$config_dir" -maxdepth 1 -name '*.yaml' | sort)
+if [[ ${#configs[@]} -eq 0 ]]; then
+    echo "no *.yaml under $config_dir" >&2
+    exit 1
+fi
 
-# Serial on purpose: the three runs share one GPU, so running them at the same
-# time would make both the timings and the comparison meaningless.
+mkdir -p "$out_root"
+echo "configs: ${#configs[@]}"
+for config in "${configs[@]}"; do
+    echo "  $(basename "$config")"
+done
+
+# Serial on purpose: the runs share one GPU, so running them at the same time
+# would make both the timings and the comparison meaningless.
 for config in "${configs[@]}"; do
     name="$(basename "$config" .yaml)"
     echo
@@ -50,8 +60,7 @@ for config in "${configs[@]}"; do
 done
 
 # Stitch the renders into one video: one column per config, with the config name
-# burned into each, each column scaled to the same width so the three frames
-# line up.
+# burned into each. Columns are scaled to a common width so the frames line up.
 "$python" - "$out_root" "${configs[@]}" <<'PY'
 import os
 import sys
@@ -67,11 +76,12 @@ names = [os.path.splitext(os.path.basename(path))[0] for path in configs]
 paths = [os.path.join(out_root, name, "rendered.mp4") for name in names]
 
 caps = [cv2.VideoCapture(path) for path in paths]
-for name, cap, path in zip(names, caps, paths):
+for cap, path in zip(caps, paths):
     if not cap.isOpened():
         sys.exit("cannot open %s" % path)
 
-column_width = 1280
+# Keep the stitched frame a reasonable size however many configs there are.
+column_width = max(480, 3840 // len(caps))
 fps = caps[0].get(cv2.CAP_PROP_FPS) or 30.0
 columns = []
 for cap in caps:
@@ -100,7 +110,6 @@ while True:
                 frame = cv2.resize(frame, (tile_width, tile_height))
         else:
             frame = np.zeros((tile_height, tile_width, 3), np.uint8)
-        # Label the column with the config it came from.
         cv2.putText(frame, name, (24, tile_height - 28),
                     cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
         tiles.append(frame)

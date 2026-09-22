@@ -232,7 +232,7 @@ baked detection tensor containing six values per query.
 
 ## C++ Configuration
 
-Point `examples/aifootball_app/config.yaml` at the generated engines. The checked-in integration
+Point `examples/aifootball_app/config/config.yaml` at the generated engines. The checked-in integration
 configuration already points to the generated engines under AI-Football:
 
 ```yaml
@@ -248,7 +248,7 @@ From the Nexusflow repository root, build and run the complete pipeline:
 
 ```bash
 cmake --build build --parallel 4
-build/examples/aifootball_app/aifootball_app examples/aifootball_app/config.yaml
+build/examples/aifootball_app/aifootball_app examples/aifootball_app/config/config.yaml
 ```
 
 The sample configuration reads `data/input.mp4` and writes
