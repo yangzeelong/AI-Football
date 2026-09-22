@@ -368,12 +368,13 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
         PersonPose& pp = results[i];
 
         pp.trackId = persons[i].trackId;
-        // Report the pose crop box, not the detector box, matching Python:
-        // its pose estimator hands back the expanded box it cropped, and the
-        // observation writer publishes that. Keypoints come from the same crop,
-        // so the two stay consistent, and the center is preserved by the
-        // expansion. Same call as the preprocessing loop above, so the box
-        // cannot drift from the crop it describes.
+        // Two boxes, because Python has two: x0..y1 is the pose crop box its
+        // estimator returns and the observation writer publishes, while
+        // detectorX0..detectorY1 is the detector box it draws on the frame.
+        // Same ExpandPoseBox call as the preprocessing loop above, so the crop
+        // box cannot drift from the crop it describes.
+        pp.detectorX0 = persons[i].x0; pp.detectorY0 = persons[i].y0;
+        pp.detectorX1 = persons[i].x1; pp.detectorY1 = persons[i].y1;
         float boxX0 = persons[i].x0, boxY0 = persons[i].y0;
         float boxX1 = persons[i].x1, boxY1 = persons[i].y1;
         ExpandPoseBox(boxX0, boxY0, boxX1, boxY1, persons[i].frameW,

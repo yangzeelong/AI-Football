@@ -77,7 +77,11 @@ struct KeypointResult {
 
 struct PersonResult {
     int trackId = -1;
+    /// Pose crop box. Published as the person bbox in the observations JSONL.
     std::array<float, 4> bbox{{0.0f, 0.0f, 0.0f, 0.0f}};
+    /// Detector box the pose crop was expanded from, for overlays that mark
+    /// detections the way the Python renderer does.
+    std::array<float, 4> detectionBbox{{0.0f, 0.0f, 0.0f, 0.0f}};
     float confidence = 0.0f;
     std::array<KeypointResult, 26> keypoints{};
 };
@@ -115,6 +119,9 @@ struct RejectedBallResult {
 struct ProcessResult {
     uint64_t frameId = 0;
     double timestampSec = 0.0;
+    /// `bbox` is the pose crop box, which is what the observations JSONL
+    /// publishes; `detectionBbox` is the detector box the crop came from, which
+    /// is what the Python renderer draws.
     std::vector<PersonResult> persons;
     std::vector<BallResult> balls;
     /// Ball detections the frame was processed from: kept by the filters plus

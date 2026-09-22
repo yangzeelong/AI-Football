@@ -444,8 +444,18 @@ void VideoRenderer::DrawOverlay(
     std::string& rgb, const aifootball::ProcessResult& result) const {
     DrawRoi(rgb, m_width, m_height, m_roi);
     for (const auto& person : result.persons) {
-        DrawRect(rgb, m_width, m_height, person.bbox[0], person.bbox[1],
-                 person.bbox[2], person.bbox[3], 50, 230, 80);
+        // The detector box, as Python draws it: person.bbox is the larger pose
+        // crop box the observation writer publishes instead.
+        DrawRect(rgb, m_width, m_height, person.detectionBbox[0],
+                 person.detectionBbox[1], person.detectionBbox[2],
+                 person.detectionBbox[3], 50, 230, 80);
+        char label[48] = {};
+        std::snprintf(label, sizeof(label), "person %.2f id=%d",
+                      person.confidence, person.trackId);
+        DrawText(rgb, m_width, m_height, label,
+                 static_cast<int>(std::lround(person.detectionBbox[0])),
+                 std::max(0, static_cast<int>(std::lround(person.detectionBbox[1])) - 18),
+                 kLabelScale, 50, 230, 80);
         DrawPose(rgb, m_width, m_height, person);
     }
     // Balls the box filters dropped, coloured by reason like Python does:
@@ -474,8 +484,12 @@ void VideoRenderer::DrawOverlay(
     for (const auto& detection : result.ballDetections) {
         DrawRect(rgb, m_width, m_height, detection.bbox[0], detection.bbox[1],
                  detection.bbox[2], detection.bbox[3], 255, 80, 40);
-        char label[24] = {};
-        std::snprintf(label, sizeof(label), "%.2f", detection.confidence);
+        // Python labels detections "<class> <conf>", and appends the track id
+        // for classes its tracker follows. Our tracker does not follow balls,
+        // so there is no id to show.
+        char label[40] = {};
+        std::snprintf(label, sizeof(label), "sports ball %.2f",
+                      detection.confidence);
         DrawText(rgb, m_width, m_height, label,
                  static_cast<int>(std::lround(detection.bbox[0])),
                  std::max(0, static_cast<int>(std::lround(detection.bbox[1])) - 18),

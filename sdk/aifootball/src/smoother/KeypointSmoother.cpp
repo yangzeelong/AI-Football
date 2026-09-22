@@ -101,6 +101,8 @@ void KeypointSmoother::SmoothPerson(const PersonPose& in, TrackHistory& h,
     // Copy detection-level fields.
     out.trackId = in.trackId;
     out.x0 = in.x0; out.y0 = in.y0; out.x1 = in.x1; out.y1 = in.y1;
+    out.detectorX0 = in.detectorX0; out.detectorY0 = in.detectorY0;
+    out.detectorX1 = in.detectorX1; out.detectorY1 = in.detectorY1;
     out.detectionConfidence = in.detectionConfidence;
 
     if (!m_param.enabled || !h.hasPrev) {

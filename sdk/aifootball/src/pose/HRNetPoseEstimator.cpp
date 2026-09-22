@@ -198,10 +198,16 @@ void HRNetPoseEstimator::DrainPending() {
             for (const auto& person : frame.persons) {
                 PersonPose pose;
                 pose.trackId = person.trackId;
+                // No pose inference ran, so there is no expanded crop: both
+                // boxes are the detector box.
                 pose.x0 = person.x0;
                 pose.y0 = person.y0;
                 pose.x1 = person.x1;
                 pose.y1 = person.y1;
+                pose.detectorX0 = person.x0;
+                pose.detectorY0 = person.y0;
+                pose.detectorX1 = person.x1;
+                pose.detectorY1 = person.y1;
                 pose.detectionConfidence = person.score;
                 out.persons.push_back(std::move(pose));
             }

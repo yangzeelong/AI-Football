@@ -154,6 +154,8 @@ ProcessResult ConvertResult(const ResultPacket& packet) {
         PersonResult result;
         result.trackId = person.trackId;
         result.bbox = {{person.x0, person.y0, person.x1, person.y1}};
+        result.detectionBbox = {{person.detectorX0, person.detectorY0,
+                                 person.detectorX1, person.detectorY1}};
         result.confidence = person.detectionConfidence;
         for (int i = 0; i < kProjectKeypointCount; ++i) {
             result.keypoints[static_cast<std::size_t>(i)] = {

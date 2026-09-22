@@ -254,8 +254,13 @@ struct Keypoint2D {
 
 struct PersonPose {
     int   trackId = -1;
-    // Detection bbox (original frame coords)
+    // Pose crop box in original frame coords: the detector box expanded by the
+    // pose estimator. Python's estimator hands this box back and the
+    // observation writer publishes it, so it is the public person bbox.
     float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    // Detector box the crop above was expanded from. Python draws this one as
+    // the person detection box, so the renderer needs it too.
+    float detectorX0 = 0, detectorY0 = 0, detectorX1 = 0, detectorY1 = 0;
     float detectionConfidence = 0.0f;
     // 26 keypoints in *original frame* coordinates.
     Keypoint2D keypoints[kProjectKeypointCount];
