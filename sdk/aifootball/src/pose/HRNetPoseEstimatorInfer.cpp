@@ -368,10 +368,18 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
         PersonPose& pp = results[i];
 
         pp.trackId = persons[i].trackId;
-        // Keep the detector/tracker box in the public result. The expanded
-        // crop is only an internal pose-inference input.
-        pp.x0 = persons[i].x0; pp.y0 = persons[i].y0;
-        pp.x1 = persons[i].x1; pp.y1 = persons[i].y1;
+        // Report the pose crop box, not the detector box, matching Python:
+        // its pose estimator hands back the expanded box it cropped, and the
+        // observation writer publishes that. Keypoints come from the same crop,
+        // so the two stay consistent, and the center is preserved by the
+        // expansion. Same call as the preprocessing loop above, so the box
+        // cannot drift from the crop it describes.
+        float boxX0 = persons[i].x0, boxY0 = persons[i].y0;
+        float boxX1 = persons[i].x1, boxY1 = persons[i].y1;
+        ExpandPoseBox(boxX0, boxY0, boxX1, boxY1, persons[i].frameW,
+                      persons[i].frameH);
+        pp.x0 = boxX0; pp.y0 = boxY0;
+        pp.x1 = boxX1; pp.y1 = boxY1;
         pp.detectionConfidence = persons[i].score;
 
         DecodeHeatmaps(hm, m_param.numKeypoints,
