@@ -77,31 +77,32 @@ void Worker::WorkLoop() {
         // waiting for work and the time spent processing it. The difference
         // tells a starved stage (waiting on upstream) from a bottleneck stage
         // (busy), which is what pipeline-level throughput tuning needs.
-        const std::string waitTimer =
-            "Worker.Wait." + m_modulePtr->GetModuleName();
-        const std::string processTimer =
-            "Worker.Process." + m_modulePtr->GetModuleName();
+        // Labels carry the driven module so the profile reads
+        // "Worker.Wait.<Module>" / "Worker.Process.<Module>".
+        const std::string moduleName = m_modulePtr->GetModuleName();
 
         while (!m_stopFlag.load()) {
             if (isSourceModule) {
                 // Source Module Loop
                 Message emptyMessage;
-                auto timer = TimerRegistry::Instance().ScopeAverageMs(
-                    processTimer, 1, 5000);
+                TIMER_SCOPE_AVERAGE_MS("Worker.Process." + moduleName, 5000);
                 m_modulePtr->ProcessTimed(emptyMessage);
             } else {
                 // Sink or Filter/Transformer Module Loop
                 std::vector<Message> batchMessage;
                 {
-                    auto timer = TimerRegistry::Instance().ScopeAverageMs(
-                        waitTimer, 1, 5000);
+                    TIMER_SCOPE_AVERAGE_MS("Worker.Wait." + moduleName, 5000);
                     batchMessage = PullBatchMessage(kMaxBatchSize, kBatchTimeout);
                 }
                 if (batchMessage.empty()) continue;
 
-                auto timer = TimerRegistry::Instance().ScopeAverageMs(
-                    processTimer, batchMessage.size(), 5000);
+                // One item per message in the batch, so the reported cost is
+                // per message rather than per dispatch.
+                TIMER_START_AVERAGE_MS("Worker.Process." + moduleName, 5000);
+                TIMER_INCREMENT_AVERAGE("Worker.Process." + moduleName,
+                                        static_cast<uint64_t>(batchMessage.size()));
                 m_modulePtr->ProcessBatch(batchMessage);
+                TIMER_STOP_AVERAGE("Worker.Process." + moduleName);
             }
         }
     }

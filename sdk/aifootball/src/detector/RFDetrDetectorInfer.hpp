@@ -22,6 +22,9 @@ struct Detection {
 class RFDetrDetectorInfer {
 public:
     struct Param {
+        /// Owning module name; prefixes every timer this instance records.
+        /// RFDetrDetector::Configure() overwrites it with GetModuleName().
+        std::string moduleName           = "RFDetrDetector";
         std::string enginePath;
         std::string inputBindingName   = "image";
         std::string outputBindingName  = "detections";

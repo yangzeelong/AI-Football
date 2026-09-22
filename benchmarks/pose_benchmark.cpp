@@ -151,10 +151,9 @@ void PrintPoseTimers() {
     for (const auto& item : stats) {
         if (item.name.find("PoseEstimator.") != 0) continue;
         std::cout << "    " << std::left << std::setw(30) << item.name
-                  << "samples=" << std::setw(6) << item.samples
-                  << "work=" << std::setw(6) << item.workUnits
-                  << "avg_batch_ms=" << std::setw(10) << item.AvgBatchMs()
-                  << "avg_item_ms=" << item.AvgItemMs() << '\n';
+                  << "items=" << std::setw(6) << item.items
+                  << "avg_ms=" << std::setw(10) << item.AvgItemMs()
+                  << "p95_ms=" << item.p95Ms << '\n';
     }
 }
 

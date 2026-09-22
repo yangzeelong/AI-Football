@@ -14,6 +14,9 @@ namespace pose {
 class HRNetPoseEstimatorInfer {
 public:
     struct Param {
+        /// Owning module name; prefixes every timer this instance records.
+        /// HRNetPoseEstimator::Configure() overwrites it with GetModuleName().
+        std::string moduleName        = "HRNetPoseEstimator";
         std::string enginePath;
         std::string inputBindingName  = "images";
         std::string outputBindingName = "heatmaps";

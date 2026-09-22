@@ -66,26 +66,59 @@ void PrintTimerSnapshot() {
         return lhs.totalMs > rhs.totalMs;
     });
 
-    std::cout << "\nTimer profile:\n";
+    std::cout << "\nTimer profile (per item):\n";
     std::cout << std::left << std::setw(32) << "name"
-              << std::right << std::setw(10) << "samples"
-              << std::setw(12) << "work"
+              << std::right << std::setw(12) << "items"
               << std::setw(14) << "avg_ms"
-              << std::setw(14) << "item_ms"
+              << std::setw(12) << "p95_ms"
               << std::setw(14) << "total_ms"
               << std::setw(12) << "min_ms"
-              << std::setw(12) << "max_ms" << '\n';
+              << std::setw(12) << "max_ms"
+              << ' ' << std::left << "where" << '\n';
     std::cout << std::fixed << std::setprecision(3);
     for (const auto& item : stats) {
         std::cout << std::left << std::setw(32) << item.name
-                  << std::right << std::setw(10) << item.samples
-                  << std::setw(12) << item.workUnits
-                  << std::setw(14) << item.AvgBatchMs()
+                  << std::right << std::setw(12) << item.items
                   << std::setw(14) << item.AvgItemMs()
+                  << std::setw(12) << item.p95Ms
                   << std::setw(14) << item.totalMs
                   << std::setw(12) << item.minMs
-                  << std::setw(12) << item.maxMs << '\n';
+                  << std::setw(12) << item.maxMs
+                  << ' ' << std::left << item.Where() << '\n';
     }
+}
+
+/// Wall-clock summary. The per-module timers report service time; only this
+/// number reflects the rate a consumer of the pipeline actually gets, so the
+/// demo prints it even when the timer profile is off.
+void PrintThroughput(
+    const std::chrono::steady_clock::time_point& runStarted,
+    const std::chrono::steady_clock::time_point& processingStarted,
+    const std::chrono::steady_clock::time_point& processingEnded,
+    int processedFrames, const AppResources& resources) {
+    auto secondsBetween = [](const std::chrono::steady_clock::time_point& from,
+                             const std::chrono::steady_clock::time_point& to) {
+        return std::chrono::duration<double>(to - from).count();
+    };
+    const double startupSec = secondsBetween(runStarted, processingStarted);
+    const double processingSec = secondsBetween(processingStarted, processingEnded);
+
+    std::cout << "\nThroughput:\n";
+    std::cout << std::fixed << std::setprecision(3)
+              << "  startup        : " << startupSec << " s\n"
+              << "  processing     : " << processingSec << " s\n"
+              << "  frames         : " << processedFrames << '\n'
+              << "  effective rate : "
+              << (processingSec > 0.0
+                      ? static_cast<double>(processedFrames) / processingSec
+                      : 0.0)
+              << " FPS\n"
+              << "  per frame      : "
+              << (processedFrames > 0
+                      ? processingSec * 1000.0 / static_cast<double>(processedFrames)
+                      : 0.0)
+              << " ms\n"
+              << "  observations   : " << resources.observationsPath << '\n';
 }
 
 bool PrepareResources(const RunOptions& options,
@@ -248,11 +281,9 @@ bool ProcessVideo(const RunOptions& options, AppResources& resources,
                 return false;
             }
             const auto frameEnd = std::chrono::steady_clock::now();
-            nexusflow::TimerRegistry::Instance().AddSample(
-                "App.ProduceInterval",
-                std::chrono::duration<double, std::milli>(
-                    frameEnd - lastFrameEnd).count(),
-                1);
+            const double frameMs = std::chrono::duration<double, std::milli>(
+                frameEnd - lastFrameEnd).count();
+            TIMER_ADD_ITEMS("App.ProduceInterval", frameMs, 1);
             lastFrameEnd = frameEnd;
             return true;
         });
@@ -279,6 +310,8 @@ int RunApp(const RunOptions& options, const aifootball_app::AppConfig& config) {
     AppResources resources;
     if (!PrepareResources(options, config, resources)) return 2;
 
+    const auto runStarted = std::chrono::steady_clock::now();
+
     try {
         aifootball::AIFootballContext context = config.Context();
         context.configPath = options.configPath;
@@ -290,16 +323,22 @@ int RunApp(const RunOptions& options, const aifootball_app::AppConfig& config) {
             return 2;
         }
 
+        // Everything above is startup (video open, engine load, actor launch);
+        // the wall clock below covers only frame processing.
+        const auto processingStarted = std::chrono::steady_clock::now();
         int processedFrames = 0;
         if (!ProcessVideo(options, resources, *pipeline, processedFrames)) {
             pipeline->DeInit();
             return 2;
         }
+        const auto processingEnded = std::chrono::steady_clock::now();
         if (pipeline->DeInit() != nexusflow::SUCCESS) {
             LOG_ERROR("Failed to deinitialize AI-Football SDK pipeline");
             return 2;
         }
         if (options.profileTimers) PrintTimerSnapshot();
+        PrintThroughput(runStarted, processingStarted, processingEnded,
+                        processedFrames, resources);
         LOG_INFO("AI-Football SDK app processed {} frames, observations='{}'",
                  processedFrames, resources.observationsPath);
         return 0;

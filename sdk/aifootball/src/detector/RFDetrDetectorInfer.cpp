@@ -182,7 +182,8 @@ bool RFDetrDetectorInfer::InferBatch(const std::vector<FrameInput>& frames,
                   B, m_effectiveMaxBatch);
         return false;
     }
-    TIMER_SCOPE_AVERAGE_MS("Detector.Batch", static_cast<uint64_t>(B), 5000);
+    TIMER_SCOPE_AVERAGE_MS(m_param.moduleName + ".Batch", 5000);
+    TIMER_INCREMENT_AVERAGE(m_param.moduleName + ".Batch", static_cast<uint64_t>(B));
     const size_t perFrameFloats = static_cast<size_t>(m_param.inputSize) * m_param.inputSize * 3;
     inference::Dims batchDims(B, 3, m_param.inputSize, m_param.inputSize);
     const size_t batchInputBytes = B * perFrameFloats * sizeof(float);
@@ -191,18 +192,23 @@ bool RFDetrDetectorInfer::InferBatch(const std::vector<FrameInput>& frames,
     std::vector<ResizeInfo> resizeInfos(B);
     bool usedGpuPreprocess = false;
     {
-        TIMER_SCOPE_AVERAGE_MS("Detector.Preprocess", static_cast<uint64_t>(B), 5000);
+        TIMER_SCOPE_AVERAGE_MS(m_param.moduleName + ".Preprocess", 5000);
+        TIMER_INCREMENT_AVERAGE(m_param.moduleName + ".Preprocess",
+                                static_cast<uint64_t>(B));
         if (m_gpuPreprocessAvailable) {
 #ifdef WITH_CUDA_KERNELS
             auto* trtEngine = dynamic_cast<inference::TensorRTEngine*>(m_engine.get());
             void* stream = trtEngine ? trtEngine->GetCudaStream() : nullptr;
             void* inputDevice = nullptr;
             {
-                TIMER_SCOPE_AVERAGE_MS("Detector.PrepareInput", static_cast<uint64_t>(B), 5000);
+                TIMER_START_AVERAGE_MS(m_param.moduleName + ".PrepareInput", 5000);
+                TIMER_INCREMENT_AVERAGE(m_param.moduleName + ".PrepareInput",
+                                        static_cast<uint64_t>(B));
                 inputDevice = trtEngine
                     ? trtEngine->PrepareInputDevice(m_param.inputBindingName,
                                                      batchInputBytes, batchDims)
                     : nullptr;
+                TIMER_STOP_AVERAGE(m_param.moduleName + ".PrepareInput");
             }
             usedGpuPreprocess = inputDevice != nullptr && stream != nullptr &&
                                 PreprocessToGpu(frames, resizeInfos, inputDevice, stream);
@@ -235,9 +241,13 @@ bool RFDetrDetectorInfer::InferBatch(const std::vector<FrameInput>& frames,
 
     // --- Engine inference ---
     {
-        TIMER_SCOPE_AVERAGE_MS("Detector.TensorRT", static_cast<uint64_t>(B), 5000);
+        TIMER_SCOPE_AVERAGE_MS(m_param.moduleName + ".TensorRT", 5000);
+        TIMER_INCREMENT_AVERAGE(m_param.moduleName + ".TensorRT",
+                                static_cast<uint64_t>(B));
         if (!usedGpuPreprocess) {
-            TIMER_SCOPE_AVERAGE_MS("Detector.InputH2D", static_cast<uint64_t>(B), 5000);
+            TIMER_SCOPE_AVERAGE_MS(m_param.moduleName + ".InputH2D", 5000);
+            TIMER_INCREMENT_AVERAGE(m_param.moduleName + ".InputH2D",
+                                    static_cast<uint64_t>(B));
             if (!m_engine->SetInputFromHost(m_param.inputBindingName,
                                             m_inputHost.Data(), batchInputBytes, batchDims)) {
                 LOG_ERROR("RFDetrDetectorInfer: SetInputFromHost failed");
@@ -252,7 +262,9 @@ bool RFDetrDetectorInfer::InferBatch(const std::vector<FrameInput>& frames,
 
     // --- Postprocess per frame ---
     {
-        TIMER_SCOPE_AVERAGE_MS("Detector.Postprocess", static_cast<uint64_t>(B), 5000);
+        TIMER_SCOPE_AVERAGE_MS(m_param.moduleName + ".Postprocess", 5000);
+        TIMER_INCREMENT_AVERAGE(m_param.moduleName + ".Postprocess",
+                                static_cast<uint64_t>(B));
         results.resize(B);
         for (int i = 0; i < B; ++i) {
         std::vector<RawBox> rawBoxes;
@@ -265,7 +277,9 @@ bool RFDetrDetectorInfer::InferBatch(const std::vector<FrameInput>& frames,
                 return false;
             }
             if (i == 0) {
-                TIMER_SCOPE_AVERAGE_MS("Detector.CopyOutput", static_cast<uint64_t>(B), 5000);
+                TIMER_SCOPE_AVERAGE_MS(m_param.moduleName + ".CopyOutput", 5000);
+                TIMER_INCREMENT_AVERAGE(m_param.moduleName + ".CopyOutput",
+                                        static_cast<uint64_t>(B));
                 if (!m_engine->CopyOutputToHost(m_param.outputBindingName,
                                                 m_outputHost.Data(),
                                                 totalOut * sizeof(float))) {
@@ -292,7 +306,9 @@ bool RFDetrDetectorInfer::InferBatch(const std::vector<FrameInput>& frames,
             }
 
             if (i == 0) {
-                TIMER_SCOPE_AVERAGE_MS("Detector.CopyOutput", static_cast<uint64_t>(B), 5000);
+                TIMER_SCOPE_AVERAGE_MS(m_param.moduleName + ".CopyOutput", 5000);
+                TIMER_INCREMENT_AVERAGE(m_param.moduleName + ".CopyOutput",
+                                        static_cast<uint64_t>(B));
                 // Both tensors travel on one stream sync; RF-DETR has no reason
                 // to drain the device once per output tensor.
                 if (!m_engine->CopyOutputsToHost(
@@ -570,7 +586,7 @@ bool RFDetrDetectorInfer::PreprocessToGpu(
         frameInfo[i].valid = valid ? 1 : 0;
 
         if (valid) {
-            TIMER_SCOPE_AVERAGE_MS("Detector.RawH2D", 1, 5000);
+            TIMER_SCOPE_AVERAGE_MS(m_param.moduleName + ".RawH2D", 5000);
             if (cudaMemcpyAsync(
                     static_cast<uint8_t*>(m_rgbDevice) + i * m_rgbStrideBytes,
                     frame.rgb, expectedBytes, cudaMemcpyHostToDevice,
@@ -582,7 +598,11 @@ bool RFDetrDetectorInfer::PreprocessToGpu(
     }
 
     {
-        TIMER_SCOPE_AVERAGE_MS("Detector.FrameInfoH2D", 1, 5000);
+        TIMER_SCOPE_AVERAGE_MS(m_param.moduleName + ".FrameInfoH2D", 5000);
+        // One upload per batch, but one metadata record per frame: normalizing
+        // by the batch keeps it comparable with .RawH2D, which runs per frame.
+        TIMER_INCREMENT_AVERAGE(m_param.moduleName + ".FrameInfoH2D",
+                                static_cast<uint64_t>(batch));
         if (cudaMemcpyAsync(m_frameInfoDevice, frameInfo.data(), infoBytes,
                             cudaMemcpyHostToDevice,
                             static_cast<cudaStream_t>(stream)) != cudaSuccess) {
@@ -592,7 +612,9 @@ bool RFDetrDetectorInfer::PreprocessToGpu(
     }
 
     {
-        TIMER_SCOPE_AVERAGE_MS("Detector.PreprocessKernel", batch, 5000);
+        TIMER_SCOPE_AVERAGE_MS(m_param.moduleName + ".PreprocessKernel", 5000);
+        TIMER_INCREMENT_AVERAGE(m_param.moduleName + ".PreprocessKernel",
+                                static_cast<uint64_t>(batch));
         if (!LaunchRfdetrGpuPreprocess(
                 static_cast<const uint8_t*>(m_rgbDevice), m_rgbStrideBytes,
                 static_cast<const RfdetrGpuFrameInfo*>(m_frameInfoDevice),

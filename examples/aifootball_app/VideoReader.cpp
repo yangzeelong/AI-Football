@@ -60,8 +60,7 @@ bool VideoReader::EmitFrame(const FrameCallback& callback) {
     {
         // Only the conversion is timed here: the callback below submits the
         // frame to the pipeline and can block on queue backpressure.
-        auto timer = nexusflow::TimerRegistry::Instance().ScopeAverageMs(
-            "Video.ColorConvert", 1, 5000);
+        TIMER_SCOPE_AVERAGE_MS("Video.ColorConvert", 5000);
         m_sws = sws_getCachedContext(
             m_sws, m_width, m_height, static_cast<AVPixelFormat>(m_frame->format),
             m_width, m_height, AV_PIX_FMT_RGB24, SWS_BILINEAR,
@@ -165,17 +164,25 @@ bool VideoReader::Decode(const FrameCallback& callback) {
 }
 
 void VideoReader::Cleanup() {
-    if (m_rgbAllocations > 0) {
-        // Every extra allocation is a frame that could not be served by the
-        // ring: the pipeline held more frames in flight than there were slots,
-        // so the reader allocated instead of reusing. Raise rgbRingSize (or
-        // lower algorithm.maxPendingFrames) to remove the churn.
-        LOG_WARN("VideoReader: rgbRingSize={} was too small; allocated {} extra "
-                 "frames ({:.1f} MB of malloc/free churn)",
-                 m_rgbRing.size(), m_rgbAllocations,
-                 m_rgbAllocations * static_cast<double>(m_rgbBytes) / (1024.0 * 1024.0));
-        m_rgbAllocations = 0;
+    // The ring fills up to the pipeline's steady-state in-flight depth, so a
+    // healthy configuration still allocates for its first frames. Only report
+    // a ring that had to allocate on most frames: that is what an undersized
+    // rgbRingSize (or an inflated algorithm.maxPendingFrames) looks like, and
+    // it means a multi-megabyte malloc/free per frame.
+    const std::size_t processed = static_cast<std::size_t>(m_frameIndex);
+    if (m_rgbAllocations > 0 && processed > 0 &&
+        m_rgbAllocations * 2 > processed) {
+        LOG_WARN("VideoReader: rgbRingSize={} served only {:.1f}% of frames; "
+                 "allocated {} extra buffers ({:.1f} MB of malloc/free churn). "
+                 "Raise rgbRingSize or lower algorithm.maxPendingFrames.",
+                 m_rgbRing.size(),
+                 100.0 * static_cast<double>(processed - m_rgbAllocations) /
+                     static_cast<double>(processed),
+                 m_rgbAllocations,
+                 m_rgbAllocations * static_cast<double>(m_rgbBytes) /
+                     (1024.0 * 1024.0));
     }
+    m_rgbAllocations = 0;
     if (m_sws) sws_freeContext(m_sws);
     if (m_packet) av_packet_free(&m_packet);
     if (m_frame) av_frame_free(&m_frame);

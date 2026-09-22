@@ -223,7 +223,8 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
                   B, m_effectiveMaxBatch);
         return false;
     }
-    TIMER_SCOPE_AVERAGE_MS("PoseEstimator.Batch", static_cast<uint64_t>(B), 5000);
+    TIMER_SCOPE_AVERAGE_MS(m_param.moduleName + ".Batch", 5000);
+    TIMER_INCREMENT_AVERAGE(m_param.moduleName + ".Batch", static_cast<uint64_t>(B));
     const size_t perPersonInput  = static_cast<size_t>(3) * m_param.inputHeight * m_param.inputWidth;
     const size_t perPersonOutput = static_cast<size_t>(m_param.numKeypoints) *
                                    m_param.heatmapHeight * m_param.heatmapWidth;
@@ -232,7 +233,9 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
     std::vector<CropTransform> crops(B);
 
     {
-        TIMER_SCOPE_AVERAGE_MS("PoseEstimator.Preprocess", static_cast<uint64_t>(B), 5000);
+        TIMER_START_AVERAGE_MS(m_param.moduleName + ".Preprocess", 5000);
+        TIMER_INCREMENT_AVERAGE(m_param.moduleName + ".Preprocess",
+                                static_cast<uint64_t>(B));
         for (int i = 0; i < B; ++i) {
             const auto& p = persons[i];
             float x0 = p.x0, y0 = p.y0, x1 = p.x1, y1 = p.y1;
@@ -241,6 +244,7 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
             PreprocessCrop(p.frameRgb, p.frameW, p.frameH, crops[i],
                            m_inputHost.Data() + i * perPersonInput);
         }
+        TIMER_STOP_AVERAGE(m_param.moduleName + ".Preprocess");
     }
 
     // Run MMPose flip-test in one TensorRT batch when there is enough engine
@@ -263,7 +267,13 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
     size_t batchInputBytes = static_cast<size_t>(engineBatch) * perPersonInput * sizeof(float);
 
     {
-        TIMER_SCOPE_AVERAGE_MS("PoseEstimator.TensorRT", static_cast<uint64_t>(engineBatch), 5000);
+        TIMER_SCOPE_AVERAGE_MS(m_param.moduleName + ".TensorRT", 5000);
+        // One item per person, not per engine slot: folding the flip pass into
+        // the same enqueue widens the batch, which is an implementation detail
+        // of this call and not more work per person. Counting engineBatch here
+        // would halve the reported per-person cost whenever flipTest is on.
+        TIMER_INCREMENT_AVERAGE(m_param.moduleName + ".TensorRT",
+                                static_cast<uint64_t>(B));
         if (!m_engine->SetInputFromHost(m_param.inputBindingName,
                                         m_inputHost.Data(), batchInputBytes, batchDims)) {
             LOG_ERROR("HRNetPoseEstimatorInfer: SetInputFromHost failed");
@@ -290,7 +300,9 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
             for (int i = 0; i < B; ++i) {
                 FlipInput(m_inputHost.Data() + static_cast<size_t>(i) * perPersonInput);
             }
-            TIMER_SCOPE_AVERAGE_MS("PoseEstimator.TensorRTFlip", static_cast<uint64_t>(B), 5000);
+            TIMER_SCOPE_AVERAGE_MS(m_param.moduleName + ".TensorRTFlip", 5000);
+            TIMER_INCREMENT_AVERAGE(m_param.moduleName + ".TensorRTFlip",
+                                    static_cast<uint64_t>(B));
             if (!m_engine->SetInputFromHost(m_param.inputBindingName,
                                             m_inputHost.Data(), flipBatchInputBytes, flipBatchDims) ||
                 !m_engine->Infer()) {
@@ -347,7 +359,9 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
 
     // --- Decode heatmaps + inverse map to original frame coords ---
     {
-        TIMER_SCOPE_AVERAGE_MS("PoseEstimator.Postprocess", static_cast<uint64_t>(B), 5000);
+        TIMER_START_AVERAGE_MS(m_param.moduleName + ".Postprocess", 5000);
+        TIMER_INCREMENT_AVERAGE(m_param.moduleName + ".Postprocess",
+                                static_cast<uint64_t>(B));
         results.resize(B);
         for (int i = 0; i < B; ++i) {
         const float* hm = m_outputHost.Data() + i * perPersonOutput;
@@ -376,6 +390,7 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
                                 pp.keypoints[k].y * scaleY;
         }
     }
+        TIMER_STOP_AVERAGE(m_param.moduleName + ".Postprocess");
     }
     return true;
 }

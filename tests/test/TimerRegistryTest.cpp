@@ -6,32 +6,54 @@
 #include <thread>
 #include <vector>
 
+using nexusflow::TimerPrintPolicy;
 using nexusflow::TimerRegistry;
 using nexusflow::TimerStats;
 
-TEST(TimerRegistryTest, AggregatesBatchAndItemMetrics) {
+TEST(TimerRegistryTest, CountsOneItemPerMeasurementByDefault) {
     auto& registry = TimerRegistry::Instance();
     registry.Reset();
 
-    registry.AddSample("test.aggregate", 10.0, 2);
-    registry.AddSample("test.aggregate", 20.0, 3);
+    registry.AddItems("test.aggregate", 10.0);
+    registry.AddItems("test.aggregate", 20.0);
 
     TimerStats stats;
     ASSERT_TRUE(registry.GetStats("test.aggregate", stats));
-    EXPECT_EQ(stats.samples, 2U);
-    EXPECT_EQ(stats.workUnits, 5U);
+    EXPECT_EQ(stats.items, 2U);
     EXPECT_DOUBLE_EQ(stats.totalMs, 30.0);
-    EXPECT_DOUBLE_EQ(stats.AvgBatchMs(), 15.0);
-    EXPECT_DOUBLE_EQ(stats.AvgItemMs(), 6.0);
-    EXPECT_DOUBLE_EQ(stats.BatchQps(), 200.0 / 3.0);
-    EXPECT_DOUBLE_EQ(stats.Qps(), 500.0 / 3.0);
+    // Every duration is per item, so a two-item timer reports both samples.
+    EXPECT_DOUBLE_EQ(stats.AvgItemMs(), 15.0);
+    EXPECT_DOUBLE_EQ(stats.ItemQps(), 200.0 / 3.0);
+    EXPECT_DOUBLE_EQ(stats.minMs, 10.0);
+    EXPECT_DOUBLE_EQ(stats.maxMs, 20.0);
+    // Nearest rank over both items: 0.95 * (2 - 1) rounds to the maximum.
+    EXPECT_DOUBLE_EQ(stats.p95Ms, 20.0);
 }
 
-TEST(TimerRegistryTest, SupportsScopedAndIncrementedSamples) {
+TEST(TimerRegistryTest, DeclaredItemsNormalizeEveryDuration) {
     auto& registry = TimerRegistry::Instance();
     registry.Reset();
 
-    registry.StartAverageMs("test.scoped", 1000);
+    // One measurement covering four items: the reported numbers describe a
+    // single item, both in the average and in the extremes.
+    registry.AddItems("test.batch", 40.0, 4);
+    registry.AddItems("test.batch", 80.0, 8);
+
+    TimerStats stats;
+    ASSERT_TRUE(registry.GetStats("test.batch", stats));
+    EXPECT_EQ(stats.items, 12U);
+    EXPECT_DOUBLE_EQ(stats.totalMs, 120.0);
+    EXPECT_DOUBLE_EQ(stats.AvgItemMs(), 10.0);
+    EXPECT_DOUBLE_EQ(stats.minMs, 10.0);
+    EXPECT_DOUBLE_EQ(stats.maxMs, 10.0);
+    EXPECT_DOUBLE_EQ(stats.p95Ms, 10.0);
+}
+
+TEST(TimerRegistryTest, SupportsScopedAndIncrementedItems) {
+    auto& registry = TimerRegistry::Instance();
+    registry.Reset();
+
+    registry.StartAverage("test.scoped", TimerPrintPolicy::EveryMs(1000));
     registry.IncrementAverage("test.scoped", 5);
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
     const double elapsedMs = registry.EndAverage("test.scoped");
@@ -39,36 +61,55 @@ TEST(TimerRegistryTest, SupportsScopedAndIncrementedSamples) {
     EXPECT_GT(elapsedMs, 0.0);
     TimerStats stats;
     ASSERT_TRUE(registry.GetStats("test.scoped", stats));
-    EXPECT_EQ(stats.samples, 1U);
-    EXPECT_EQ(stats.workUnits, 5U);
+    EXPECT_EQ(stats.items, 5U);
     EXPECT_DOUBLE_EQ(stats.totalMs, elapsedMs);
+    EXPECT_DOUBLE_EQ(stats.AvgItemMs(), elapsedMs / 5.0);
+    // The single call is normalized by the declared count.
+    EXPECT_DOUBLE_EQ(stats.maxMs, elapsedMs / 5.0);
 
     {
-        auto timer = registry.ScopeAverageMs("test.raii", 4, 1000);
+        auto timer = registry.Scope("test.raii", TimerPrintPolicy::EveryMs(1000));
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     ASSERT_TRUE(registry.GetStats("test.raii", stats));
-    EXPECT_EQ(stats.samples, 1U);
-    EXPECT_EQ(stats.workUnits, 4U);
+    EXPECT_EQ(stats.items, 1U);
     EXPECT_GT(stats.totalMs, 0.0);
 
     {
-        auto timer = registry.Scope("test.every-sample");
+        auto timer =
+            registry.Scope("test.every-call", TimerPrintPolicy::EachCall());
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    ASSERT_TRUE(registry.GetStats("test.every-sample", stats));
-    EXPECT_EQ(stats.samples, 1U);
-    EXPECT_EQ(stats.workUnits, 1U);
+    ASSERT_TRUE(registry.GetStats("test.every-call", stats));
+    EXPECT_EQ(stats.items, 1U);
 
-    registry.StartAverageN("test.every-n", 2);
-    registry.IncrementAverage("test.every-n", 1);
-    registry.EndAverage("test.every-n");
-    registry.StartAverageN("test.every-n", 2);
-    registry.IncrementAverage("test.every-n", 1);
-    registry.EndAverage("test.every-n");
-    ASSERT_TRUE(registry.GetStats("test.every-n", stats));
-    EXPECT_EQ(stats.samples, 2U);
-    EXPECT_EQ(stats.workUnits, 2U);
+    // Two measurements that declare nothing count two items.
+    registry.StartAverage("test.two-calls", TimerPrintPolicy::EveryMs(1000));
+    registry.EndAverage("test.two-calls");
+    registry.StartAverage("test.two-calls", TimerPrintPolicy::EveryMs(1000));
+    registry.EndAverage("test.two-calls");
+    ASSERT_TRUE(registry.GetStats("test.two-calls", stats));
+    EXPECT_EQ(stats.items, 2U);
+}
+
+TEST(TimerRegistryTest, ReportingPoliciesDoNotAffectAggregation) {
+    auto& registry = TimerRegistry::Instance();
+    registry.Reset();
+
+    // Windowed reporting resets its window every N measurements, and the
+    // cumulative numbers have to survive that.
+    for (int call = 0; call < 2; ++call) {
+        registry.StartAverage("test.interval", TimerPrintPolicy::Interval(2));
+        registry.IncrementAverage("test.interval", 4);
+        registry.EndAverage("test.interval");
+    }
+    registry.StartAverage("test.interval", TimerPrintPolicy::EveryCalls(2));
+    registry.EndAverage("test.interval");
+
+    TimerStats stats;
+    ASSERT_TRUE(registry.GetStats("test.interval", stats));
+    EXPECT_EQ(stats.items, 9U);
+    EXPECT_GT(stats.totalMs, 0.0);
 }
 
 TEST(TimerRegistryTest, AggregationIsThreadSafe) {
@@ -76,13 +117,13 @@ TEST(TimerRegistryTest, AggregationIsThreadSafe) {
     registry.Reset();
 
     constexpr int kThreadCount = 4;
-    constexpr int kSamplesPerThread = 100;
+    constexpr int kItemsPerThread = 100;
     std::vector<std::thread> workers;
     workers.reserve(kThreadCount);
     for (int thread = 0; thread < kThreadCount; ++thread) {
         workers.emplace_back([&registry]() {
-            for (int sample = 0; sample < kSamplesPerThread; ++sample) {
-                registry.AddSample("test.concurrent", 2.0, 3);
+            for (int item = 0; item < kItemsPerThread; ++item) {
+                registry.AddItems("test.concurrent", 2.0, 3);
             }
         });
     }
@@ -90,9 +131,10 @@ TEST(TimerRegistryTest, AggregationIsThreadSafe) {
 
     TimerStats stats;
     ASSERT_TRUE(registry.GetStats("test.concurrent", stats));
-    EXPECT_EQ(stats.samples, static_cast<uint64_t>(kThreadCount * kSamplesPerThread));
-    EXPECT_EQ(stats.workUnits, static_cast<uint64_t>(
-        kThreadCount * kSamplesPerThread * 3));
+    EXPECT_EQ(stats.items, static_cast<uint64_t>(kThreadCount * kItemsPerThread * 3));
     EXPECT_DOUBLE_EQ(stats.totalMs,
-                     static_cast<double>(kThreadCount * kSamplesPerThread * 2));
+                     static_cast<double>(kThreadCount * kItemsPerThread * 2));
+    // 2 ms per measurement spread over 3 items.
+    EXPECT_DOUBLE_EQ(stats.AvgItemMs(), 2.0 / 3.0);
+    EXPECT_DOUBLE_EQ(stats.maxMs, 2.0 / 3.0);
 }
