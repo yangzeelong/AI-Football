@@ -41,7 +41,10 @@ private:
         float trackActivationThreshold   = 0.25f; // high-score threshold
         float secondAssociationThreshold = 0.10f; // low-score threshold
         float minimumMatchingThreshold   = 0.80f; // IoU gate for 1st assoc
-        int   lostTrackBuffer            = 30;    // frames before removing lost track
+        /// Frames a lost track stays available for re-association. A lost
+        /// track that matches a detection within this window resumes under its
+        /// own ID, which keeps a person identifiable across an occlusion.
+        int   lostTrackBuffer            = 30;
         int   personClassId              = 1;
         int   ballClassId                = 37;
         float personMinConfidence        = 0.0f;

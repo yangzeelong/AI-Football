@@ -468,6 +468,12 @@ void ByteTracker::Process(ns::Message& inputMessage) {
         trackPool.push_back(&m_trackedStracks[i]);
         if (!m_trackedStracks[i].isActivated) unconfirmedIdx.push_back(static_cast<int>(i));
     }
+    // Lost tracks compete for the same detections, as in ByteTrack and BoT-SORT:
+    // a lost track that matches again resumes under its own ID, which is what
+    // keeps a person identifiable across an occlusion.
+    for (size_t i = 0; i < m_lostStracks.size(); ++i) {
+        trackPool.push_back(&m_lostStracks[i]);
+    }
 
     // --- First association: high-score detections vs all tracked tracks ---
     std::vector<std::pair<int,int>> matches1;
@@ -489,8 +495,13 @@ void ByteTracker::Process(ns::Message& inputMessage) {
         if (trk->state == State::Tracked) {
             trk->Update(det, m_frameId);
         } else {
-            // Was Lost, now re-matched -> reactivate with a fresh ID.
-            trk->Reactivate(det, m_frameId, NextId());
+            // A lost track matched again: resume it under its own ID, otherwise
+            // the person would come back as a new track and the identity would
+            // break at every occlusion.
+            const int missedFrames = m_frameId - trk->frameId;
+            trk->Reactivate(det, m_frameId, /*newId=*/0);
+            LOG_DEBUG("ByteTracker: revived track {} after {} frames without a detection",
+                      trk->trackId, missedFrames);
         }
     }
 
@@ -532,10 +543,6 @@ void ByteTracker::Process(ns::Message& inputMessage) {
         m_trackedStracks.push_back(t);
     }
 
-    // --- Reactivate lost tracks that match any current tracked "New" track ---
-    // (Simplified: we skip cross-lost matching for brevity; lost tracks are
-    // only revived through the first association above.)
-
     // --- Merge tracked list: keep Tracked + newly-added New tracks ---
     std::vector<STrack> newTracked;
     for (auto& t : m_trackedStracks) {
@@ -549,10 +556,16 @@ void ByteTracker::Process(ns::Message& inputMessage) {
     }
     m_trackedStracks.swap(newTracked);
 
-    // --- Age out lost tracks ---
+    // --- Rejoin revived lost tracks, age out the rest ---
+    // A lost track that matched above is Tracked again and returns to the
+    // tracked list; the others stay lost until lostTrackBuffer frames pass.
     std::vector<STrack> keptLost;
     for (auto& t : m_lostStracks) {
-        if (m_frameId - t.frameId <= m_param.lostTrackBuffer) keptLost.push_back(t);
+        if (t.state == State::Tracked || t.state == State::New) {
+            m_trackedStracks.push_back(t);
+        } else if (m_frameId - t.frameId <= m_param.lostTrackBuffer) {
+            keptLost.push_back(t);
+        }
     }
     m_lostStracks.swap(keptLost);
 
