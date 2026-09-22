@@ -243,6 +243,7 @@ ns::ErrorCode ByteTracker::Configure(const ns::Config& config) {
     m_param.lostTrackBuffer            = config.GetValueOrDefault<int>("lostTrackBuffer", 30);
     m_param.personClassId              = config.GetValueOrDefault<int>("personClassId", 1);
     m_param.ballClassId                = config.GetValueOrDefault<int>("ballClassId", 37);
+    m_param.newTrackThreshold          = config.GetValueOrDefault<float>("newTrackThreshold", 0.0f);
     m_param.personMinConfidence         = config.GetValueOrDefault<float>("personMinConfidence", 0.0f);
     m_param.personMinWidthPx            = config.GetValueOrDefault<float>("personMinWidthPx", 0.0f);
     m_param.personMinHeightPx           = config.GetValueOrDefault<float>("personMinHeightPx", 0.0f);
@@ -273,10 +274,11 @@ ns::ErrorCode ByteTracker::Configure(const ns::Config& config) {
         LOG_ERROR("ByteTracker: enabled ROI requires at least 3 points");
         return ns::ErrorCode::FAILURE;
     }
-    LOG_INFO("ByteTracker config: high>={}, low>={}, iouGate={}, lostBuf={}, "
-             "personFilter=({},{}x{}), ballFilter=({},{}x{})",
+    LOG_INFO("ByteTracker config: high>={}, low>={}, iouGate={}, newTrack>={}, "
+             "lostBuf={}, personFilter=({},{}x{}), ballFilter=({},{}x{})",
              m_param.trackActivationThreshold, m_param.secondAssociationThreshold,
-             m_param.minimumMatchingThreshold, m_param.lostTrackBuffer,
+             m_param.minimumMatchingThreshold, m_param.newTrackThreshold,
+             m_param.lostTrackBuffer,
              m_param.personMinConfidence, m_param.personMinWidthPx,
              m_param.personMinHeightPx, m_param.ballMinConfidence,
              m_param.ballMinWidthPx, m_param.ballMinHeightPx);
@@ -519,6 +521,10 @@ void ByteTracker::Process(ns::Message& inputMessage) {
     // --- Initialize new tracks from unmatched high-score detections ---
     for (int idx : uDets1) {
         STrack t = detsHigh[idx];
+        // A weak detection that opens a track competes with the real one on
+        // IoU next frame and can take over its box, which reads as an ID change
+        // while the box barely moves. Require a confident detection to start.
+        if (t.score < m_param.newTrackThreshold) continue;
         // AI-Football configures supervision.ByteTrack with
         // minimum_consecutive_frames=1, so a new track is visible in the
         // same frame as its first high-confidence detection.

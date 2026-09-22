@@ -47,6 +47,12 @@ private:
         float personMinConfidence        = 0.0f;
         float personMinWidthPx           = 0.0f;
         float personMinHeightPx          = 0.0f;
+        /// Lowest score an unmatched detection needs to start a track. Zero
+        /// means any detection above trackActivationThreshold may start one.
+        /// A low gate lets weak detections open a track that then outbids the
+        /// real one on IoU the next frame, which shows up as an ID that changes
+        /// while the box barely moves. BoT-SORT calls this new_track_thresh.
+        float newTrackThreshold           = 0.0f;
         float ballMinConfidence          = 0.0f;
         float ballMinWidthPx             = 0.0f;
         float ballMinHeightPx            = 0.0f;

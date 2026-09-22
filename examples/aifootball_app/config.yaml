@@ -58,6 +58,11 @@ graph:
         trackActivationThreshold: 0.25
         secondAssociationThreshold: 0.10
         minimumMatchingThreshold: 0.80
+        # Only a confident detection may start a track. Left at 0, a weak
+        # (0.25..0.68) detection opens a track that then outbids the real one on
+        # IoU, which shows up as the track ID changing while the box barely
+        # moves. BoT-SORT calls the same knob new_track_thresh.
+        newTrackThreshold: 0.68
         lostTrackBuffer: 30
         personClassId: 1
         ballClassId: 37
