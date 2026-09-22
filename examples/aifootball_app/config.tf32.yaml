@@ -22,10 +22,21 @@ graph:
     - name: RFDetrDetector
       class: RFDetrDetector
       config:
-        # fp16 detector: the fast path (12.95 ms per batch of 4). It drops
-        # whole detections, so switch to config.tf32.yaml when the output has
-        # to match the Python reference.
-        enginePath: /home/hx1/yzl/Work/AI-Football/models/rfdetr/rf-detr-small-960-fp16-b8-fp32io.engine
+        # TF32 detector: the accurate path, for validating output against the
+        # Python reference.
+        #
+        # The fp16 engine (config.yaml) loses whole detections: on
+        # data/射门1-1080p60.mov its raw person count disagreed with the
+        # reference on 22/300 frames, with a person at confidence 0.86 vanishing
+        # outright, so neither the confidence threshold nor the top-300
+        # candidate cut could recover it. This engine matched the reference on
+        # 300/300 frames, and over 1500 frames differed from the fp32 engine in
+        # 2 person and 7 ball counts, i.e. tie-breaking noise.
+        #
+        # Costs throughput: 57.41 ms vs 12.95 ms per batch of 4, about 43 FPS
+        # instead of 83 FPS end to end. See tools/model_conversion/README.md for
+        # building the engine.
+        enginePath: /home/hx1/yzl/Work/AI-Football/models/rfdetr/rf-detr-small-960-fp32tf32-b8.engine
         inputBindingName: image
         outputBindingName: detections    # baked [B,N,6]; auto-detected if absent
         logitsBindingName: pred_logits   # raw format fallback

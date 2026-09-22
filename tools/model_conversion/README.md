@@ -69,6 +69,29 @@ Numerically sensitive operators (`Softmax`, `LayerNormalization`, `Erf`,
 `ReduceSum`, `Sqrt`, `Resize`) stay in float32 to avoid fp16 accumulation
 error; override with repeated `--block-op`.
 
+### Detector Precision
+
+fp16 is not safe for the RF-DETR-S detector. On `data/射门1-1080p60.mov` the
+fp16 engine's raw person count disagreed with the Python reference on 22 of 300
+frames, dropping a person at confidence 0.86 outright, which no threshold or
+candidate-cut change can recover. A TF32 engine matched the reference on 300 of
+300 frames. Keep `--fp16` for HRNet, and build the detector with TF32 instead:
+TF32 keeps float32 accumulation and only rounds the multiplies, and unlike the
+script's `--noTF32` default it is also faster (57.41 ms vs 71.07 ms per batch of
+4). The cost is still real, 12.95 ms per batch in fp16 against 57.41 ms in TF32,
+so build both and pick per run:
+
+```bash
+trtexec --onnx=/home/hx1/yzl/Work/AI-Football/models/rfdetr/onnx/rf-detr-small-960-dynamic.onnx \
+  --saveEngine=/home/hx1/yzl/Work/AI-Football/models/rfdetr/rf-detr-small-960-fp32tf32-b8.engine \
+  --skipInference --builderOptimizationLevel=3 \
+  --minShapes=image:1x3x960x960 --optShapes=image:4x3x960x960 \
+  --maxShapes=image:8x3x960x960
+```
+
+The demo ships both: `config.yaml` runs the fp16 engine, `config.tf32.yaml` the
+TF32 one.
+
 ## HRNet-W48-DARK
 
 The exporter trims the heatmap output to the channels the decoder reads
