@@ -98,7 +98,11 @@ private:
     Param m_param;
     std::unique_ptr<inference::IInferenceEngine> m_engine;
     bool m_ready = false;
+    /// Per-call person cap. With flip-test enabled this is half of the engine
+    /// batch so the mirrored pass fits in the same enqueue.
     int m_effectiveMaxBatch = 1;
+    /// Engine input batch limit (dynamic profile max, or the static dim).
+    int m_engineMaxBatch = 1;
 
     HostFloatBuffer m_inputHost;
     HostFloatBuffer m_outputHost;

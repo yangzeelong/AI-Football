@@ -46,11 +46,20 @@ bool HRNetPoseEstimatorInfer::Init(const Param& param) {
         return false;
     }
     const int engineBatch = inputInfo.dims.d[0];
-    m_effectiveMaxBatch = engineBatch > 0 ? engineBatch : m_param.maxBatch;
-    m_effectiveMaxBatch = std::max(1, m_effectiveMaxBatch);
+    m_engineMaxBatch = engineBatch > 0 ? engineBatch : m_param.maxBatch;
+    m_engineMaxBatch = std::max(1, m_engineMaxBatch);
+    m_effectiveMaxBatch = m_engineMaxBatch;
     if (engineBatch > 0 && m_param.maxBatch > engineBatch) {
         LOG_WARN("HRNetPoseEstimatorInfer: static engine batch={} clamps requested batch={} to {}",
                  engineBatch, m_param.maxBatch, m_effectiveMaxBatch);
+    }
+
+    // Flip-test needs a second forward on the horizontally mirrored crop.
+    // Reserving half of the engine batch for it lets both passes travel in a
+    // single enqueue (combineFlipBatch) instead of paying a second
+    // SetInput/Infer/CopyOutput round trip per batch.
+    if (m_param.flipTest && m_effectiveMaxBatch > 1) {
+        m_effectiveMaxBatch = std::max(1, m_engineMaxBatch / 2);
     }
 
     // --- Inspect output tensor shape ---
@@ -98,12 +107,13 @@ bool HRNetPoseEstimatorInfer::Init(const Param& param) {
 
     LOG_INFO("HRNetPoseEstimatorInfer: K={}, heatmap={}x{}, stride={}", K, W, H, m_param.stride);
 
-    // Pre-allocate host buffers for max batch.
+    // Pre-allocate host buffers for the engine batch. Sized by m_engineMaxBatch
+    // so a combined flip pass (2 * B) still fits.
     const size_t perPersonInput  = static_cast<size_t>(3) * m_param.inputHeight * m_param.inputWidth;
     const size_t perPersonOutput = static_cast<size_t>(K) * H * W;
-    if (!EnsureHostBuffer(m_inputHost, perPersonInput * m_effectiveMaxBatch,
+    if (!EnsureHostBuffer(m_inputHost, perPersonInput * m_engineMaxBatch,
                           "PoseEstimator.InputHost") ||
-        !EnsureHostBuffer(m_outputHost, perPersonOutput * m_effectiveMaxBatch,
+        !EnsureHostBuffer(m_outputHost, perPersonOutput * m_engineMaxBatch,
                           "PoseEstimator.OutputHost") ||
         !EnsureHostBuffer(m_flipOutputHost,
                           perPersonOutput * m_effectiveMaxBatch,
@@ -150,6 +160,7 @@ void HRNetPoseEstimatorInfer::Release() {
     m_sampleY0.clear();
     m_sampleWy.clear();
     m_effectiveMaxBatch = 1;
+    m_engineMaxBatch = 1;
 }
 
 bool HRNetPoseEstimatorInfer::EnsureHostBuffer(HostFloatBuffer& buffer,
@@ -235,7 +246,7 @@ bool HRNetPoseEstimatorInfer::InferBatch(const std::vector<PersonInput>& persons
     // Run MMPose flip-test in one TensorRT batch when there is enough engine
     // capacity. This preserves the two input tensors and only avoids the
     // second enqueue/copy synchronization.
-    const bool combineFlipBatch = m_param.flipTest && (2 * B <= m_effectiveMaxBatch);
+    const bool combineFlipBatch = m_param.flipTest && (2 * B <= m_engineMaxBatch);
     const int engineBatch = combineFlipBatch ? 2 * B : B;
     if (combineFlipBatch) {
         for (int i = 0; i < B; ++i) {
