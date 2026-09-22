@@ -22,8 +22,11 @@ ns::ErrorCode FootballTracker::Configure(const ns::Config& config) {
     m_param.maxAssociationDistancePx = config.GetValueOrDefault<float>("maxAssociationDistancePx", 180.0f);
     m_param.confidenceDecay = config.GetValueOrDefault<float>("confidenceDecay", 0.75f);
     m_param.ballClassId = config.GetValueOrDefault<int>("ballClassId", 37);
-    LOG_INFO("FootballTracker config: maxMissed={}, maxAssocDist={}px, decay={}",
-             m_param.maxMissedFrames, m_param.maxAssociationDistancePx, m_param.confidenceDecay);
+    m_param.keepOnlyBestBall = config.GetValueOrDefault<bool>("keepOnlyBestBall", true);
+    LOG_INFO("FootballTracker config: maxMissed={}, maxAssocDist={}px, decay={}, "
+             "keepOnlyBestBall={}",
+             m_param.maxMissedFrames, m_param.maxAssociationDistancePx,
+             m_param.confidenceDecay, m_param.keepOnlyBestBall);
     return ns::ErrorCode::SUCCESS;
 }
 
@@ -286,6 +289,27 @@ void FootballTracker::Process(ns::Message& inputMessage) {
     }
 
     Emit(out);
+
+    // keepOnlyBestBall=false reports the rest of the candidates next to the
+    // tracked ball. They are observations, not tracks: no ID, no prediction,
+    // and no influence on the track above, so the followed ball keeps behaving
+    // exactly as before.
+    if (!m_param.keepOnlyBestBall) {
+        for (const auto& d : candidates) {
+            if (d.classId != m_param.ballClassId) continue;
+            if (&d == best) continue;
+            BallTrack b;
+            b.trackId = -1;
+            b.centerX = 0.5f * (d.x0 + d.x1);
+            b.centerY = 0.5f * (d.y0 + d.y1);
+            b.x0 = d.x0; b.y0 = d.y0;
+            b.x1 = d.x1; b.y1 = d.y1;
+            b.confidence = d.score;
+            b.missedFrames = 0;
+            b.state = BallTrackState::Observed;
+            out.balls.push_back(b);
+        }
+    }
 
     LOG_DEBUG("FootballTracker: frame={} ballsIn={} active={} state={}",
               smMsg->videoFrame ? smMsg->videoFrame->frameId : 0, candidates.size(),

@@ -146,6 +146,10 @@ graph:
         maxAssociationDistancePx: 180.0
         confidenceDecay: 0.75
         ballClassId: 37
+        # true keeps this variant comparable with the Python reference, which
+        # follows a single ball. Set false to also report the other candidates
+        # as untracked observations (track id -1).
+        keepOnlyBestBall: true
 
     - name: VideoRenderer
       class: VideoRenderer

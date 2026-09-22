@@ -134,6 +134,12 @@ graph:
         maxAssociationDistancePx: 180.0
         confidenceDecay: 0.75
         ballClassId: 37
+        # false: report every ball candidate, not just the tracked one. The
+        # tracked ball keeps its ID and prediction either way; the extras come
+        # out as untracked observations (track id -1). The sweep variants keep
+        # this true so their ball counts stay comparable with the Python
+        # reference, which follows a single ball.
+        keepOnlyBestBall: false
 
     - name: VideoRenderer
       class: VideoRenderer

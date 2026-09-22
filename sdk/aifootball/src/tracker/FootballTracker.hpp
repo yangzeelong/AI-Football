@@ -9,7 +9,7 @@
 namespace ns = nexusflow;
 
 /**
- * @brief FootballTracker - single-ball tracker with linear velocity prediction.
+ * @brief FootballTracker - ball tracker with linear velocity prediction.
  *
  * Port of AI-Football tracking.py (FootballTracker).
  *
@@ -22,6 +22,12 @@ namespace ns = nexusflow;
  *   - If no detection matched: predict center via linear velocity,
  *     decay confidence, increment missedFrames; drop track when
  *     missedFrames > maxMissedFrames.
+ *
+ * A match has one ball, so the tracker follows one: the best candidate becomes
+ * the tracked ball with an ID, velocity and prediction. With
+ * keepOnlyBestBall=false the remaining candidates are reported as well, as
+ * untracked observations, which is what to use when checking what the detector
+ * found rather than what the pipeline decided to follow.
  */
 class FootballTracker : public ns::Module {
 public:
@@ -41,6 +47,12 @@ private:
         float maxAssociationDistancePx = 180.0f;
         float confidenceDecay = 0.75f;
         int   ballClassId = 37;
+        /// true  : report only the tracked ball, which is what the Python
+        ///         reference does.
+        /// false : also report every other candidate as an untracked
+        ///         observation (trackId -1), so a run shows all the balls the
+        ///         detector found.
+        bool  keepOnlyBestBall = true;
     } m_param;
 
     struct TrackState {
