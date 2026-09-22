@@ -89,8 +89,30 @@ trtexec --onnx=/home/hx1/yzl/Work/AI-Football/models/rfdetr/onnx/rf-detr-small-9
   --maxShapes=image:8x3x960x960
 ```
 
-The demo ships both: `config.yaml` runs the fp16 engine, `config.tf32.yaml` the
-TF32 one.
+The demo ships both: `config.yaml` runs the fp16 engine, and
+`config.ref_rfdetr960_hrnetw48d384.yaml` the TF32 one.
+
+### Restored Sweep Variants
+
+`config.ref_rfdetr960_hrnetw48d384.yaml` and `config.rfdetr960_hrnetw32_256.yaml`
+reproduce two variants of the Python quality sweep (RF-DETR-S 960 with
+HRNet-W48-DARK 384x288, and the same detector with HRNet-W32 256x192). Both run
+the TF32 detector, and they differ only in the pose model: the W32 preset is the
+plain heatmap config, so its config turns `useDark` off, and its 23-channel ONNX
+is exported with the same tool:
+
+```bash
+python tools/model_conversion/export_hrnet_onnx.py \
+  --config /home/hx1/yzl/Work/AI-Football/models/mmpose/configs/wholebody_2d_keypoint/topdown_heatmap/coco-wholebody/td-hm_hrnet-w32_8xb64-210e_coco-wholebody-256x192.py \
+  --checkpoint /home/hx1/yzl/Work/AI-Football/models/mmpose/hrnet/hrnet_w32_coco_wholebody_256x192-853765cd_20200918.pth \
+  --output /home/hx1/yzl/Work/AI-Football/models/mmpose/hrnet/hrnet-w32-256x192-ch23.onnx \
+  --height 256 --width 192 --opset 18 --device cuda:0 --dynamic-batch
+```
+
+Built with TF32 (`trtexec --builderOptimizationLevel=3`, no `--noTF32`), the C++
+variants reproduce the Python ones: the W48 variant agrees with the reference to
+0.45 px mean keypoint distance, and the W32 variant matches the Python W32
+keypoint score (78.07 against 78.04).
 
 ## HRNet-W48-DARK
 

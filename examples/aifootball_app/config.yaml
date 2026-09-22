@@ -23,8 +23,10 @@ graph:
       class: RFDetrDetector
       config:
         # fp16 detector: the fast path (12.95 ms per batch of 4). It drops
-        # whole detections, so switch to config.tf32.yaml when the output has
-        # to match the Python reference.
+        # whole detections, so use config.ref_rfdetr960_hrnetw48d384.yaml (TF32
+        # detector, same pose) or config.rfdetr960_hrnetw32_256.yaml (TF32
+        # detector, HRNet-W32 256x192 pose) when the output has to match the
+        # Python reference.
         enginePath: /home/hx1/yzl/Work/AI-Football/models/rfdetr/rf-detr-small-960-fp16-b8-fp32io.engine
         inputBindingName: image
         outputBindingName: detections    # baked [B,N,6]; auto-detected if absent
