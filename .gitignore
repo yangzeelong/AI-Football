@@ -10,7 +10,7 @@ install/
 
 # Runtime and conversion artifacts.
 output/
-tools/model_conversion/__pycache__/
+__pycache__/
 
 # Local test media.
 data/

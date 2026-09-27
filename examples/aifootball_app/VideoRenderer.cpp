@@ -107,19 +107,24 @@ const Glyph kFont[] = {
     {'e', {0x38, 0x54, 0x54, 0x54, 0x18}},
     {'f', {0x00, 0x08, 0x7E, 0x09, 0x02}},
     {'g', {0x0C, 0x52, 0x52, 0x52, 0x3E}},
+    {'h', {0x7F, 0x08, 0x04, 0x04, 0x78}},
     {'i', {0x00, 0x44, 0x7D, 0x40, 0x00}},
+    {'j', {0x00, 0x48, 0x3A, 0x00, 0x00}},
     {'k', {0x7F, 0x08, 0x14, 0x22, 0x41}},
     {'l', {0x00, 0x41, 0x7F, 0x40, 0x00}},
     {'m', {0x7C, 0x04, 0x18, 0x04, 0x78}},
     {'n', {0x7C, 0x08, 0x04, 0x04, 0x78}},
     {'o', {0x38, 0x44, 0x44, 0x44, 0x38}},
     {'p', {0x7C, 0x14, 0x14, 0x14, 0x08}},
+    {'q', {0x08, 0x14, 0x14, 0x14, 0x7C}},
     {'r', {0x7C, 0x08, 0x04, 0x04, 0x08}},
     {'s', {0x48, 0x54, 0x54, 0x54, 0x20}},
     {'t', {0x04, 0x3F, 0x44, 0x40, 0x20}},
     {'u', {0x3C, 0x40, 0x40, 0x40, 0x3C}},
     {'v', {0x1C, 0x20, 0x40, 0x20, 0x1C}},
     {'w', {0x1C, 0x20, 0x18, 0x20, 0x1C}},
+    {'x', {0x44, 0x28, 0x10, 0x28, 0x44}},
+    {'y', {0x0C, 0x50, 0x50, 0x50, 0x3C}},
     {'z', {0x44, 0x64, 0x54, 0x4C, 0x44}},
 };
 
@@ -440,6 +445,10 @@ void VideoRenderer::SetRoi(const aifootball::RoiContext& roi) {
              roi.enabled ? "enabled" : "disabled", roi.points.size());
 }
 
+void VideoRenderer::SetTouchOverlay(const TouchOverlay& overlay) {
+    m_touchOverlay = overlay;
+}
+
 void VideoRenderer::DrawOverlay(
     std::string& rgb, const aifootball::ProcessResult& result) const {
     DrawRoi(rgb, m_width, m_height, m_roi);
@@ -515,6 +524,46 @@ void VideoRenderer::DrawOverlay(
                       observed ? "observed" : "predicted");
         DrawText(rgb, m_width, m_height, label, cx + 12,
                  std::max(0, cy - 20), kLabelScale, 255, 80, blue);
+    }
+
+    // Touch marker: while the ball is inside the contact radius of a foot the
+    // pair is linked, and an accepted event stays on screen for a few frames so
+    // a touch that ends between frames is still visible.
+    if (m_touchOverlay.hasContact) {
+        const int ballX = static_cast<int>(std::lround(m_touchOverlay.ballX));
+        const int ballY = static_cast<int>(std::lround(m_touchOverlay.ballY));
+        const int footX = static_cast<int>(std::lround(m_touchOverlay.footX));
+        const int footY = static_cast<int>(std::lround(m_touchOverlay.footY));
+        DrawLine(rgb, m_width, m_height, ballX, ballY, footX, footY, 255, 235, 40);
+        DrawPoint(rgb, m_width, m_height, footX, footY, 5, 255, 235, 40);
+
+        char label[80] = {};
+        std::snprintf(label, sizeof(label), "touch p%d %s d=%.1f/%.1f",
+                      m_touchOverlay.personTrackId,
+                      m_touchOverlay.leftFoot ? "left" : "right",
+                      m_touchOverlay.distancePx, m_touchOverlay.thresholdPx);
+        // The person and ball labels sit in the same neighbourhood, so the
+        // touch label gets its own dimmed plate to stay readable.
+        const std::string text(label);
+        const int labelX = std::max(0, (ballX + footX) / 2 - 40);
+        const int labelY = std::max(0, std::min(ballY, footY) - 34);
+        const int labelWidth = TextWidth(text, kLabelScale);
+        FillRect(rgb, m_width, m_height, labelX - 4, labelY - 4,
+                 labelX + labelWidth + 4, labelY + 7 * kLabelScale + 4, 0, 0, 0,
+                 0.65f);
+        DrawText(rgb, m_width, m_height, label, labelX, labelY, kLabelScale,
+                 255, 235, 40);
+    }
+    if (m_touchOverlay.hasBadge) {
+        char line[128] = {};
+        std::snprintf(line, sizeof(line), "touch %d fr=%llu %.2fs p%d %s d=%.1f",
+                      m_touchOverlay.totalEvents,
+                      static_cast<unsigned long long>(m_touchOverlay.badgeFrameIndex),
+                      m_touchOverlay.badgeTimestampSec,
+                      m_touchOverlay.badgePersonTrackId,
+                      m_touchOverlay.badgeLeftFoot ? "left" : "right",
+                      m_touchOverlay.badgeDistancePx);
+        DrawPanel(rgb, m_width, m_height, {std::string(line)}, 24, 178);
     }
 
     char header[96] = {};

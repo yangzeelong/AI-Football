@@ -3,7 +3,9 @@ add_executable(aifootball_app
     AppConfig.cpp
     VideoReader.cpp
     JsonlWriter.cpp
-    VideoRenderer.cpp)
+    VideoRenderer.cpp
+    TouchJsonlWriter.cpp
+    TouchRuntime.cpp)
 find_path(AIFOOTBALL_APP_FFMPEG_INCLUDE_DIR libavcodec/avcodec.h
     PATHS /usr/include/x86_64-linux-gnu /usr/include /usr/local/include)
 find_library(AIFOOTBALL_APP_AVFORMAT_LIB avformat
@@ -20,6 +22,7 @@ target_include_directories(aifootball_app PRIVATE
     "${AIFOOTBALL_APP_FFMPEG_INCLUDE_DIR}")
 target_link_libraries(aifootball_app PRIVATE
     aifootball_sdk
+    touch_eval_core
     JsonCpp::JsonCpp
     ${AIFOOTBALL_APP_AVFORMAT_LIB}
     ${AIFOOTBALL_APP_AVCODEC_LIB}

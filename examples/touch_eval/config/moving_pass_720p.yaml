@@ -1,0 +1,182 @@
+# 移动传球.mov (1280x720, 60 fps, 16037 frames) for the touch evaluation.
+#
+# Kept out of examples/aifootball_app/config/ on purpose: tools/run_all_configs.sh
+# runs every yaml in that directory, and this one belongs to a different video.
+#
+# Differences from examples/aifootball_app/config/config.yaml:
+#   - VideoReader.videoPath points at 移动传球.mov
+#   - algorithm.roi is disabled: the ROI polygon there is in 1920x1080
+#     coordinates and would filter out nearly every detection at 720p
+graph:
+  name: AIFootball-TensorRT
+
+  modules:
+    - name: VideoReader
+      class: VideoReader
+      config:
+        videoPath: data/移动传球.mov
+        stride: 1
+        rgbRingSize: 64
+
+    - name: VideoDecoder
+      class: VideoDecoder
+      config:
+        pixelFormat: rgb24
+
+    - name: RFDetrDetector
+      class: RFDetrDetector
+      config:
+        # TF32 detector: the touch evaluation compares against a hand labelled
+        # ground truth, so it uses the configuration that matches the Python
+        # reference instead of the fp16 fast path.
+        enginePath: /home/hx1/yzl/Work/AI-Football/models/rfdetr/rf-detr-small-960-fp32tf32-b8.engine
+        inputBindingName: image
+        outputBindingName: detections
+        logitsBindingName: pred_logits
+        boxesBindingName: pred_boxes
+        inputSize: 960
+        numClasses: 80
+        numQueries: 300
+        confidenceThreshold: 0.25
+        targetClasses: [1, 37]
+        meanR: 0.485
+        meanG: 0.456
+        meanB: 0.406
+        stdR: 0.229
+        stdG: 0.224
+        stdB: 0.225
+        useGpuPreprocess: true
+        maxBatchSize: 4
+        instanceCount: 1
+        batchTimeoutMs: 0
+        maxRetryNum: 0
+
+    - name: ByteTracker
+      class: ByteTracker
+      config:
+        trackActivationThreshold: 0.25
+        secondAssociationThreshold: 0.10
+        minimumMatchingThreshold: 0.80
+        newTrackThreshold: 0.68
+        lostTrackBuffer: 30
+        personClassId: 1
+        ballClassId: 37
+        personMinConfidence: 0.68
+        personMinWidthPx: 8.0
+        personMinHeightPx: 24.0
+        ballMinConfidence: 0.4
+        ballMinWidthPx: 2.0
+        ballMinHeightPx: 2.0
+
+    - name: HRNetPoseEstimator
+      class: HRNetPoseEstimator
+      config:
+        enginePath: /home/hx1/yzl/Work/AI-Football/models/mmpose/hrnet/hrnet-w48-dark-ch23-fp16-b8-fp32io.engine
+        inputBindingName: images
+        outputBindingName: heatmaps
+        inputWidth: 288
+        inputHeight: 384
+        heatmapWidth: 72
+        heatmapHeight: 96
+        numKeypoints: 23
+        stride: 4
+        useDark: true
+        flipTest: true
+        darkBlurKernel: 11
+        bboxPadding: 1.25
+        poseBoxExpansion: true
+        xPadRatio: 0.15
+        yPadRatio: 0.25
+        minPadPx: 12.0
+        maxBatch: 8
+        batchFrameCount: 4
+        instanceCount: 2
+        keypointConfThr: 0.05
+        meanR: 123.675
+        meanG: 116.28
+        meanB: 103.53
+        stdR: 58.395
+        stdG: 57.12
+        stdB: 57.375
+
+    - name: KeypointSmoother
+      class: KeypointSmoother
+      config:
+        enabled: true
+        method: skeleton
+        staticWindow: 8
+        staticMotionPx: 2.5
+        deadbandPx: 0.8
+        lowConfidence: 0.3
+        lowConfidenceAlpha: 0.12
+        staticAlpha: 0.25
+        movingAlpha: 0.65
+        skeletonAnchorAlpha: 0.35
+        skeletonEndpointAlpha: 0.12
+        skeletonMovingEndpointAlpha: 0.45
+        skeletonFastEndpointAlpha: 0.22
+        skeletonFastMovingEndpointAlpha: 0.62
+        skeletonFastStaticStepPx: 5.0
+        skeletonMaxStaticStepPx: 2.5
+        skeletonLimbTolerance: 0.25
+
+    - name: FootballTracker
+      class: FootballTracker
+      config:
+        maxMissedFrames: 12
+        maxAssociationDistancePx: 180.0
+        confidenceDecay: 0.75
+        ballClassId: 37
+        # Report every ball candidate: the touch detector needs the boxes the
+        # followed ball may have lost to a closer one.
+        keepOnlyBestBall: false
+
+    - name: VideoRenderer
+      class: VideoRenderer
+      config:
+        enabled: false
+        outputPath: output/rendered.mp4
+        fps: 60.0
+        stride: 1
+
+    - name: ObservationWriter
+      class: ObservationWriter
+      config:
+        outputPath: output/observations.jsonl
+        cameraId: C1
+        videoPath: data/移动传球.mov
+        fps: 60.0
+        stride: 1
+
+    - name: AlarmPusher
+      class: AlarmPusher
+      config:
+        savePath: result.txt
+
+  connections:
+    - from: VideoReader
+      to: VideoDecoder
+    - from: VideoDecoder
+      to: RFDetrDetector
+    - from: RFDetrDetector
+      to: ByteTracker
+    - from: ByteTracker
+      to: HRNetPoseEstimator
+    - from: HRNetPoseEstimator
+      to: KeypointSmoother
+    - from: KeypointSmoother
+      to: FootballTracker
+    - from: FootballTracker
+      to: VideoRenderer
+    - from: VideoRenderer
+      to: ObservationWriter
+    - from: VideoRenderer
+      to: AlarmPusher
+
+algorithm:
+  maxPendingFrames: 32
+  inputQueuePolicy: block
+  # 720p source: the 1080p polygon from the shooting video would reject most
+  # detections, so the full frame is used here.
+  roi:
+    enabled: false
