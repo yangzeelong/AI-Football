@@ -20,12 +20,12 @@ cd "$repo_root"
 
 frames="${1:-300}"
 out_root="${2:-output/configs}"
-app="build-release/bin/aifootball_app"
+app="build/bin/aifootball_app"
 python="${PYTHON:-python3}"
 config_dir="examples/aifootball_app/config"
 
 if [[ ! -x "$app" ]]; then
-    echo "missing $app, build first: cmake --build build-release" >&2
+    echo "missing $app, build first: cmake --build build" >&2
     exit 1
 fi
 if ! command -v "$python" >/dev/null 2>&1; then

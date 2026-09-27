@@ -31,7 +31,7 @@ are rejected by default so their throughput is not mixed into multi-batch
 results.
 
 ```bash
-build-release/bin/pose_benchmark \
+build/bin/pose_benchmark \
   --engine /home/hx1/yzl/Work/AI-Football/models/mmpose/hrnet/hrnet-w48-dark-fp16-b8-fp32io.engine \
   --video data/射门1-1080p60.mov \
   --iterations 30 \
