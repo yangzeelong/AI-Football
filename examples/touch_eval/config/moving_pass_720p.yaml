@@ -3,6 +3,10 @@
 # Kept out of examples/aifootball_app/config/ on purpose: tools/run_all_configs.sh
 # runs every yaml in that directory, and this one belongs to a different video.
 #
+# This is the pipeline the touch evaluation runs (fp16 detector). It is the
+# only one: the TF32 twin was dropped - 2.7x slower for a touch score within
+# 0.03 either way - and its config and artefacts are gone with it.
+#
 # Differences from examples/aifootball_app/config/config.yaml:
 #   - VideoReader.videoPath points at 移动传球.mov
 #   - algorithm.roi is disabled: the ROI polygon there is in 1920x1080
@@ -26,10 +30,11 @@ graph:
     - name: RFDetrDetector
       class: RFDetrDetector
       config:
-        # TF32 detector: the touch evaluation compares against a hand labelled
-        # ground truth, so it uses the configuration that matches the Python
-        # reference instead of the fp16 fast path.
-        enginePath: /home/hx1/yzl/Work/AI-Football/models/rfdetr/rf-detr-small-960-fp32tf32-b8.engine
+        # fp16 detector: the only path the touch evaluation runs. It was 2.7x
+        # faster than the TF32 twin (157 vs 58 FPS on 移动传球.mov) with a touch
+        # score within 0.03 either way, so the twin was dropped rather than
+        # maintained.
+        enginePath: /home/hx1/yzl/Work/AI-Football/models/rfdetr/rf-detr-small-960-fp16-b8-fp32io.engine
         inputBindingName: image
         outputBindingName: detections
         logitsBindingName: pred_logits

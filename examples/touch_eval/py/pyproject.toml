@@ -1,0 +1,40 @@
+[project]
+name = "touch-eval"
+version = "0.1.0"
+description = "Touch business logic: annotation truth, touch detection, scoring and review rendering"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.26",
+    "pillow>=10.0",
+]
+
+[project.scripts]
+touch-eval = "touch_eval.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.optional-dependencies]
+# The review/report tools under ../tools read the products of a run; only the two
+# that draw need anything beyond the standard library. `uv sync --extra tools`.
+tools = [
+    "matplotlib>=3.7",
+    "opencv-python-headless>=4.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/touch_eval"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "parity: compares this implementation against the C++ reference",
+    "slow: walks the whole 16037 frame recording",
+]

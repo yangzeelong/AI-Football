@@ -44,6 +44,7 @@ import csv
 import json
 import re
 import shutil
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -63,6 +64,10 @@ KNOB_PRESETS = {
     "window_pad": [0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50, 0.75, 1.0],
     "refractory_frames": [0, 6, 12, 18, 21, 24, 31, 40, 60],
     "min_contact_frames": [1, 2, 3, 4, 6, 8],
+    "min_split_frames": [6, 12, 18, 24, 30, 40, 55, 70],
+    "person_refractory_frames": [0, 12, 18, 24, 30, 36, 45, 60, 72],
+    "event_time_mode": [0, 1, 2, 3],
+    "min_rise_frames": [1, 2, 3, 4, 6],
     "release_ratio": [1.0, 1.2, 1.4, 1.6, 2.0],
 }
 
@@ -79,6 +84,8 @@ PARAM_KEYS = {
     "min_split_frames": "minSplitFrames",
     "min_rise_frames": "minRiseFrames",
     "refractory_frames": "refractoryFrames",
+    "person_refractory_frames": "personRefractoryFrames",
+    "event_time_mode": "eventTimeMode",
     "min_speed_change": "minSpeedChangePxPerSec",
     "min_speed_ratio": "minSpeedRatio",
 }
@@ -90,7 +97,31 @@ KNOB_NOTES = {
     "window_pad": "slack given to the annotation - monotone, not a trade-off",
     "refractory_frames": "same person and foot within N frames = one touch",
     "min_contact_frames": "contact frames required for one touch",
+    "min_split_frames": "frames of clear separation needed to split one touch in two",
+    "min_rise_frames": "frames above the exit threshold needed to split",
     "release_ratio": "hysteresis: a cluster survives up to enter * ratio",
+    "person_refractory_frames": "same person, any foot, within N frames = one touch",
+    "event_time_mode": "which frame of the contact names the touch",
+}
+
+# Views collected per run. `all` / `clean` are the count aware primary metric
+# (every annotation, and with the unreadable rows removed); `target` /
+# `target_clean` are the one-to-one score at --target-tolerance.
+VIEWS = ("all", "clean", "target", "target_clean")
+SCORE_KEYS = ("tp", "fp", "fn", "precision", "recall", "f1")
+
+VIEW_LABELS = {
+    "all": "count aware, all annotations",
+    "clean": "count aware, unreadable rows dropped",
+    "target": "one-to-one at the target tolerance",
+    "target_clean": "one-to-one, unreadable rows dropped",
+}
+
+VIEW_STYLES = {
+    "all": ("#1f77b4", "o"),
+    "clean": ("#2ca02c", "s"),
+    "target": ("#ff7f0e", "^"),
+    "target_clean": ("#8c564b", "v"),
 }
 
 
@@ -128,8 +159,9 @@ def annotation_args(path: str) -> list[str]:
 
 def run_evaluator(args, knob: str | None, value: float, workdir: Path) -> dict:
     """One evaluator run. `knob is None` runs with the built in defaults."""
-    command = [
-        args.touch_eval,
+    # `--touch-eval` is a command line, not a path: the evaluator is the
+    # Python package now, started through uv.
+    command = shlex.split(args.touch_eval) + [
         "--observations", args.observations,
         "--output_dir", str(workdir),
         "--no_sweep",  # the calibration curve would only slow the sweep down
@@ -159,7 +191,29 @@ def score_of(block: dict) -> dict:
     }
 
 
-def collect_point(report: dict) -> dict:
+def tolerance_of(report: dict, target_frames: int, target_sec: float) -> dict | None:
+    """The one-to-one score at the requested tolerance, in frames when possible.
+
+    This is the view an outside reader usually quotes ("within half a second"),
+    and it moves for reasons the count aware score does not see at all: two
+    reports of one touch still cost a false positive there, whatever else
+    improves. Frames are asked for first because that is the unit the annotation
+    was written in; the seconds tolerance is the fallback for a report that has
+    no frame rate.
+    """
+    sweep = report.get("tolerance_sweep") or []
+    if not sweep:
+        return None
+    if any(score.get("tolerance_frames", 0) > 0 for score in sweep):
+        chosen = next((score for score in sweep
+                       if score.get("tolerance_frames") == target_frames), None)
+        return score_of(chosen) if chosen else None
+    chosen = next((score for score in sweep
+                   if abs(score["tolerance_sec"] - target_sec) < 1e-6), None)
+    return score_of(chosen) if chosen else None
+
+
+def collect_point(report: dict, target_frames: int, target_sec: float) -> dict:
     """Both views of one run: everything, and without the unreadable rows."""
     point = {"all": score_of(report["primary_count_aware"])}
     low_quality = report.get("low_quality", {})
@@ -167,6 +221,12 @@ def collect_point(report: dict) -> dict:
         point["clean"] = score_of(low_quality["primary_count_aware"])
         point["clean_rows"] = low_quality["rows"]
         point["clean_excluded_events"] = low_quality["excluded_events"]
+        target_clean = tolerance_of(low_quality, target_frames, target_sec)
+        if target_clean is not None:
+            point["target_clean"] = target_clean
+    target = tolerance_of(report, target_frames, target_sec)
+    if target is not None:
+        point["target"] = target
     return point
 
 
@@ -194,8 +254,8 @@ def iso_levels(rows: list[dict]) -> list[float]:
     A fixed 0.2..0.8 ladder is useless once a detector sits in a narrow band: the
     useful question is which side of the current F1 a point falls on.
     """
-    values = sorted(row[view]["f1"] for row in rows
-                    for view in ("all", "clean") if view in row)
+    values = sorted(row[view]["f1"] for row in rows for view in VIEWS
+                    if view in row)
     middle = values[len(values) // 2]
     steps = [round((middle + offset) * 20.0) / 20.0 for offset in (-0.05, 0.0, 0.05)]
     return [value for value in dict.fromkeys(steps) if 0.05 <= value <= 0.95]
@@ -220,9 +280,9 @@ def zoom(values: list[float], low_bound: float = 0.0,
 
 
 def plot_knob(knob: str, rows: list[dict], default: float | None, out_path: Path,
-              meta: dict) -> None:
+              meta: dict, best_view: str = "target") -> None:
     labelled = [row for row in rows if row["all"]["tp"] > 0]
-    has_clean = any("clean" in row for row in rows)
+    present = [view for view in VIEWS if any(view in row for row in rows)]
 
     context = [f"{meta.get('frames', '?')} frames"]
     if meta.get("touches") is not None:
@@ -232,6 +292,9 @@ def plot_knob(knob: str, rows: list[dict], default: float | None, out_path: Path
     if meta.get("point_window_sec") is not None:
         context.append(f"point window {meta['point_window_sec']:.2f} s + pad "
                        f"{meta['pad_sec']:.2f} s")
+    if "target" in present:
+        context.append("orange = one-to-one at "
+                       + meta.get("target_text", "the target tolerance"))
 
     figure, (left, right) = plt.subplots(1, 2, figsize=(13.5, 5.6), dpi=150)
     figure.suptitle(
@@ -241,10 +304,9 @@ def plot_knob(knob: str, rows: list[dict], default: float | None, out_path: Path
     )
 
     # --- precision against recall, with iso-F1 guides -----------------------
-    recall_values = [row[view]["recall"] for row in labelled
-                     for view in ("all", "clean") if view in row]
+    recall_values = [row[view]["recall"] for row in labelled for view in present]
     precision_values = [row[view]["precision"] for row in labelled
-                        for view in ("all", "clean") if view in row]
+                        for view in present]
     x_low, x_high = zoom(recall_values)
     y_low, y_high = zoom(precision_values)
 
@@ -271,21 +333,21 @@ def plot_knob(knob: str, rows: list[dict], default: float | None, out_path: Path
                               color="#999999", ha="left", va="bottom", zorder=2,
                               textcoords="offset points", xytext=(4, 3))
 
-    def series(key: str, colour: str, marker: str, label: str):
+    def series(key: str, style: tuple[str, str]):
         points = sorted((row[key]["recall"], row[key]["precision"])
                         for row in labelled)
         left.plot([point[0] for point in points], [point[1] for point in points],
-                  color=colour, marker=marker, markersize=5, linewidth=1.4,
-                  label=label, zorder=3)
+                  color=style[0], marker=style[1], markersize=5, linewidth=1.4,
+                  label=VIEW_LABELS.get(key, key), zorder=3)
 
-    series("all", "#1f77b4", "o", "all annotations")
-    if has_clean:
-        series("clean", "#2ca02c", "s", "low quality rows excluded")
+    for view in present:
+        series(view, VIEW_STYLES[view])
 
     for index, row in enumerate(labelled):
         # Values crowd together, so neighbouring labels alternate sides.
         offset = (6, 5) if index % 2 == 0 else (-16, -11)
-        left.annotate(f"{row['value']:g}", (row["all"]["recall"], row["all"]["precision"]),
+        left.annotate(f"{row['value']:g}",
+                      (row["all"]["recall"], row["all"]["precision"]),
                       textcoords="offset points", xytext=offset, fontsize=6.5,
                       color="#1f77b4", zorder=4)
         if row["value"] == default:
@@ -303,30 +365,36 @@ def plot_knob(knob: str, rows: list[dict], default: float | None, out_path: Path
 
     # --- precision, recall and F1 against the knob --------------------------
     values = [row["value"] for row in rows]
-    for key, style in (("precision", ":"), ("recall", "--"), ("f1", "-")):
-        right.plot(values, [row["all"][key] for row in rows], style,
-                   color="#1f77b4", marker="o", markersize=3.5,
-                   label=f"{key} (all)")
-    if has_clean:
-        right.plot(values, [row["clean"]["f1"] for row in rows], "-",
-                   color="#2ca02c", marker="s", markersize=3.5,
-                   label="f1 (low quality excluded)")
+    for view in present:
+        colour = VIEW_STYLES[view][0]
+        right.plot(values, [row[view]["f1"] for row in rows], "-",
+                   color=colour, marker=VIEW_STYLES[view][1], markersize=3.5,
+                   label=f"{view}: f1")
+        if view == best_view:
+            right.plot(values, [row[view]["precision"] for row in rows], ":",
+                       color=colour, marker=".", markersize=3.0,
+                       label=f"{view}: precision")
+            right.plot(values, [row[view]["recall"] for row in rows], "--",
+                       color=colour, marker=".", markersize=3.0,
+                       label=f"{view}: recall")
     if default is not None:
         right.axvline(default, color="#d62728", linewidth=1.0, linestyle="-.",
                       label=f"default ({default:g})")
-    best = max(rows, key=lambda row: row["all"]["f1"])
-    right.plot(best["value"], best["all"]["f1"], marker="*", markersize=15,
-               color="#ff7f0e", zorder=5,
-               label=f"best F1 ({best['value']:g} -> {best['all']['f1']:.3f})")
+
+    if best_view not in present:
+        best_view = "all"
+    best = max(rows, key=lambda row: row[best_view]["f1"])
+    right.plot(best["value"], best[best_view]["f1"], marker="*", markersize=15,
+               color="#d62728", zorder=5,
+               label=f"best f1 ({best['value']:g} -> {best[best_view]['f1']:.3f})")
     right.set_xlabel(knob)
     right.set_ylabel("score")
-    right.set_title(f"metrics against {knob}")
-    score_values = [row[view][key] for row in rows
-                    for view in ("all", "clean") if view in row
+    right.set_title(f"metrics against {knob} (best marked for {best_view})")
+    score_values = [row[view][key] for row in rows for view in present
                     for key in ("precision", "recall", "f1")]
     right.set_ylim(*zoom(score_values, pad=0.05, minimum_span=0.15))
     right.grid(alpha=0.25)
-    right.legend(loc="upper right", fontsize=8)
+    right.legend(loc="upper right", fontsize=7.5)
 
     figure.tight_layout(rect=(0, 0, 1, 0.93))
     figure.savefig(out_path)
@@ -339,13 +407,13 @@ def read_csv(path: Path) -> list[dict]:
     with open(path, newline="", encoding="utf-8") as handle:
         for record in csv.DictReader(handle):
             row = {"value": float(record["value"])}
-            for view in ("all", "clean"):
+            for view in VIEWS:
                 if record.get(f"tp_{view}", "") == "":
                     continue
                 row[view] = {
                     key: (int(record[f"{key}_{view}"]) if key in ("tp", "fp", "fn")
                           else float(record[f"{key}_{view}"]))
-                    for key in ("tp", "fp", "fn", "precision", "recall", "f1")
+                    for key in SCORE_KEYS
                 }
             for key in ("clean_rows", "clean_excluded_events"):
                 if record.get(key, "") != "":
@@ -356,8 +424,8 @@ def read_csv(path: Path) -> list[dict]:
 
 def write_csv(rows: list[dict], path: Path) -> None:
     columns = ["value"]
-    for view in ("all", "clean"):
-        for key in ("tp", "fp", "fn", "precision", "recall", "f1"):
+    for view in VIEWS:
+        for key in SCORE_KEYS:
             columns.append(f"{key}_{view}")
     columns += ["clean_rows", "clean_excluded_events"]
     with open(path, "w", newline="", encoding="utf-8") as handle:
@@ -365,8 +433,8 @@ def write_csv(rows: list[dict], path: Path) -> None:
         writer.writeheader()
         for row in rows:
             flat = {"value": row["value"]}
-            for view in ("all", "clean"):
-                for key in ("tp", "fp", "fn", "precision", "recall", "f1"):
+            for view in VIEWS:
+                for key in SCORE_KEYS:
                     value = row.get(view, {}).get(key)
                     flat[f"{key}_{view}"] = "" if value is None else value
             flat["clean_rows"] = row.get("clean_rows", "")
@@ -383,7 +451,7 @@ def main() -> int:
                         help="v2 CSV or legacy .label (the extension picks the parser)")
     parser.add_argument("--output-dir", default=".",
                         help="where the CSV and PNG are written")
-    parser.add_argument("--touch-eval", default="build/bin/touch_eval",
+    parser.add_argument("--touch-eval", default="uv run --project examples/touch_eval/py touch-eval",
                         help="evaluator binary; every point is one run of it")
     parser.add_argument("--sweep", action="append", default=[],
                         help="knob to sweep, optionally 'knob=v1,v2,...'; "
@@ -393,7 +461,18 @@ def main() -> int:
     parser.add_argument("--render-only", action="store_true",
                         help="re-plot the sweep_*.csv already in --output-dir, "
                              "without running the evaluator (for plot tweaks)")
+    parser.add_argument("--target-frames", type=int, default=30,
+                        help="the one-to-one tolerance in frames that an outside "
+                             "reader would quote; carried through the CSV, the "
+                             "printout and the right panel")
+    parser.add_argument("--target-tolerance", type=float, default=0.5,
+                        help="the same tolerance in seconds, used only when the "
+                             "report carries no frame rate")
+    parser.add_argument("--best-view", default="target",
+                        choices=VIEWS,
+                        help="which view marks the best value of the knob")
     args = parser.parse_args()
+    target_text = f"+-{args.target_frames} frames"
 
     specs = args.sweep or ["min_contact_px", "window_pad"]
     sweeps = parse_sweeps(specs)
@@ -417,13 +496,17 @@ def main() -> int:
                     report["primary_count_aware"]["point_window_sec"],
                 "pad_sec": report["primary_count_aware"]["window_pad_sec"],
             }
+        meta["target_tolerance"] = args.target_tolerance
+        meta["target_frames"] = args.target_frames
+        meta["target_text"] = target_text
         for knob, _ in sweeps:
             csv_path = output_dir / f"sweep_{knob}.csv"
             if not csv_path.is_file():
                 raise SystemExit(f"no {csv_path} to re-plot; run the sweep first")
             rows = read_csv(csv_path)
             default = default_value(report, knob) if report else None
-            plot_knob(knob, rows, default, output_dir / f"pr_{knob}.png", meta)
+            plot_knob(knob, rows, default, output_dir / f"pr_{knob}.png", meta,
+                      args.best_view)
             print(f"{csv_path} -> {output_dir / f'pr_{knob}.png'}")
         return 0
 
@@ -440,11 +523,18 @@ def main() -> int:
             "events": baseline["predicted_events"],
             "point_window_sec": baseline["primary_count_aware"]["point_window_sec"],
             "pad_sec": baseline["primary_count_aware"]["window_pad_sec"],
+            "target_tolerance": args.target_tolerance,
         }
+        baseline_point = collect_point(baseline, args.target_frames,
+                                       args.target_tolerance)
         print(f"baseline (no knob override): "
               f"P={baseline['primary_count_aware']['precision']:.3f} "
               f"R={baseline['primary_count_aware']['recall']:.3f} "
-              f"F1={baseline['primary_count_aware']['f1']:.3f}")
+              f"F1={baseline['primary_count_aware']['f1']:.3f}"
+              + (f" | {target_text} "
+                 f"P={baseline_point['target']['precision']:.3f} "
+                 f"R={baseline_point['target']['recall']:.3f}"
+                 if "target" in baseline_point else ""))
 
         for knob, values in sweeps:
             rows = []
@@ -452,28 +542,37 @@ def main() -> int:
                 workdir = temp_root / f"{knob}_{index}"
                 workdir.mkdir()
                 report = run_evaluator(args, knob, value, workdir)
-                point = collect_point(report)
+                point = collect_point(report, args.target_frames,
+                                      args.target_tolerance)
                 point["value"] = value
                 rows.append(point)
-                print(f"{knob}={value:<10g} all: TP={point['all']['tp']:<3d} "
-                      f"FP={point['all']['fp']:<3d} FN={point['all']['fn']:<3d} "
-                      f"P={point['all']['precision']:.3f} "
-                      f"R={point['all']['recall']:.3f} "
-                      f"F1={point['all']['f1']:.3f}"
-                      + (f" | clean F1={point['clean']['f1']:.3f}"
-                         if "clean" in point else ""))
+                line = (f"{knob}={value:<10g} all: TP={point['all']['tp']:<3d} "
+                        f"FP={point['all']['fp']:<3d} FN={point['all']['fn']:<3d} "
+                        f"P={point['all']['precision']:.3f} "
+                        f"R={point['all']['recall']:.3f} "
+                        f"F1={point['all']['f1']:.3f}")
+                if "target" in point:
+                    line += (f" | {target_text}: "
+                             f"TP={point['target']['tp']:<3d} "
+                             f"FP={point['target']['fp']:<3d} "
+                             f"P={point['target']['precision']:.3f} "
+                             f"R={point['target']['recall']:.3f} "
+                             f"F1={point['target']['f1']:.3f}")
+                print(line)
 
             default = default_value(baseline, knob)
             csv_path = output_dir / f"sweep_{knob}.csv"
             png_path = output_dir / f"pr_{knob}.png"
             write_csv(rows, csv_path)
-            plot_knob(knob, rows, default, png_path, meta)
+            plot_knob(knob, rows, default, png_path, meta, args.best_view)
 
-            best = max(rows, key=lambda row: row["all"]["f1"])
+            best_view = args.best_view if any(args.best_view in row for row in rows) else "all"
+            best = max(rows, key=lambda row: row[best_view]["f1"])
             print(f"  -> {csv_path}")
             print(f"  -> {png_path}")
-            print(f"  best by F1 (all): {knob}={best['value']:g} "
-                  f"F1={best['all']['f1']:.3f} (default {default:g})")
+            default_text = f"{default:g}" if default is not None else "unknown"
+            print(f"  best by {best_view} f1: {knob}={best['value']:g} "
+                  f"F1={best[best_view]['f1']:.3f} (default {default_text})")
     finally:
         if args.keep_temp:
             print(f"per value reports kept in {temp_root}")

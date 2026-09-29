@@ -17,29 +17,6 @@ struct SwsContext;
 
 namespace aifootball_app {
 
-/// Touch state of the frame about to be drawn, produced by TouchRuntime.
-struct TouchOverlay {
-    /// The current frame is a contact frame: draw the ball-foot link.
-    bool hasContact = false;
-    float ballX = 0.0f;
-    float ballY = 0.0f;
-    float footX = 0.0f;
-    float footY = 0.0f;
-    int personTrackId = -1;
-    bool leftFoot = true;
-    float distancePx = 0.0f;
-    float thresholdPx = 0.0f;
-    /// Events accepted so far, shown in the badge.
-    int totalEvents = 0;
-    /// An event was accepted within the badge window.
-    bool hasBadge = false;
-    uint64_t badgeFrameIndex = 0;
-    double badgeTimestampSec = 0.0;
-    float badgeDistancePx = 0.0f;
-    int badgePersonTrackId = -1;
-    bool badgeLeftFoot = true;
-};
-
 /** Optional offline renderer for frames and results produced by the SDK. */
 class VideoRenderer {
 public:
@@ -55,10 +32,6 @@ public:
     /// coordinates (roi.width x roi.height) and are mapped onto the frame, the
     /// same way the tracker maps detections into ROI space.
     void SetRoi(const aifootball::RoiContext& roi);
-
-    /// Touch state to draw on the next Write(). Set it before writing the
-    /// frame it belongs to; the default (empty) overlay draws nothing.
-    void SetTouchOverlay(const TouchOverlay& overlay);
 
     /// Mean wall time per rendered frame spent in this renderer: the frame
     /// copy, the overlay and the encoder. Zero when rendering is disabled or
@@ -89,7 +62,6 @@ private:
     bool m_encoderFailed = false;
     std::string m_outputPath;
     aifootball::RoiContext m_roi;
-    TouchOverlay m_touchOverlay;
     double m_fps = 25.0;
     int m_width = 0;
     int m_height = 0;

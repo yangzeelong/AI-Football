@@ -1,7 +1,6 @@
 #include "CommandParser.hpp"
 #include "AppConfig.hpp"
 #include "JsonlWriter.hpp"
-#include "TouchRuntime.hpp"
 #include "VideoReader.hpp"
 #include "VideoRenderer.hpp"
 
@@ -31,21 +30,17 @@ struct RunOptions {
     std::string videoPath;
     std::string outputDir;
     std::string renderPath;
-    std::string touchOutputPath;
     int maxFrames = 0;
     int stride = 1;
     int deviceId = 0;
     bool render = false;
     bool profileTimers = false;
-    bool detectTouches = false;
-    touch_eval::TouchDetectorParams touchParams;
 };
 
 struct AppResources {
     aifootball_app::VideoReader reader;
     aifootball_app::JsonlWriter writer;
     aifootball_app::VideoRenderer renderer;
-    std::unique_ptr<aifootball_app::TouchRuntime> touches;
     std::string observationsPath;
 };
 
@@ -58,48 +53,12 @@ RunOptions ReadOptions(const app::CommandParser& cli,
         : cli.Get("video_path");
     options.outputDir = cli.Get("output_dir");
     options.renderPath = cli.Get("render_path");
-    options.touchOutputPath = cli.Get("touch_output");
     options.maxFrames = cli.GetInt("max_frames");
     options.stride = std::max(1, cli.GetInt("stride", 1));
     options.deviceId = cli.GetInt("device", 0);
     options.render = cli.IsFlagSet("render");
     options.profileTimers = cli.IsFlagSet("profile_timers");
-    options.detectTouches = cli.IsFlagSet("detect_touches");
 
-    // Touch thresholds mirror the offline evaluator's flags, so a value found
-    // by the calibration sweep can be pasted straight into a run.
-    touch_eval::TouchDetectorParams& touch = options.touchParams;
-    if (cli.Has("contact_ratio")) {
-        touch.contactDistanceRatio = cli.GetFloat("contact_ratio");
-    }
-    if (cli.Has("person_height_ratio")) {
-        touch.personHeightRatio = cli.GetFloat("person_height_ratio");
-    }
-    if (cli.Has("min_contact_px")) touch.minContactPx = cli.GetFloat("min_contact_px");
-    if (cli.Has("max_contact_px")) touch.maxContactPx = cli.GetFloat("max_contact_px");
-    if (cli.Has("release_ratio")) touch.releaseRatio = cli.GetFloat("release_ratio");
-    if (cli.Has("kp_conf")) touch.keypointConfidence = cli.GetFloat("kp_conf");
-    if (cli.Has("ball_conf")) touch.ballMinConfidence = cli.GetFloat("ball_conf");
-    if (cli.Has("min_contact_frames")) {
-        touch.minContactFrames = cli.GetInt("min_contact_frames");
-    }
-    if (cli.Has("max_gap_frames")) touch.maxGapFrames = cli.GetInt("max_gap_frames");
-    if (cli.Has("min_split_frames")) {
-        touch.minSplitFrames = cli.GetInt("min_split_frames");
-    }
-    if (cli.Has("min_rise_frames")) touch.minRiseFrames = cli.GetInt("min_rise_frames");
-    if (cli.Has("refractory_frames")) {
-        touch.refractoryFrames = cli.GetInt("refractory_frames");
-    }
-    if (cli.Has("min_speed_change")) {
-        touch.minSpeedChangePxPerSec = cli.GetFloat("min_speed_change");
-    }
-    if (cli.Has("min_speed_ratio")) {
-        touch.minSpeedRatio = cli.GetFloat("min_speed_ratio");
-    }
-    if (cli.Has("tracked_ball_only")) {
-        touch.requireTrackedBall = cli.GetInt("tracked_ball_only") != 0;
-    }
     return options;
 }
 
@@ -173,10 +132,6 @@ void PrintThroughput(
                   << renderedFrames << " frames (consumer thread)\n";
     }
     std::cout << "  observations   : " << resources.observationsPath << '\n';
-    if (resources.touches) {
-        std::cout << "  touches        : " << resources.touches->OutputPath()
-                  << " (" << resources.touches->EventCount() << " events)\n";
-    }
 }
 
 bool PrepareResources(const RunOptions& options,
@@ -226,24 +181,12 @@ bool PrepareResources(const RunOptions& options,
     // pipeline actually kept.
     resources.renderer.SetRoi(config.Context().roi);
 
-    if (!options.detectTouches) return true;
-    resources.touches.reset(new aifootball_app::TouchRuntime(
-        options.touchParams, resources.reader.width(), resources.reader.height()));
-    const std::string touchPath = options.touchOutputPath.empty()
-        ? aifootball_app::JoinPath(options.outputDir, "touches.jsonl")
-        : options.touchOutputPath;
-    if (!resources.touches->Open(touchPath, options.videoPath,
-                                 resources.reader.fps(), cameraId)) {
-        LOG_ERROR("Failed to open touch output '{}'", touchPath);
-        return false;
-    }
     return true;
 }
 
 using ResultFuture = aifootball::ProcessFuture;
 
 bool HandleResult(aifootball::ProcessFutureResult value,
-                  aifootball_app::TouchRuntime* touches,
                   aifootball_app::JsonlWriter& writer,
                   aifootball_app::VideoRenderer& renderer) {
     if (value.status != nexusflow::SUCCESS) {
@@ -251,9 +194,6 @@ bool HandleResult(aifootball::ProcessFutureResult value,
                   value.result.frameId, value.status);
         return false;
     }
-    // Touch detection runs before the renderer so the overlay of this frame is
-    // the state of this frame.
-    if (touches) renderer.SetTouchOverlay(touches->Push(value.result));
     writer.Write(value.result);
     if (!renderer.Write(value.result)) {
         LOG_ERROR("Failed to render SDK result for frame {}",
@@ -264,11 +204,10 @@ bool HandleResult(aifootball::ProcessFutureResult value,
 }
 
 bool HandleFutureResult(ResultFuture& future,
-                        aifootball_app::TouchRuntime* touches,
                         aifootball_app::JsonlWriter& writer,
                         aifootball_app::VideoRenderer& renderer) {
     try {
-        return HandleResult(future.Get(), touches, writer, renderer);
+        return HandleResult(future.Get(), writer, renderer);
     } catch (const std::exception& error) {
         LOG_ERROR("Failed to consume AI-Football SDK future: {}", error.what());
         return false;
@@ -276,14 +215,12 @@ bool HandleFutureResult(ResultFuture& future,
 }
 
 bool WriteReadyResults(std::deque<ResultFuture>& pendingResults,
-                       aifootball_app::TouchRuntime* touches,
                        aifootball_app::JsonlWriter& writer,
                        aifootball_app::VideoRenderer& renderer) {
-    // Futures are consumed strictly in submission order, which is also the
-    // frame order the touch aggregation relies on.
+    // Futures are consumed strictly in submission order: the observations
+    // file is written in frame order, which is what the touch logic reads.
     while (!pendingResults.empty() && pendingResults.front().IsReady()) {
-        if (!HandleFutureResult(pendingResults.front(), touches, writer,
-                                renderer)) {
+        if (!HandleFutureResult(pendingResults.front(), writer, renderer)) {
             return false;
         }
         pendingResults.pop_front();
@@ -292,13 +229,11 @@ bool WriteReadyResults(std::deque<ResultFuture>& pendingResults,
 }
 
 bool DrainResults(std::deque<ResultFuture>& pendingResults,
-                  aifootball_app::TouchRuntime* touches,
                   aifootball_app::JsonlWriter& writer,
                   aifootball_app::VideoRenderer& renderer) {
     while (!pendingResults.empty()) {
         pendingResults.front().Wait();
-        if (!HandleFutureResult(pendingResults.front(), touches, writer,
-                                renderer)) {
+        if (!HandleFutureResult(pendingResults.front(), writer, renderer)) {
             return false;
         }
         pendingResults.pop_front();
@@ -339,8 +274,8 @@ bool ProcessVideo(const RunOptions& options, AppResources& resources,
                         return false;
                     }
                     if (!resources.renderer.SubmitFrame(frame) ||
-                        !HandleResult(std::move(value), resources.touches.get(),
-                                      resources.writer, resources.renderer)) {
+                        !HandleResult(std::move(value), resources.writer,
+                                      resources.renderer)) {
                         failed = true;
                         return false;
                     }
@@ -359,8 +294,8 @@ bool ProcessVideo(const RunOptions& options, AppResources& resources,
             }
 
             ++processedFrames;
-            if (!WriteReadyResults(pendingResults, resources.touches.get(),
-                                   resources.writer, resources.renderer)) {
+            if (!WriteReadyResults(pendingResults, resources.writer,
+                                   resources.renderer)) {
                 failed = true;
                 return false;
             }
@@ -384,8 +319,7 @@ bool ProcessVideo(const RunOptions& options, AppResources& resources,
         LOG_ERROR("Failed to drain AI-Football SDK pipeline");
         return false;
     }
-    return DrainResults(pendingResults, resources.touches.get(),
-                        resources.writer, resources.renderer);
+    return DrainResults(pendingResults, resources.writer, resources.renderer);
 }
 
 int RunApp(const RunOptions& options, const aifootball_app::AppConfig& config) {
@@ -421,19 +355,6 @@ int RunApp(const RunOptions& options, const aifootball_app::AppConfig& config) {
             LOG_ERROR("Failed to deinitialize AI-Football SDK pipeline");
             return 2;
         }
-        if (resources.touches) {
-            // Close the last event: it only ends when the stream does.
-            resources.touches->Flush();
-            resources.touches->Close();
-            LOG_INFO("Touch detection: {} event(s) written to '{}'", 
-                     resources.touches->EventCount(),
-                     resources.touches->OutputPath());
-            LOG_INFO("Touch gates: {} suppressed by the refractory window, "
-                     "{} refused by the speed gate, {} by tracked-ball-only",
-                     resources.touches->SuppressedByRefractory(),
-                     resources.touches->RejectedBySpeedGate(),
-                     resources.touches->RejectedByBallGate());
-        }
         if (options.profileTimers) PrintTimerSnapshot();
         PrintThroughput(runStarted, processingStarted, processingEnded,
                         processedFrames, resources);
@@ -462,42 +383,6 @@ int main(int argc, char* argv[]) {
     cli.AddArgument("--render", "-r", "Render detections to an MP4", false,
                     app::CommandParser::FlagMarker());
     cli.AddArgument("--render_path", "-R", "Rendered MP4 path", false, "");
-    cli.AddArgument("--detect_touches", "", "Detect ball touches and write touches.jsonl",
-                    false, app::CommandParser::FlagMarker());
-    cli.AddArgument("--touch_output", "", "Touch events JSONL path", false,
-                    "");
-    cli.AddArgument("--contact_ratio", "", "Touch radius as a fraction of min(width,height)",
-                    false, "0.045");
-    cli.AddArgument("--person_height_ratio", "", "Touch radius cap as a fraction of person height",
-                    false, "0.06");
-    cli.AddArgument("--min_contact_px", "", "Lower bound of the touch radius", false,
-                    "18");
-    cli.AddArgument("--max_contact_px", "", "Upper bound of the touch radius", false,
-                    "64");
-    cli.AddArgument("--release_ratio", "", "Hysteresis: exit = enter * ratio", false,
-                    "1.4");
-    cli.AddArgument("--kp_conf", "", "Minimum foot keypoint confidence", false, "0.2");
-    cli.AddArgument("--ball_conf", "", "Minimum ball confidence", false, "0.15");
-    cli.AddArgument("--min_contact_frames", "", "Contact frames needed for one touch",
-                    false, "2");
-    cli.AddArgument("--max_gap_frames", "", "Frames without evidence tolerated inside a touch",
-                    false, "3");
-    cli.AddArgument("--min_split_frames", "", "Frame gap needed to split two touches",
-                    false, "12");
-    cli.AddArgument("--min_rise_frames", "", "Frames above the exit threshold needed to split",
-                    false, "2");
-    cli.AddArgument("--refractory_frames", "",
-                    "Same person and foot: touches closer than this are one touch",
-                    false, "21");
-    cli.AddArgument("--min_speed_change", "",
-                    "Minimum ball speed change at the touch, px/s (0 = off)", false,
-                    "0");
-    cli.AddArgument("--min_speed_ratio", "",
-                    "Minimum ratio between the two ball speeds (1 = off)", false,
-                    "1");
-    cli.AddArgument("--tracked_ball_only", "",
-                    "Only accept touches of the tracked ball (1) or any candidate (0)",
-                    false, "0");
     cli.AddArgument("--verbose", "-V", "Enable DEBUG-level logging", false,
                     app::CommandParser::FlagMarker());
     cli.AddArgument("--quiet", "-q", "Suppress INFO-level logging", false,

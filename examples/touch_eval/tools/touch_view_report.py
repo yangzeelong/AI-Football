@@ -14,9 +14,12 @@ tool prints both, from the artifacts an evaluation already wrote:
   process level   predictions of the same person and foot within `--process-gap`
                   are merged into one touch process first, so reporting a touch
                   three times is one extra process, not three extra detections.
-  coverage        an annotation counts as found if any prediction lands within
-                  `--coverage` seconds of it. Answers "did it see this touch",
-                  with no penalty for reporting it twice.
+
+`--coverage` adds a third, many-to-one reading: an annotation counts as found if
+any prediction lands within T seconds of it, and a prediction counts as supported
+if any annotation is within T. It answers "did it see this touch" and is useful
+when hunting for misses, but it is a *diagnostic*: it is not precision and recall,
+and the numbers to report are the one-to-one ones above.
 
 Reads <output-dir>/touch_events.jsonl and <output-dir>/ground_truth.json.
 """
@@ -75,8 +78,9 @@ def main() -> int:
     parser.add_argument("--process-gap", default="0.5,1.0",
                         help="seconds within which two predictions of the same "
                              "person and foot are one process")
-    parser.add_argument("--coverage", default="0.25,0.5,1.0,2.0",
-                        help="tolerances for the coverage view, in seconds")
+    parser.add_argument("--coverage", default="",
+                        help="opt in to the many-to-one coverage diagnostic, e.g. "
+                             "--coverage 0.5,1.0 (not precision/recall)")
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -125,7 +129,17 @@ def main() -> int:
         print(f"             {score(process_hits, len(processes), capacity, claimed_hits)}"
               f"  (recall still counts annotations)")
 
-    print("\n-- coverage (an annotation is found if any prediction is nearby) --")
+    # Off by default: this is a diagnostic for chasing misses, and its two
+    # numbers are deliberately not called precision and recall. Only run it when
+    # the caller asked for it.
+    if not args.coverage.strip():
+        return 0
+    print("\n-- coverage (many-to-one diagnostic, NOT the metric) --")
+    print("  annotations found     = a touch has some prediction within T")
+    print("  predictions supported = a prediction has some annotation within T")
+    print("  both are one sided: one prediction can support two annotations and "
+          "the other way round")
+    print("  tol(s)  annotations found      predictions supported   F1")
     for tolerance in (float(part) for part in args.coverage.split(",")):
         found = 0
         readable_found = 0
@@ -137,9 +151,20 @@ def main() -> int:
             if not row.get("low_quality", False):
                 readable += 1
                 readable_found += 1 if hit else 0
-        print(f"  +-{tolerance:4.2f}s: {found}/{len(annotations)} "
-              f"({percent(found / len(annotations))})   "
-              f"readable rows only {readable_found}/{readable} "
+        supported = 0
+        for event in events:
+            stamp = event["timestamp_sec"]
+            if any(row["start_sec"] - tolerance <= stamp <= row["end_sec"] + tolerance
+                   for row in annotations):
+                supported += 1
+        recall = found / len(annotations) if annotations else 0.0
+        precision = supported / len(events) if events else 0.0
+        f1 = (2.0 * precision * recall / (precision + recall)
+              if precision + recall else 0.0)
+        print(f"  {tolerance:5.2f}   {found:3d}/{len(annotations)} "
+              f"({percent(recall):>6})      {supported:3d}/{len(events)} "
+              f"({percent(precision):>6})   {f1:.3f}")
+        print(f"          readable rows only {readable_found}/{readable} "
               f"({percent(readable_found / readable if readable else 0.0)})")
     return 0
 
