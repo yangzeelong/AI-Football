@@ -1,0 +1,9 @@
+{
+  "_note": "历史 tag → 规范 tag 的归并表。规范名见 README「模型管理（唯一命名：v1）」。归并只发生在 s5_eval_ledger.py 读取时，不改任何历史文件（README:43「留档不回溯改」）。",
+  "_canonical": ["base", "v1", "v1-frozen-step1", "v1-frozen-step2"],
+  "_why": "早期评测命令行的 --model tag 用了旧名（finetune-v1 / finetune-v1-frozen），后来只把指标文件名改成了规范名，文件内的 tag 字段仍是旧名 → 不归并的话台账里同一模型会出现两行。",
+  "_hierarchy": "命名口径（2026-10-12 定，内外一致）：四个名字都直说 —— base / v1 / v1-frozen-step1（冻主干训类头）/ v1-frozen-step2（解冻精修，当前部署/交付的就是它）。`v1-frozen` 只是谱系简写，不单独当名字用。",
+  "_v1-frozen_note": "已移除 `v1-frozen → v1-frozen-step1` 的映射：按上面的口径，裸 `v1-frozen` 不该作为名字出现，宁可让它在台账里单独露出来提示人工确认，也不静默归并到某一步。",
+  "finetune-v1": "v1",
+  "finetune-v1-frozen": "v1-frozen-step1"
+}
