@@ -1,0 +1,34 @@
+{
+  "cli": {
+    "video": "/home/hx1/yzl/Work/data/颠球.mov",
+    "output_dir": "/home/hx1/yzl/Work/AI-Football/tools/detection_finetune/runs/batch_app/v1/juggle",
+    "roi_config": "config/roi.json",
+    "config": "config/app_v1.yaml",
+    "draw_roi": false,
+    "roi_frame": 0,
+    "use_roi": true,
+    "show": false,
+    "no_render": true,
+    "camera_id": "C1",
+    "display_width": 1920,
+    "display_height": 1080,
+    "device": "cuda:0",
+    "stride": 6,
+    "target_fps": null,
+    "max_frames": 60,
+    "debug": false
+  },
+  "resolved": {
+    "config": "config/app_v1.yaml",
+    "output_dir": "/home/hx1/yzl/Work/AI-Football/tools/detection_finetune/runs/batch_app/v1/juggle",
+    "output_observations": "/home/hx1/yzl/Work/AI-Football/tools/detection_finetune/runs/batch_app/v1/juggle/observations.jsonl",
+    "output_video": null,
+    "stride": 6,
+    "target_fps": null,
+    "detector": "rfdetr",
+    "detector_model": "small",
+    "detector_input_resolution": 960,
+    "pose_preset": "hrnet-w48-dark",
+    "tracker": "botsort.yaml"
+  }
+}

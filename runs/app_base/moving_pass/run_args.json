@@ -1,0 +1,34 @@
+{
+  "cli": {
+    "video": "/home/hx1/yzl/Work/data/移动传球.mov",
+    "output_dir": "runs/app_base/moving_pass",
+    "roi_config": "config/roi.json",
+    "config": "config/app.yaml",
+    "draw_roi": false,
+    "roi_frame": 0,
+    "use_roi": false,
+    "show": false,
+    "no_render": false,
+    "camera_id": "C1",
+    "display_width": 1920,
+    "display_height": 1080,
+    "device": "cuda:0",
+    "stride": 12,
+    "target_fps": null,
+    "max_frames": null,
+    "debug": true
+  },
+  "resolved": {
+    "config": "config/app.yaml",
+    "output_dir": "runs/app_base/moving_pass",
+    "output_observations": "runs/app_base/moving_pass/observations.jsonl",
+    "output_video": "runs/app_base/moving_pass/rendered.mp4",
+    "stride": 12,
+    "target_fps": null,
+    "detector": "rfdetr",
+    "detector_model": "small",
+    "detector_input_resolution": 960,
+    "pose_preset": "hrnet-w48-dark",
+    "tracker": "botsort.yaml"
+  }
+}

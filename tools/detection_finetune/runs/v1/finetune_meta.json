@@ -1,0 +1,56 @@
+{
+ "started_at": "2026-10-09T14:23:45",
+ "args": {
+  "config": "train_configs/full_960.yaml",
+  "dataset_dir": "/home/hx1/yzl/Work/data/ball_cone_v1/dataset",
+  "output_dir": null,
+  "subset": 0,
+  "subset_require_cone": false,
+  "epochs": 0,
+  "batch_size": 0,
+  "grad_accum_steps": 0,
+  "lr": 0.0,
+  "freeze": "none",
+  "resume": "runs/full_960/checkpoint.pth",
+  "dry_run": false
+ },
+ "model": {
+  "resolution": 960,
+  "gradient_checkpointing": true,
+  "device": "cuda"
+ },
+ "train": {
+  "epochs": 100,
+  "batch_size": 4,
+  "grad_accum_steps": 4,
+  "num_workers": 4,
+  "lr": 5e-05,
+  "lr_encoder": 7.5e-05,
+  "lr_vit_layer_decay": 0.8,
+  "lr_component_decay": 0.7,
+  "use_ema": true,
+  "ema_decay": 0.993,
+  "multi_scale": true,
+  "expanded_scales": true,
+  "tensorboard": true,
+  "early_stopping": true,
+  "early_stopping_patience": 15,
+  "early_stopping_min_delta": 0.001,
+  "early_stopping_use_ema": true,
+  "checkpoint_interval": 2,
+  "output_dir": "/home/hx1/yzl/Work/AI-Football/tools/detection_finetune/runs/full_960",
+  "dataset_file": "roboflow",
+  "dataset_dir": "/home/hx1/yzl/Work/data/ball_cone_v1/dataset",
+  "resume": "runs/full_960/checkpoint.pth"
+ },
+ "class_names": [
+  "person",
+  "ball",
+  "cone"
+ ],
+ "expected_columns": 4,
+ "freeze": "none",
+ "trainable_params": 32111170,
+ "finished_at": "2026-10-09T14:41:05",
+ "elapsed_sec": 1039.7
+}

@@ -1,0 +1,51 @@
+{
+ "started_at": "2026-10-09T13:30:36",
+ "args": {
+  "config": "train_configs/smoke_512.yaml",
+  "dataset_dir": "/home/hx1/yzl/Work/data/ball_cone_v1/dataset",
+  "output_dir": "runs/smoke_final",
+  "subset": 32,
+  "subset_require_cone": true,
+  "epochs": 3,
+  "batch_size": 0,
+  "grad_accum_steps": 0,
+  "lr": 0.0,
+  "freeze": "none",
+  "resume": null,
+  "dry_run": false
+ },
+ "model": {
+  "resolution": 512,
+  "gradient_checkpointing": false,
+  "device": "cuda"
+ },
+ "train": {
+  "epochs": 3,
+  "batch_size": 2,
+  "grad_accum_steps": 1,
+  "num_workers": 0,
+  "lr": 0.0001,
+  "lr_encoder": 0.00015,
+  "lr_vit_layer_decay": 0.8,
+  "lr_component_decay": 0.7,
+  "use_ema": false,
+  "multi_scale": false,
+  "expanded_scales": false,
+  "tensorboard": false,
+  "early_stopping": false,
+  "checkpoint_interval": 1,
+  "output_dir": "/home/hx1/yzl/Work/AI-Football/tools/detection_finetune/runs/smoke_final",
+  "dataset_file": "roboflow",
+  "dataset_dir": "/tmp/ds_subset"
+ },
+ "class_names": [
+  "person",
+  "ball",
+  "cone"
+ ],
+ "expected_columns": 4,
+ "freeze": "none",
+ "trainable_params": 32111170,
+ "finished_at": "2026-10-09T13:31:06",
+ "elapsed_sec": 29.9
+}

@@ -1,0 +1,153 @@
+{
+ "tag": "v1",
+ "checkpoint": "/home/hx1/yzl/Work/AI-Football/tools/detection_finetune/runs/v1/checkpoint_best_ema.pth",
+ "split": "valid",
+ "resolution": 960,
+ "threshold": 0.05,
+ "n_predictions": 2066,
+ "coco": {
+  "overall": {
+   "mAP@.5:.95": 0.8144,
+   "mAP@.5": 0.9555,
+   "mAP@.75": 0.9153,
+   "AR@100": 0.8514
+  },
+  "per_class": {
+   "person": {
+    "mAP@.5:.95": 0.9184,
+    "mAP@.5": 0.9953,
+    "mAP@.75": 0.9686,
+    "AR@100": 0.934
+   },
+   "ball": {
+    "mAP@.5:.95": 0.8379,
+    "mAP@.5": 0.9334,
+    "mAP@.75": 0.8987,
+    "AR@100": 0.88
+   },
+   "cone": {
+    "mAP@.5:.95": 0.6868,
+    "mAP@.5": 0.9379,
+    "mAP@.75": 0.8787,
+    "AR@100": 0.7403
+   }
+  },
+  "per_class_area": {
+   "person": {
+    "all": {
+     "mAP@.5:.95": 0.9184,
+     "mAP@.5": 0.9953,
+     "mAP@.75": 0.9686,
+     "AR@100": 0.934
+    },
+    "small": {
+     "mAP@.5:.95": 0.7305,
+     "mAP@.5": 0.8839,
+     "mAP@.75": 0.8839,
+     "AR@100": 0.8444
+    },
+    "medium": {
+     "mAP@.5:.95": 0.8985,
+     "mAP@.5": 0.9955,
+     "mAP@.75": 0.9602,
+     "AR@100": 0.921
+    },
+    "large": {
+     "mAP@.5:.95": 0.9956,
+     "mAP@.5": 1.0,
+     "mAP@.75": 1.0,
+     "AR@100": 0.9967
+    }
+   },
+   "ball": {
+    "all": {
+     "mAP@.5:.95": 0.8379,
+     "mAP@.5": 0.9334,
+     "mAP@.75": 0.8987,
+     "AR@100": 0.88
+    },
+    "small": {
+     "mAP@.5:.95": 0.7889,
+     "mAP@.5": 0.918,
+     "mAP@.75": 0.8733,
+     "AR@100": 0.8375
+    },
+    "medium": {
+     "mAP@.5:.95": 0.9377,
+     "mAP@.5": 0.9686,
+     "mAP@.75": 0.9686,
+     "AR@100": 0.9727
+    },
+    "large": {
+     "mAP@.5:.95": -1.0,
+     "mAP@.5": -1.0,
+     "mAP@.75": -1.0,
+     "AR@100": -1.0
+    }
+   },
+   "cone": {
+    "all": {
+     "mAP@.5:.95": 0.6868,
+     "mAP@.5": 0.9379,
+     "mAP@.75": 0.8787,
+     "AR@100": 0.7403
+    },
+    "small": {
+     "mAP@.5:.95": 0.6678,
+     "mAP@.5": 0.9336,
+     "mAP@.75": 0.8687,
+     "AR@100": 0.7112
+    },
+    "medium": {
+     "mAP@.5:.95": 0.8382,
+     "mAP@.5": 0.9406,
+     "mAP@.75": 0.9406,
+     "AR@100": 0.9278
+    },
+    "large": {
+     "mAP@.5:.95": -1.0,
+     "mAP@.5": -1.0,
+     "mAP@.75": -1.0,
+     "AR@100": -1.0
+    }
+   }
+  }
+ },
+ "behavior": {
+  "frames": 53,
+  "frames_with_cone_gt": 27,
+  "cone_as_ball_frames": 20,
+  "cone_as_ball_boxes": 46,
+  "cone_as_ball_frame_ratio": 0.7407,
+  "cone_as_ball_boxes_with_cone_pred": 38,
+  "cone_as_ball_frames_with_cone_pred": 17,
+  "ball_frame_tp": 47,
+  "ball_frame_fp": 6,
+  "ball_frame_fn": 2,
+  "ball_frame_precision": 0.8868,
+  "ball_frame_recall": 0.9592,
+  "ball_frame_f1": 0.9216,
+  "empty_ball_fp_frames": 4,
+  "empty_ball_fp_ratio": 0.0755,
+  "by_scene": {
+   "indoor_gym": {
+    "frames": 27,
+    "cone_as_ball_frames": 20,
+    "cone_as_ball_boxes": 46,
+    "frames_with_cone_gt": 27,
+    "cone_as_ball_frame_ratio": 0.741,
+    "ball_frame_recall": 0.963
+   },
+   "outdoor_pitch": {
+    "frames": 26,
+    "cone_as_ball_frames": 0,
+    "cone_as_ball_boxes": 0,
+    "frames_with_cone_gt": 0,
+    "cone_as_ball_frame_ratio": 0.0,
+    "ball_frame_recall": 0.955
+   }
+  }
+ },
+ "tag_legacy": "finetune-v1",
+ "checkpoint_legacy": "/home/hx1/yzl/Work/AI-Football/tools/detection_finetune/runs/finetune-v1/checkpoint_best_ema.pth"
+}

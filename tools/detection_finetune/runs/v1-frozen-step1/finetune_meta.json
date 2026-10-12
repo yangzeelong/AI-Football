@@ -1,0 +1,56 @@
+{
+ "started_at": "2026-10-10T01:20:38",
+ "args": {
+  "config": "train_configs/finetune-v1.yaml",
+  "dataset_dir": "/home/hx1/yzl/Work/data/ball_cone_v1/dataset",
+  "output_dir": "runs/finetune-v1-frozen",
+  "subset": 0,
+  "subset_require_cone": false,
+  "epochs": 40,
+  "batch_size": 0,
+  "grad_accum_steps": 0,
+  "lr": 0.0,
+  "freeze": "encoder",
+  "resume": null,
+  "dry_run": false
+ },
+ "model": {
+  "resolution": 960,
+  "gradient_checkpointing": true,
+  "device": "cuda"
+ },
+ "train": {
+  "epochs": 40,
+  "batch_size": 4,
+  "grad_accum_steps": 4,
+  "num_workers": 4,
+  "lr": 5e-05,
+  "lr_encoder": 7.5e-05,
+  "lr_vit_layer_decay": 0.8,
+  "lr_component_decay": 0.7,
+  "use_ema": true,
+  "ema_decay": 0.993,
+  "multi_scale": true,
+  "expanded_scales": true,
+  "tensorboard": true,
+  "early_stopping": true,
+  "early_stopping_patience": 15,
+  "early_stopping_min_delta": 0.001,
+  "early_stopping_use_ema": true,
+  "checkpoint_interval": 2,
+  "output_dir": "/home/hx1/yzl/Work/AI-Football/tools/detection_finetune/runs/finetune-v1-frozen",
+  "dataset_file": "roboflow",
+  "dataset_dir": "/home/hx1/yzl/Work/data/ball_cone_v1/dataset"
+ },
+ "class_names": [
+  "person",
+  "ball",
+  "cone"
+ ],
+ "expected_columns": 4,
+ "freeze": "encoder",
+ "trainable_params": 10117954,
+ "finished_at": "2026-10-10T01:52:56",
+ "elapsed_sec": 1938.1,
+ "names_note": "args 里的 config/output_dir 是**启动当时**的名字（旧名 finetune-v1*），本目录（runs/v1-frozen-step1）与 train_configs/v1-frozen-step1.yaml 才是规范名；见 README「模型管理（唯一命名：v1）」。"
+}

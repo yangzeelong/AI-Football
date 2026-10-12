@@ -1,0 +1,160 @@
+{
+ "tag": "v1",
+ "checkpoint": "/home/hx1/yzl/Work/AI-Football/tools/detection_finetune/runs/v1/checkpoint_best_ema.pth",
+ "split": "test",
+ "resolution": 960,
+ "threshold": 0.05,
+ "n_predictions": 5870,
+ "coco": {
+  "overall": {
+   "mAP@.5:.95": 0.5924,
+   "mAP@.5": 0.9175,
+   "mAP@.75": 0.6177,
+   "AR@100": 0.6574
+  },
+  "per_class": {
+   "person": {
+    "mAP@.5:.95": 0.8477,
+    "mAP@.5": 0.9851,
+    "mAP@.75": 0.9521,
+    "AR@100": 0.8787
+   },
+   "ball": {
+    "mAP@.5:.95": 0.5935,
+    "mAP@.5": 0.8983,
+    "mAP@.75": 0.6395,
+    "AR@100": 0.684
+   },
+   "cone": {
+    "mAP@.5:.95": 0.336,
+    "mAP@.5": 0.869,
+    "mAP@.75": 0.2615,
+    "AR@100": 0.4095
+   }
+  },
+  "per_class_area": {
+   "person": {
+    "all": {
+     "mAP@.5:.95": 0.8477,
+     "mAP@.5": 0.9851,
+     "mAP@.75": 0.9521,
+     "AR@100": 0.8787
+    },
+    "small": {
+     "mAP@.5:.95": 0.7737,
+     "mAP@.5": 0.9652,
+     "mAP@.75": 0.9236,
+     "AR@100": 0.8341
+    },
+    "medium": {
+     "mAP@.5:.95": 0.8614,
+     "mAP@.5": 0.9926,
+     "mAP@.75": 0.9533,
+     "AR@100": 0.8873
+    },
+    "large": {
+     "mAP@.5:.95": 0.9658,
+     "mAP@.5": 0.9991,
+     "mAP@.75": 0.9991,
+     "AR@100": 0.9722
+    }
+   },
+   "ball": {
+    "all": {
+     "mAP@.5:.95": 0.5935,
+     "mAP@.5": 0.8983,
+     "mAP@.75": 0.6395,
+     "AR@100": 0.684
+    },
+    "small": {
+     "mAP@.5:.95": 0.5749,
+     "mAP@.5": 0.89,
+     "mAP@.75": 0.6144,
+     "AR@100": 0.6693
+    },
+    "medium": {
+     "mAP@.5:.95": 0.9509,
+     "mAP@.5": 1.0,
+     "mAP@.75": 1.0,
+     "AR@100": 0.9714
+    },
+    "large": {
+     "mAP@.5:.95": -1.0,
+     "mAP@.5": -1.0,
+     "mAP@.75": -1.0,
+     "AR@100": -1.0
+    }
+   },
+   "cone": {
+    "all": {
+     "mAP@.5:.95": 0.336,
+     "mAP@.5": 0.869,
+     "mAP@.75": 0.2615,
+     "AR@100": 0.4095
+    },
+    "small": {
+     "mAP@.5:.95": 0.3361,
+     "mAP@.5": 0.869,
+     "mAP@.75": 0.2616,
+     "AR@100": 0.4095
+    },
+    "medium": {
+     "mAP@.5:.95": -1.0,
+     "mAP@.5": -1.0,
+     "mAP@.75": -1.0,
+     "AR@100": -1.0
+    },
+    "large": {
+     "mAP@.5:.95": -1.0,
+     "mAP@.5": -1.0,
+     "mAP@.75": -1.0,
+     "AR@100": -1.0
+    }
+   }
+  }
+ },
+ "behavior": {
+  "frames": 75,
+  "frames_with_cone_gt": 48,
+  "cone_as_ball_frames": 43,
+  "cone_as_ball_boxes": 173,
+  "cone_as_ball_frame_ratio": 0.8958,
+  "cone_as_ball_boxes_with_cone_pred": 170,
+  "cone_as_ball_frames_with_cone_pred": 42,
+  "ball_frame_tp": 58,
+  "ball_frame_fp": 17,
+  "ball_frame_fn": 0,
+  "ball_frame_precision": 0.7733,
+  "ball_frame_recall": 1.0,
+  "ball_frame_f1": 0.8722,
+  "empty_ball_fp_frames": 17,
+  "empty_ball_fp_ratio": 0.2267,
+  "person_box_P": 0.832,
+  "person_box_R": 0.9845,
+  "person_box_F1": 0.9019,
+  "ball_box_P": 0.6438,
+  "ball_box_R": 0.9792,
+  "ball_box_F1": 0.7769,
+  "cone_box_P": 0.8259,
+  "cone_box_R": 0.901,
+  "cone_box_F1": 0.8618,
+  "by_scene": {
+   "indoor_gym": {
+    "frames": 45,
+    "cone_as_ball_frames": 40,
+    "cone_as_ball_boxes": 169,
+    "frames_with_cone_gt": 45,
+    "cone_as_ball_frame_ratio": 0.889,
+    "ball_frame_recall": 1.0
+   },
+   "outdoor_pitch": {
+    "frames": 30,
+    "cone_as_ball_frames": 3,
+    "cone_as_ball_boxes": 4,
+    "frames_with_cone_gt": 3,
+    "cone_as_ball_frame_ratio": 1.0,
+    "ball_frame_recall": 1.0
+   }
+  }
+ }
+}

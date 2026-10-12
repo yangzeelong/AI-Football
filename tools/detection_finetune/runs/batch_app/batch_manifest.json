@@ -1,0 +1,41 @@
+{
+ "config": "/home/hx1/yzl/Work/AI-Football/tools/detection_finetune/batch_videos.yaml",
+ "repo_root": "/home/hx1/yzl/Work/AI-Football",
+ "jobs": [
+  {
+   "model": "v1",
+   "video_tag": "juggle",
+   "video": "/home/hx1/yzl/Work/data/颠球.mov",
+   "out_dir": "/home/hx1/yzl/Work/AI-Football/tools/detection_finetune/runs/batch_app/v1/juggle",
+   "cmd": [
+    "/root/miniconda3/envs/ai-football/bin/python",
+    "-u",
+    "code/app.py",
+    "--video",
+    "/home/hx1/yzl/Work/data/颠球.mov",
+    "--output-dir",
+    "/home/hx1/yzl/Work/AI-Football/tools/detection_finetune/runs/batch_app/v1/juggle",
+    "--config",
+    "config/app_v1.yaml",
+    "--device",
+    "cuda:0",
+    "--camera-id",
+    "C1",
+    "--roi-config",
+    "config/roi.json",
+    "--use-roi",
+    "--stride",
+    "6",
+    "--max-frames",
+    "60",
+    "--no-render"
+   ],
+   "returncode": 0,
+   "seconds": 78.2,
+   "log": "/home/hx1/yzl/Work/AI-Football/tools/detection_finetune/runs/batch_app/v1/juggle/run.log",
+   "observations": true,
+   "observations_bytes": 1013993,
+   "rendered": false
+  }
+ ]
+}

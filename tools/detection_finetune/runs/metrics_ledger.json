@@ -1,0 +1,329 @@
+{
+ "version": 1,
+ "records": [
+  {
+   "tag": "base",
+   "tag_raw": "base",
+   "tag_file": "base",
+   "split": "test",
+   "resolution": 960,
+   "recorded_at": "2026-10-12 01:53:30",
+   "source": "/home/hx1/yzl/Work/AI-Football/tools/detection_finetune/runs/eval_ab/test_960/metrics_base.json",
+   "source_sha256": "8a18a481ed0e",
+   "prev_sha256": null,
+   "gt_sha256": "e09d3f13c6af",
+   "checkpoint": "/home/hx1/yzl/Work/AI-Football/models/rfdetr/rf-detr-small.pth",
+   "checkpoint_sha256": "d81979a9213a",
+   "checkpoint_state": "ok",
+   "threshold": 0.05,
+   "n_predictions": 8230,
+   "overall": {
+    "mAP@.5": 0.556,
+    "mAP@.5:.95": 0.5539,
+    "mAP@.75": 0.5526,
+    "AR@100": 0.6593
+   },
+   "per_class": {
+    "person": {
+     "mAP@.5": 0.9971,
+     "mAP@.5:.95": 0.997
+    },
+    "ball": {
+     "mAP@.5": 0.6709,
+     "mAP@.5:.95": 0.6646
+    },
+    "cone": {
+     "mAP@.5": 0.0,
+     "mAP@.5:.95": 0.0
+    }
+   },
+   "main": {
+    "cone_as_ball_frames": 48,
+    "cone_as_ball_boxes": 565,
+    "ball_frame_precision": 0.7733,
+    "ball_frame_recall": 1.0,
+    "empty_ball_fp_ratio": 0.2267,
+    "frames": 75
+   },
+   "note": "COCO 80 类（无 cone 类 → cone 恒为 0，overall 被结构性拉低）"
+  },
+  {
+   "tag": "v1-frozen-step1",
+   "tag_raw": "v1-frozen-step1",
+   "tag_file": "v1-frozen-step1",
+   "split": "test",
+   "resolution": 960,
+   "recorded_at": "2026-10-12 01:53:30",
+   "source": "/home/hx1/yzl/Work/AI-Football/tools/detection_finetune/runs/eval_ab/test_960/metrics_v1-frozen-step1.json",
+   "source_sha256": "cd4472c968e4",
+   "prev_sha256": null,
+   "gt_sha256": "e09d3f13c6af",
+   "checkpoint": "/home/hx1/yzl/Work/AI-Football/tools/detection_finetune/runs/v1-frozen-step1/checkpoint_best_ema.pth",
+   "checkpoint_sha256": "fd06f11c6b8d",
+   "checkpoint_state": "ok",
+   "threshold": 0.05,
+   "n_predictions": 6416,
+   "overall": {
+    "mAP@.5": 0.916,
+    "mAP@.5:.95": 0.6127,
+    "mAP@.75": 0.5901,
+    "AR@100": 0.6775
+   },
+   "per_class": {
+    "person": {
+     "mAP@.5": 0.9937,
+     "mAP@.5:.95": 0.9047
+    },
+    "ball": {
+     "mAP@.5": 0.8998,
+     "mAP@.5:.95": 0.6639
+    },
+    "cone": {
+     "mAP@.5": 0.8544,
+     "mAP@.5:.95": 0.2695
+    }
+   },
+   "main": {
+    "cone_as_ball_frames": 26,
+    "cone_as_ball_boxes": 36,
+    "ball_frame_precision": 0.7733,
+    "ball_frame_recall": 1.0,
+    "empty_ball_fp_ratio": 0.2267,
+    "frames": 75
+   },
+   "note": ""
+  },
+  {
+   "tag": "v1-frozen-step2",
+   "tag_raw": "v1-frozen-step2",
+   "tag_file": "v1-frozen-step2",
+   "split": "test",
+   "resolution": 960,
+   "recorded_at": "2026-10-12 01:53:31",
+   "source": "/home/hx1/yzl/Work/AI-Football/tools/detection_finetune/runs/eval_ab/test_960/metrics_v1-frozen-step2.json",
+   "source_sha256": "821df19ec950",
+   "prev_sha256": null,
+   "gt_sha256": "e09d3f13c6af",
+   "checkpoint": "/home/hx1/yzl/Work/AI-Football/tools/detection_finetune/runs/v1-frozen-step2/checkpoint_best_ema.pth",
+   "checkpoint_sha256": "a98980500c58",
+   "checkpoint_state": "ok",
+   "threshold": 0.05,
+   "n_predictions": 5930,
+   "overall": {
+    "mAP@.5": 0.9286,
+    "mAP@.5:.95": 0.6258,
+    "mAP@.75": 0.6045,
+    "AR@100": 0.6946
+   },
+   "per_class": {
+    "person": {
+     "mAP@.5": 0.9917,
+     "mAP@.5:.95": 0.9004
+    },
+    "ball": {
+     "mAP@.5": 0.9015,
+     "mAP@.5:.95": 0.6578
+    },
+    "cone": {
+     "mAP@.5": 0.8924,
+     "mAP@.5:.95": 0.3191
+    }
+   },
+   "main": {
+    "cone_as_ball_frames": 18,
+    "cone_as_ball_boxes": 22,
+    "ball_frame_precision": 0.7733,
+    "ball_frame_recall": 1.0,
+    "empty_ball_fp_ratio": 0.2267,
+    "frames": 75
+   },
+   "note": ""
+  },
+  {
+   "tag": "v1",
+   "tag_raw": "v1",
+   "tag_file": "v1",
+   "split": "test",
+   "resolution": 960,
+   "recorded_at": "2026-10-12 01:53:31",
+   "source": "/home/hx1/yzl/Work/AI-Football/tools/detection_finetune/runs/eval_ab/test_960/metrics_v1.json",
+   "source_sha256": "2afb85407081",
+   "prev_sha256": null,
+   "gt_sha256": "e09d3f13c6af",
+   "checkpoint": "/home/hx1/yzl/Work/AI-Football/tools/detection_finetune/runs/v1/checkpoint_best_ema.pth",
+   "checkpoint_sha256": "4fa9868f09f4",
+   "checkpoint_state": "ok",
+   "threshold": 0.05,
+   "n_predictions": 5870,
+   "overall": {
+    "mAP@.5": 0.9175,
+    "mAP@.5:.95": 0.5924,
+    "mAP@.75": 0.6177,
+    "AR@100": 0.6574
+   },
+   "per_class": {
+    "person": {
+     "mAP@.5": 0.9851,
+     "mAP@.5:.95": 0.8477
+    },
+    "ball": {
+     "mAP@.5": 0.8983,
+     "mAP@.5:.95": 0.5935
+    },
+    "cone": {
+     "mAP@.5": 0.869,
+     "mAP@.5:.95": 0.336
+    }
+   },
+   "main": {
+    "cone_as_ball_frames": 43,
+    "cone_as_ball_boxes": 173,
+    "ball_frame_precision": 0.7733,
+    "ball_frame_recall": 1.0,
+    "empty_ball_fp_ratio": 0.2267,
+    "frames": 75
+   },
+   "note": ""
+  },
+  {
+   "tag": "base",
+   "tag_raw": "base",
+   "tag_file": "base",
+   "split": "valid",
+   "resolution": 960,
+   "recorded_at": "2026-10-12 01:53:31",
+   "source": "/home/hx1/yzl/Work/AI-Football/tools/detection_finetune/runs/eval_ab/valid_960/metrics_base.json",
+   "source_sha256": "929b05f21025",
+   "prev_sha256": null,
+   "gt_sha256": "5a9d65f4b367",
+   "checkpoint": "/home/hx1/yzl/Work/AI-Football/models/rfdetr/rf-detr-small.pth",
+   "checkpoint_sha256": "d81979a9213a",
+   "checkpoint_state": "ok",
+   "threshold": 0.05,
+   "n_predictions": 2603,
+   "overall": {
+    "mAP@.5": 0.619,
+    "mAP@.5:.95": 0.619,
+    "mAP@.75": 0.619,
+    "AR@100": 0.6429
+   },
+   "per_class": {
+    "person": {
+     "mAP@.5": 0.9973,
+     "mAP@.5:.95": 0.9973
+    },
+    "ball": {
+     "mAP@.5": 0.8597,
+     "mAP@.5:.95": 0.8597
+    },
+    "cone": {
+     "mAP@.5": 0.0,
+     "mAP@.5:.95": 0.0
+    }
+   },
+   "main": {
+    "cone_as_ball_frames": 27,
+    "cone_as_ball_boxes": 211,
+    "ball_frame_precision": 0.8679,
+    "ball_frame_recall": 0.9388,
+    "empty_ball_fp_ratio": 0.0755,
+    "frames": 53
+   },
+   "note": "COCO 80 类（无 cone 类 → cone 恒为 0，overall 被结构性拉低）"
+  },
+  {
+   "tag": "v1-frozen-step1",
+   "tag_raw": "v1-frozen-step1",
+   "tag_file": "v1-frozen-step1",
+   "split": "valid",
+   "resolution": 960,
+   "recorded_at": "2026-10-12 01:53:31",
+   "source": "/home/hx1/yzl/Work/AI-Football/tools/detection_finetune/runs/eval_ab/valid_960/metrics_v1-frozen-step1.json",
+   "source_sha256": "450e2f83c2ed",
+   "prev_sha256": null,
+   "gt_sha256": "5a9d65f4b367",
+   "checkpoint": "/home/hx1/yzl/Work/AI-Football/tools/detection_finetune/runs/v1-frozen-step1/checkpoint_best_ema.pth",
+   "checkpoint_sha256": "fd06f11c6b8d",
+   "checkpoint_state": "ok",
+   "threshold": 0.05,
+   "n_predictions": 2729,
+   "overall": {
+    "mAP@.5": 0.9579,
+    "mAP@.5:.95": 0.8387,
+    "mAP@.75": 0.916,
+    "AR@100": 0.8752
+   },
+   "per_class": {
+    "person": {
+     "mAP@.5": 0.9937,
+     "mAP@.5:.95": 0.9721
+    },
+    "ball": {
+     "mAP@.5": 0.9368,
+     "mAP@.5:.95": 0.8568
+    },
+    "cone": {
+     "mAP@.5": 0.9431,
+     "mAP@.5:.95": 0.6872
+    }
+   },
+   "main": {
+    "cone_as_ball_frames": 26,
+    "cone_as_ball_boxes": 90,
+    "ball_frame_precision": 0.9057,
+    "ball_frame_recall": 0.9796,
+    "empty_ball_fp_ratio": 0.0755,
+    "frames": 53
+   },
+   "note": ""
+  },
+  {
+   "tag": "v1",
+   "tag_raw": "v1",
+   "tag_file": "v1",
+   "split": "valid",
+   "resolution": 960,
+   "recorded_at": "2026-10-12 01:53:32",
+   "source": "/home/hx1/yzl/Work/AI-Football/tools/detection_finetune/runs/eval_ab/valid_960/metrics_v1.json",
+   "source_sha256": "e471d58521d4",
+   "prev_sha256": null,
+   "gt_sha256": "5a9d65f4b367",
+   "checkpoint": "/home/hx1/yzl/Work/AI-Football/tools/detection_finetune/runs/v1/checkpoint_best_ema.pth",
+   "checkpoint_sha256": "4fa9868f09f4",
+   "checkpoint_state": "ok",
+   "threshold": 0.05,
+   "n_predictions": 2066,
+   "overall": {
+    "mAP@.5": 0.9555,
+    "mAP@.5:.95": 0.8144,
+    "mAP@.75": 0.9153,
+    "AR@100": 0.8514
+   },
+   "per_class": {
+    "person": {
+     "mAP@.5": 0.9953,
+     "mAP@.5:.95": 0.9184
+    },
+    "ball": {
+     "mAP@.5": 0.9334,
+     "mAP@.5:.95": 0.8379
+    },
+    "cone": {
+     "mAP@.5": 0.9379,
+     "mAP@.5:.95": 0.6868
+    }
+   },
+   "main": {
+    "cone_as_ball_frames": 20,
+    "cone_as_ball_boxes": 46,
+    "ball_frame_precision": 0.8868,
+    "ball_frame_recall": 0.9592,
+    "empty_ball_fp_ratio": 0.0755,
+    "frames": 53
+   },
+   "note": ""
+  }
+ ],
+ "duplicates": [],
+ "updated_at": "2026-10-12 02:02:55"
+}
