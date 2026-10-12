@@ -45,6 +45,7 @@ SKELETON_EDGES = (
 
 PERSON_COLOR = (70, 220, 80)       # BGR
 BALL_COLOR = (40, 150, 255)        # BGR
+CONE_COLOR = (60, 60, 235)         # BGR 红：锥（三分类版才有，跟踪链路不带它）
 SKELETON_COLOR = (255, 200, 40)    # BGR
 KEYPOINT_COLOR = (40, 220, 255)    # BGR
 PANEL_COLOR = (25, 25, 25)
@@ -96,6 +97,31 @@ def parse_args() -> argparse.Namespace:
         "--hide-panel",
         action="store_true",
         help="Do not draw the frame information panel.",
+    )
+    parser.add_argument(
+        "--start-frame",
+        type=int,
+        default=0,
+        help="Skip to this source frame before rendering (default 0).",
+    )
+    parser.add_argument(
+        "--compare",
+        default=None,
+        help="Second observations.jsonl to render side by side "
+             "(left = --observations, right = this file). Source video is decoded once.",
+    )
+    parser.add_argument("--label-a", default="A", help="Label drawn on the left half.")
+    parser.add_argument("--label-b", default="B", help="Label drawn on the right half.")
+    parser.add_argument(
+        "--crf", type=int, default=23,
+        help="H.264 quality when PyAV/libx264 is used (lower = better, default 23).")
+    parser.add_argument(
+        "--no-pyav", action="store_true",
+        help="Force the OpenCV writer (mp4v) instead of PyAV/libx264.")
+    parser.add_argument(
+        "--show-counts",
+        action="store_true",
+        help="Also show detector_counts (person/ball/cone) in the panel when the JSONL has it.",
     )
     return parser.parse_args()
 
@@ -158,7 +184,60 @@ def resolve_video_path(
     raise FileNotFoundError(f"Source video not found; checked: {checked}")
 
 
-def create_writer(path: Path, fps: float, width: int, height: int) -> cv2.VideoWriter:
+class PyAvWriter:
+    """用 PyAV/libx264 写 MP4：同画质比 OpenCV 的 mp4v 小一个量级，且不限制 fps。
+
+    本机两个解释器的 OpenCV 都没有 H.264 编码器（只有 mp4v），而 ai-football 环境里
+    的 PyAV 自带 libx264/libx265 —— 所以默认优先走这里，失败再退回 OpenCV。
+    """
+
+    def __init__(self, path: Path, fps: float, width: int, height: int, crf: int = 23):
+        import av
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._out = av.open(str(path), mode="w", options={"movflags": "+faststart"})
+        self._stream = self._out.add_stream("libx264", rate=max(1, int(round(fps))))
+        self._stream.width = width
+        self._stream.height = height
+        self._stream.pix_fmt = "yuv420p"
+        self._stream.options = {"crf": str(crf), "preset": "veryfast"}
+        self._path = path
+        self._frames = 0
+        self._crf = crf
+
+    def write(self, frame: Any) -> None:
+        import av
+
+        vf = av.VideoFrame.from_ndarray(frame, format="bgr24")
+        for packet in self._stream.encode(vf):
+            self._out.mux(packet)
+        self._frames += 1
+
+    def release(self) -> None:
+        try:
+            for packet in self._stream.encode():
+                self._out.mux(packet)
+        finally:
+            self._out.close()
+            print(f"[render] pyav/libx264 crf={self._crf} frames={self._frames} "
+                  f"output={self._path}")
+
+
+def create_writer(path: Path, fps: float, width: int, height: int,
+                  crf: int = 23, use_pyav: bool = True) -> Any:
+    """优先 PyAV/libx264，失败退回 OpenCV（mp4v）。"""
+    if use_pyav:
+        try:
+            writer = PyAvWriter(path, fps, width, height, crf)
+            print(f"[render] codec=libx264(crf={crf}) output={path}")
+            return writer
+        except Exception as exc:                  # noqa: BLE001 - 任何失败都退回 OpenCV
+            print(f"[render] PyAV 不可用（{type(exc).__name__}: {exc}）→ 退回 OpenCV mp4v",
+                  flush=True)
+    return _create_writer_opencv(path, fps, width, height)
+
+
+def _create_writer_opencv(path: Path, fps: float, width: int, height: int) -> cv2.VideoWriter:
     path.parent.mkdir(parents=True, exist_ok=True)
     for codec in ("mp4v", "avc1"):
         writer = cv2.VideoWriter(
@@ -242,6 +321,19 @@ def draw_ball(image: Any, ball: dict[str, Any], draw_boxes: bool) -> None:
                   (x0, max(24, y0 - 8)), BALL_COLOR)
 
 
+def draw_cone(image: Any, cone: dict[str, Any], draw_boxes: bool) -> None:
+    """画锥框。只有三分类微调模型会输出 `cones`（COCO 版是空数组）。"""
+    bbox = cone.get("bbox", (0, 0, 0, 0))
+    if len(bbox) < 4:
+        return
+    x0, y0, x1, y1 = [int(round(float(value))) for value in bbox[:4]]
+    if not draw_boxes:
+        return
+    cv2.rectangle(image, (x0, y0), (x1, y1), CONE_COLOR, 2, cv2.LINE_AA)
+    score = float(cone.get("confidence", 0.0))
+    draw_text(image, f"cone {score:.2f}", (x0, max(24, y0 - 8)), CONE_COLOR, scale=0.5)
+
+
 def draw_panel(
     image: Any,
     frame_index: int,
@@ -249,11 +341,22 @@ def draw_panel(
     fps: float,
     persons: list[dict[str, Any]],
     balls: list[dict[str, Any]],
+    cones: list[dict[str, Any]] | None = None,
+    counts: dict[str, Any] | None = None,
 ) -> None:
+    cones = cones or []
     lines = [
         f"AI-Football replay  frame={frame_index}  time={timestamp_sec:.2f}s",
-        f"persons={len(persons)}  balls={len(balls)}  source_fps={fps:.2f}",
+        f"persons={len(persons)}  balls={len(balls)}  cones={len(cones)}  source_fps={fps:.2f}",
     ]
+    if counts:
+        # detector_counts 是「检测器过滤前」的逐帧计数，含 cones（跟踪阶段没有锥通道，
+        # 所以锥只在这个字段里能看见；框本身没进 observations）。
+        lines.append(
+            "detector: total=%s person=%s ball=%s cone=%s"
+            % (counts.get("total", "—"), counts.get("person", "—"),
+               counts.get("ball", "—"), counts.get("cone", "—"))
+        )
     padding = 12
     line_height = 25
     width = max(cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, 0.62, 2)[0][0]
@@ -276,8 +379,18 @@ def render(
     draw_boxes: bool,
     draw_keypoints: bool,
     draw_info_panel: bool,
+    start_frame: int = 0,
+    compare_path: Path | None = None,
+    label_a: str = "A",
+    label_b: str = "B",
+    show_counts: bool = False,
+    crf: int = 23,
+    use_pyav: bool = True,
 ) -> int:
     metadata, observations = load_observations(observations_path)
+    compare_observations: dict[int, dict[str, Any]] = {}
+    if compare_path is not None:
+        _, compare_observations = load_observations(compare_path)
     video_path = resolve_video_path(metadata, observations_path, video_override)
     capture = cv2.VideoCapture(str(video_path))
     if not capture.isOpened():
@@ -289,35 +402,58 @@ def render(
     if source_width <= 0 or source_height <= 0:
         capture.release()
         raise RuntimeError(f"Invalid source video dimensions: {video_path}")
+    if start_frame > 0:
+        capture.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 
+    side_by_side = compare_path is not None
     output_fps = fps_override or source_fps or 30.0
-    writer = create_writer(output_path, output_fps, source_width, source_height)
+    writer = create_writer(output_path, output_fps,
+                           source_width * (2 if side_by_side else 1), source_height,
+                           crf, use_pyav)
     last_observed_frame = max(observations) if observations else -1
     rendered = 0
     try:
         while max_frames is None or rendered < max_frames:
-            if rendered > last_observed_frame:
+            frame_index = start_frame + rendered
+            if frame_index > last_observed_frame:
                 break
             ok, frame = capture.read()
             if not ok:
                 break
-            observation = observations.get(rendered)
-            persons = observation.get("persons", []) if observation else []
-            balls = observation.get("balls", []) if observation else []
-            timestamp_sec = (
-                float(observation.get("timestamp_sec", rendered / source_fps))
-                if observation
-                else rendered / source_fps
-            )
 
-            for person in persons:
-                draw_person(frame, person, draw_boxes, draw_keypoints)
-            for ball in balls:
-                draw_ball(frame, ball, draw_boxes)
-            if draw_info_panel:
-                draw_panel(frame, rendered, timestamp_sec, source_fps, persons, balls)
+            left = frame.copy() if side_by_side else frame
+            halves: list[tuple[Any, dict[int, dict[str, Any]], str]] = [(left, observations, label_a)]
+            if side_by_side:
+                right = frame.copy()
+                halves.append((right, compare_observations, label_b))
 
-            writer.write(frame)
+            for target, table, label in halves:
+                observation = table.get(frame_index)
+                persons = observation.get("persons", []) if observation else []
+                balls = observation.get("balls", []) if observation else []
+                timestamp_sec = (
+                    float(observation.get("timestamp_sec", frame_index / source_fps))
+                    if observation
+                    else frame_index / source_fps
+                )
+                for person in persons:
+                    draw_person(target, person, draw_boxes, draw_keypoints)
+                for ball in balls:
+                    draw_ball(target, ball, draw_boxes)
+                for cone in (observation or {}).get("cones", []):
+                    draw_cone(target, cone, draw_boxes)
+                if draw_info_panel:
+                    draw_panel(target, frame_index, timestamp_sec, source_fps, persons, balls,
+                               (observation or {}).get("cones", []),
+                               (observation or {}).get("detector_counts") if show_counts else None)
+                draw_text(target, label, (16, source_height - 20), (60, 240, 255), scale=0.9, thickness=2)
+
+            if side_by_side:
+                canvas = cv2.hconcat([left, right])
+                cv2.line(canvas, (source_width, 0), (source_width, source_height), (70, 70, 70), 2)
+                writer.write(canvas)
+            else:
+                writer.write(left)
             rendered += 1
             if rendered % 300 == 0:
                 print(f"[render] frames={rendered}", flush=True)
@@ -342,6 +478,14 @@ def main() -> int:
             draw_boxes=not args.hide_boxes,
             draw_keypoints=not args.hide_keypoints,
             draw_info_panel=not args.hide_panel,
+            start_frame=max(0, args.start_frame),
+            compare_path=(Path(args.compare).expanduser().resolve()
+                          if args.compare else None),
+            label_a=args.label_a,
+            label_b=args.label_b,
+            show_counts=args.show_counts,
+            crf=args.crf,
+            use_pyav=not args.no_pyav,
         )
     except (OSError, ValueError, FileNotFoundError, RuntimeError, KeyError) as exc:
         print(f"error: {exc}", file=sys.stderr)
