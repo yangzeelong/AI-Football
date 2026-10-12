@@ -1,0 +1,102 @@
+# 与 config/app_v1.yaml 完全相同，**只差模型目录**：
+#   rfdetr_model_dir → models/rfdetr/fine-tune/v1-frozen-step2/（rf-detr-small.pth 软链到 step2 权重）
+# 其余（labels/filters/cone.suppress_ball_iou 等）逐字照抄，保证两版对比时"除了权重其它都一样"。
+labels:
+  person:
+    - person
+  ball:
+    - sports ball
+    - ball
+    - football
+    - soccer ball
+  cone:                      # 可选第三类；不写这段 = 老两类行为
+    - cone
+
+filters:
+  person:
+    min_confidence: 0.68
+    min_width_px: 8
+    min_height_px: 24
+  ball:
+    min_confidence: 0.4
+    min_width_px: 2
+    min_height_px: 2
+  cone:
+    min_confidence: 0.35
+    min_width_px: 2
+    min_height_px: 2
+    suppress_ball_iou: 0.5   # >0 启用"球∩锥抑制"（0 = 关闭）
+
+box_smoothing:
+  enabled: false
+  static_alpha: 0.15
+  moving_alpha: 0.45
+  static_distance_px: 8
+  ttl_frames: 60
+
+pose_box_expansion:
+  enabled: true
+  x_pad_ratio: 0.15
+  y_pad_ratio: 0.25
+  min_pad_px: 12
+
+keypoint_smoothing:
+  enabled: true
+  method: skeleton
+  static_window: 8
+  static_motion_px: 2.5
+  deadband_px: 0.8
+  low_confidence: 0.3
+  low_confidence_alpha: 0.12
+  min_cutoff: 0.5
+  beta: 0.02
+  d_cutoff: 1.0
+  static_alpha: 0.25
+  moving_alpha: 0.65
+  jitter_alpha: 0.08
+  max_static_jump_px: 10
+  skeleton_anchor_alpha: 0.35
+  skeleton_endpoint_alpha: 0.12
+  skeleton_moving_endpoint_alpha: 0.45
+  skeleton_fast_endpoint_alpha: 0.22
+  skeleton_fast_moving_endpoint_alpha: 0.62
+  skeleton_fast_static_step_px: 5
+  skeleton_max_static_step_px: 2.5
+  skeleton_limb_tolerance: 0.25
+  sensitive_keypoints:
+    - left_wrist
+    - right_wrist
+    - left_ankle
+    - right_ankle
+    - left_big_toe
+    - left_small_toe
+    - left_heel
+    - right_big_toe
+    - right_small_toe
+    - right_heel
+
+# 与 config/app.yaml 的唯一差别：**检测器换成 3 类微调权重（v1）**。
+#   rfdetr_model_dir → models/rfdetr/fine-tune/v1-frozen-step2/（里面 rf-detr-small.pth 软链到 v1 权重）
+#   class_names      → 只保留 person/ball（app_config 目前硬校验只认这两类；
+#                      锥类要进管线/渲染需要改 code/app_config.py，已单独向你确认）
+models:
+  detector:
+    backend: rfdetr
+    confidence: 0.25
+    class_names:              # 必须是**模型自带标签名**：v1 是 person/ball/cone（不是 COCO 的 sports ball，
+      - person                # 写错会被 football_vision.py:543 的白名单静默丢掉整类框）
+      - ball
+      - cone
+    rfdetr_size: small
+    rfdetr_model_dir: models/rfdetr/fine-tune/v1-frozen-step2
+    yolo_model_path: models/yolo/yolov8s.pt
+    input_resolution: 960
+    preserve_aspect_ratio: true
+    half: false
+  pose:
+    preset: hrnet-w48-dark
+    config_path: models/mmpose/configs/wholebody_2d_keypoint/topdown_heatmap/coco-wholebody/td-hm_hrnet-w48_dark-8xb32-210e_coco-wholebody-384x288.py
+    checkpoint_path: models/mmpose/hrnet/hrnet_w48_coco_wholebody_384x288_dark-f5726563_20200918.pth
+    flip_test: true
+  runtime:
+    tracker: botsort.yaml
