@@ -21,7 +21,7 @@ The main entry point is `aifootball::AIFootballPipeline`:
 
 ```cpp
 aifootball::AIFootballContext context;
-context.configPath = "config.yaml";
+context.configPath = "coco_fp16_w48.yaml";
 context.deviceId = 0;
 context.inputQueuePolicy = aifootball::QueuePolicy::Block;
 context.roi.enabled = true;
@@ -119,12 +119,12 @@ Example:
 
 ```bash
 build/examples/aifootball_app/aifootball_app \
-  examples/aifootball_app/config/config.yaml \
+  examples/aifootball_app/config/coco_fp16_w48.yaml \
   --video_path data/射门1-1080p60.mov \
   --output_dir output/sdk_app
 
 build/examples/aifootball_app/aifootball_app \
-  examples/aifootball_app/config/config.yaml \
+  examples/aifootball_app/config/coco_fp16_w48.yaml \
   --output_dir output/sdk_debug \
   --render
 ```

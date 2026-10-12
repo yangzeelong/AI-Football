@@ -89,12 +89,12 @@ trtexec --onnx=/home/hx1/yzl/Work/AI-Football/models/rfdetr/onnx/rf-detr-small-9
   --maxShapes=image:8x3x960x960
 ```
 
-The demo ships both: `config.yaml` runs the fp16 engine, and
-`config.ref_rfdetr960_hrnetw48d384.yaml` the TF32 one.
+The demo ships both: `coco_fp16_w48.yaml` runs the fp16 engine, and
+`coco_tf32_w48.yaml` the TF32 one.
 
 ### Restored Sweep Variants
 
-`config.ref_rfdetr960_hrnetw48d384.yaml` and `config.rfdetr960_hrnetw32_256.yaml`
+`coco_tf32_w48.yaml` and `coco_tf32_w32.yaml`
 reproduce two variants of the Python quality sweep (RF-DETR-S 960 with
 HRNet-W48-DARK 384x288, and the same detector with HRNet-W32 256x192). Both run
 the TF32 detector, and they differ only in the pose model: the W32 preset is the
@@ -142,7 +142,7 @@ from the full export, and a C++ run of the trimmed engine reproduces the
 133-channel engine's observations bit for bit.
 
 `HRNetPoseEstimator` reads `numKeypoints` from the engine output, so the
-`numKeypoints` entry in `config.yaml` is documentation only.
+`numKeypoints` entry in `coco_fp16_w48.yaml` is documentation only.
 
 ## RF-DETR
 
@@ -232,7 +232,7 @@ baked detection tensor containing six values per query.
 
 ## C++ Configuration
 
-Point `examples/aifootball_app/config/config.yaml` at the generated engines. The checked-in integration
+Point `examples/aifootball_app/config/coco_fp16_w48.yaml` at the generated engines. The checked-in integration
 configuration already points to the generated engines under AI-Football:
 
 ```yaml
@@ -248,7 +248,7 @@ From the Nexusflow repository root, build and run the complete pipeline:
 
 ```bash
 cmake --build build --parallel 4
-build/examples/aifootball_app/aifootball_app examples/aifootball_app/config/config.yaml
+build/examples/aifootball_app/aifootball_app examples/aifootball_app/config/coco_fp16_w48.yaml
 ```
 
 The sample configuration reads `data/input.mp4` and writes

@@ -1,3 +1,27 @@
+# ============================================================================
+# coco_tf32_w48 —— COCO 80 类 + TF32 检测 + HRNet-W48(288x384)：**与 Python 严格对等的参考档**
+#
+# 实测吞吐（口径：射门1-1080p60、2000 帧、**无渲染**、ROI 按本文件、16 核空闲）：
+#     26.2 FPS / 38.1 ms 每帧（人/帧 4.24）| 全片未测（该口径偏低 15–20%）
+#     本档目的是数值对等（half: false），**不要拿它当速度基线**——fp16 快约 30%
+#
+# FPS 由什么决定（本目录 4 份配置同机同视频对比的结论）：
+#   * **人的数量是主因，不是模型**：每多 1 人/帧约 +1.6 ms。实测同一条 W32 配置
+#     ROI 关（人/帧 10.7）→ 46.5 FPS；ROI 开（人/帧 3.6）→ 108.0 FPS。
+#   * 本目录 ROI 多边形是按 `射门1-1080p60` 标的；换机位必须重标，否则会静默裁掉画面里的人/球。
+#   * **本目录 4 份都到不了 108 FPS**：>90 FPS 需要“三分类 + fp16 + W32(192x256) 无 flipTest
+#     + 每帧约 3.5 人（ROI 或人少的机位）
+#     ”同时成立，实测 108.0 FPS（见 tools/rollout/README.md 的吞吐节）。
+#     本目录最贵的是 W48+flipTest（姿态引擎每批 10.24 ms vs W32 无 flip 的 2.79 ms）与 TF32 检测。
+#   * **渲染不在上面的数字里**：app 内置 `--render` 实测 19.0 ms/帧（≈ -35% 吞吐）；
+#     离线 `Nexusflow/tools/render_jsonl.py` 27.5 ms/帧，但可与下一段的 GPU 任务并行。
+#     要报“端到端出视频”的吞吐，必须用开渲染的数字。
+# 复测：
+#   cd /home/hx1/yzl/Work/Nexusflow && ./build/bin/aifootball_app \
+#     examples/aifootball_app/config/coco_tf32_w48.yaml \
+#     --video_path /home/hx1/yzl/Work/data/射门1-1080p60.mov --output_dir /tmp/fps --max_frames 2000
+# ============================================================================
+
 graph:
   name: AIFootball-TensorRT
 
@@ -25,7 +49,7 @@ graph:
         # TF32 detector: the accurate path, for validating output against the
         # Python reference.
         #
-        # The fp16 engine (config.yaml) loses whole detections: on
+        # The fp16 engine (coco_fp16_w48.yaml) loses whole detections: on
         # data/射门1-1080p60.mov its raw person count disagreed with the
         # reference on 22/300 frames, with a person at confidence 0.86 vanishing
         # outright, so neither the confidence threshold nor the top-300

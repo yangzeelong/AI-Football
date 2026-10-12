@@ -7,7 +7,7 @@
 # only one: the TF32 twin was dropped - 2.7x slower for a touch score within
 # 0.03 either way - and its config and artefacts are gone with it.
 #
-# Differences from examples/aifootball_app/config/config.yaml:
+# Differences from examples/aifootball_app/config/coco_fp16_w48.yaml:
 #   - VideoReader.videoPath points at 移动传球.mov
 #   - algorithm.roi is disabled: the ROI polygon there is in 1920x1080
 #     coordinates and would filter out nearly every detection at 720p

@@ -85,14 +85,32 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
 
 | 文件 | 检测器 | 姿态 | 定位 |
 | --- | --- | --- | --- |
-| `config.yaml` | rfdetr-960 **fp16** | hrnet-w48-dark 288×384 | 最快；Python 无 fp16 检测器，**非严格对等** |
-| `ref_rfdetr960_hrnetw48d384.yaml` | rfdetr-960 **fp32tf32** | hrnet-w48-dark 288×384 | **与 Python `config/app.yaml` 严格对等**（`half: false`）——做对照就用它 |
-| `rfdetr960_hrnetw32_256.yaml` | rfdetr-960 | hrnet-w32 192×256 | 关键点比 w48 抖约 50%，用于对比 |
+| `coco_fp16_w48.yaml` | rfdetr-960 **fp16** | hrnet-w48-dark 288×384 | 最快；Python 无 fp16 检测器，**非严格对等** |
+| `coco_tf32_w48.yaml` | rfdetr-960 **fp32tf32** | hrnet-w48-dark 288×384 | **与 Python `config/app.yaml` 严格对等**（`half: false`）——做对照就用它 |
+| `coco_tf32_w32.yaml` | rfdetr-960 | hrnet-w32 192×256 | 关键点比 w48 抖约 50%，用于对比 |
+| `coco_fp16_w32_fastest.yaml` | rfdetr-960 **fp16** | hrnet-w32 192×256，**无 flipTest** | **COCO 档里唯一 90+ FPS：97.1 FPS**；与 `coco_tf32_w32` 只差检测精度与 flipTest；`keepOnlyBestBall: true`（球观测数别跟别的份直接比） |
+| `finetuned_v1-frozen-step2_fp16_w32_fastest.yaml` | v1-frozen-step2 **fp16**（三分类） | hrnet-w32 192×256，**无 flipTest** | **唯一 90+ FPS**：99.6 FPS（ROI 开、人/帧 4.2）——快在"4 列头 + W32 + 无 flip + 人少"四项同时成立 |
+
+以上 6 份的**同口径实测吞吐**（`射门1-1080p60`、2000 帧、**无渲染**、ROI 按各自文件、人/帧 ≈4.2、16 核空闲；
+每份文件的注释头里都写着同一组数字与复测命令）：
+
+| 配置 | 实测 FPS | ms/帧 |
+| --- | --- | --- |
+| `finetuned_v1-frozen-step2_fp16_w32_fastest.yaml` | **99.6** | 10.0 |
+| `coco_fp16_w32_fastest.yaml` | **97.1** | 10.3 |
+| `finetuned_v1_fp16_w48.yaml` | 40.1 | 24.9 |
+| `coco_tf32_w32.yaml` | 35.6 | 28.1 |
+| `coco_fp16_w48.yaml` | 35.2 | 28.4 |
+| `coco_tf32_w48.yaml`（对等参考档） | 26.2 | 38.1 |
+
+* **人/帧 是主因，不是模型**：每多 1 人 ≈ +1.6 ms；同一条 W32 配置 ROI 关（10.7 人/帧）46.5 FPS ↔ ROI 开（3.6 人/帧）**108.0 FPS**。
+* **渲染不在上面的数字里**：`--render` 实测 19.0 ms/帧（≈ -35% 吞吐）；离线 `tools/render_jsonl.py` 27.5 ms/帧，但可与下一段的 GPU 任务并行。
+* 全片口径比 2000 帧口径高 8–20%（实测 `coco_fp16_w48` 42.7 vs 35.2、`coco_tf32_w32` 39.0 vs 35.6、`coco_fp16_w32_fastest` 105.2 vs 97.1）；短跑（600 帧）会因片段人数与机器状态波动，别用短跑数字下结论。
 
 ### 3.2 单次运行
 
 ```bash
-./build/bin/aifootball_app examples/aifootball_app/config/config.yaml \
+./build/bin/aifootball_app examples/aifootball_app/config/coco_fp16_w48.yaml \
   --max_frames 300 --output_dir output/run --render
 ```
 

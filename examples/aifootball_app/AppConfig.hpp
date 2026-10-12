@@ -7,7 +7,7 @@
 namespace aifootball_app {
 
 /**
- * @brief One parsed view of `examples/aifootball_app/config/config.yaml`.
+ * @brief One parsed view of `examples/aifootball_app/config/coco_fp16_w48.yaml`.
  *
  * The app needs several unrelated parts of the same file: the algorithm
  * context, the video source, the decoder ring size and the output metadata.
