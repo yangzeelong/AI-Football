@@ -34,6 +34,12 @@ public:
         float confidenceThreshold    = 0.25f;
         std::unordered_set<int> targetClasses;
         int   numClasses             = 80;
+        // classId 来源约定：**logits 列下标，不加 1**（列 0 = no-object）。
+        // COCO 版权重默认 1/37；微调三分类模型写 personClassId:1 / ballClassId:2 / coneClassId:3。
+        // coneClassId = -1 表示"没有锥类"（默认，与 COCO 版行为完全一致）。
+        int   personClassId          = 1;
+        int   ballClassId            = 37;
+        int   coneClassId            = -1;
         int   numQueries             = 300;
         float meanR = 0.485f, meanG = 0.456f, meanB = 0.406f;
         float stdR  = 0.229f, stdG  = 0.224f, stdB  = 0.225f;

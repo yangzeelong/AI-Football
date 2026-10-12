@@ -143,6 +143,9 @@ ProcessResult ConvertResult(const ResultPacket& packet) {
     output.detectorCounts.total = input.detectorCounts.total;
     output.detectorCounts.person = input.detectorCounts.person;
     output.detectorCounts.ball = input.detectorCounts.ball;
+    // 锥只在检测器级有计数（见 AIFootball.hpp 的字段注释）→ 必须显式带出去，
+    // 否则 JSONL 的 detector_counts.cone 恒为 0，锥维度就统计不出来。
+    output.detectorCounts.cone = input.detectorCounts.cone;
     output.rescuedBallCount = input.rescuedBallCount;
     output.moduleTimingsMs = packet.moduleTimingsMs;
     // SdkInput measures the framework worker wait, not algorithm work. Keep
@@ -188,6 +191,14 @@ ProcessResult ConvertResult(const ResultPacket& packet) {
         result.confidence = detection.score;
         result.state = BallTrackState::Observed;
         output.ballDetections.push_back(std::move(result));
+    }
+
+    output.cones.reserve(input.cones.size());
+    for (const auto& cone : input.cones) {
+        ConeResult result;
+        result.bbox = {{cone.x0, cone.y0, cone.x1, cone.y1}};
+        result.confidence = cone.score;
+        output.cones.push_back(std::move(result));
     }
 
     output.rejectedBalls.reserve(input.rejectedBalls.size());

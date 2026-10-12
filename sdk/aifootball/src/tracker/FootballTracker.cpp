@@ -241,6 +241,7 @@ void FootballTracker::Process(ns::Message& inputMessage) {
     out.filteredCounts   = smMsg->filteredCounts;
     out.detectorCounts   = smMsg->rawCounts;
     out.rejectedBalls    = smMsg->rejectedBalls;
+    out.cones            = smMsg->cones;
     out.activeTrackCount = smMsg->activeTrackCount;
     out.lostTrackCount   = smMsg->lostTrackCount;
     out.isEnd            = smMsg->isEnd;

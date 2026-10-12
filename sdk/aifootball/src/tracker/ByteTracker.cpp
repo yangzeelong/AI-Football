@@ -243,6 +243,8 @@ ns::ErrorCode ByteTracker::Configure(const ns::Config& config) {
     m_param.lostTrackBuffer            = config.GetValueOrDefault<int>("lostTrackBuffer", 30);
     m_param.personClassId              = config.GetValueOrDefault<int>("personClassId", 1);
     m_param.ballClassId                = config.GetValueOrDefault<int>("ballClassId", 37);
+    // 锥：默认 -1（关闭，COCO 版行为不变）；三分类版由配置写 3。
+    m_param.coneClassId                = config.GetValueOrDefault<int>("coneClassId", -1);
     m_param.newTrackThreshold          = config.GetValueOrDefault<float>("newTrackThreshold", 0.0f);
     m_param.personMinConfidence         = config.GetValueOrDefault<float>("personMinConfidence", 0.0f);
     m_param.personMinWidthPx            = config.GetValueOrDefault<float>("personMinWidthPx", 0.0f);
@@ -406,9 +408,11 @@ void ByteTracker::Process(ns::Message& inputMessage) {
     std::vector<Detection> personDetections;
     std::vector<Detection> acceptedBalls;
     std::vector<RejectedBall> rejectedBalls;
+    std::vector<Detection> cones;
     personDetections.reserve(detMsg->detections.size());
     acceptedBalls.reserve(detMsg->detections.size());
     rejectedBalls.reserve(detMsg->detections.size());
+    cones.reserve(detMsg->detections.size());
     for (const auto& detection : detMsg->detections) {
         if (detection.classId == m_param.personClassId) {
             personDetections.push_back(detection);
@@ -419,6 +423,12 @@ void ByteTracker::Process(ns::Message& inputMessage) {
                 ++out.filteredCounts.total;
                 ++out.filteredCounts.person;
             }
+            continue;
+        }
+
+        if (m_param.coneClassId >= 0 && detection.classId == m_param.coneClassId) {
+            // 锥不参与跟踪、不计入 filteredCounts，只原样带下去供调试渲染画框。
+            cones.push_back(detection);
             continue;
         }
 
@@ -460,6 +470,7 @@ void ByteTracker::Process(ns::Message& inputMessage) {
         }
     }
     out.rejectedBalls = std::move(rejectedBalls);
+    out.cones = std::move(cones);
 
     m_frameId++;
 

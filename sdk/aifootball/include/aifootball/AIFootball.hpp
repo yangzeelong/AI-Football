@@ -104,6 +104,20 @@ struct DetectionCounts {
     int total = 0;
     int person = 0;
     int ball = 0;
+    /// 锥（三分类微调模型才有）。跟踪阶段没有锥通道，所以只有 `detectorCounts`
+    /// 会非零；`rawCounts`/`filteredCounts` 恒为 0（它们是过滤后计数）。
+    int cone = 0;
+};
+
+/**
+ * @brief 锥检测（三分类微调模型才有），只为调试/渲染画框保留。
+ *
+ * 跟踪链路没有锥通道，所以它不参与跟踪、也不进 filteredCounts；之所以带出来，
+ * 是为了让 `tools/render_jsonl.py` 能把锥画成红框（否则画面上只能看到"球少了"）。
+ */
+struct ConeResult {
+    std::array<float, 4> bbox{{0.0f, 0.0f, 0.0f, 0.0f}};
+    float confidence = 0.0f;
 };
 
 /** Ball detection dropped by the application-level box filters. */
@@ -138,6 +152,8 @@ struct ProcessResult {
     /// Balls the box filters dropped, after the ROI. Diagnostics only: they
     /// are not part of the tracked output.
     std::vector<RejectedBallResult> rejectedBalls;
+    /// 锥检测（classId 3），只供调试渲染；不做跟踪、不影响任何指标。
+    std::vector<ConeResult> cones;
     /// Rejected balls the tracker brought back because pose support was
     /// strong enough.
     int rescuedBallCount = 0;

@@ -149,6 +149,7 @@ struct DetectionCounts {
     int total = 0;
     int person = 0;
     int ball = 0;
+    int cone = 0;      // 只有三分类微调模型会非零（coneClassId 配置生效时）
 };
 
 // Ball detection dropped by the application-level box filters, carrying which
@@ -175,6 +176,7 @@ struct DetectionMessage {
             << ", dets=" << detections.size()
             << ", person=" << rawCounts.person
             << ", ball=" << rawCounts.ball
+            << ", cone=" << rawCounts.cone
             << ", isEnd=" << isEnd
             << ", tsSec=" << timestampSec << "}";
         return oss.str();
@@ -204,6 +206,9 @@ struct TrackedDetectionMessage {
     // filter. Python evaluates these after pose estimation and may rescue
     // them when they have sufficient person/foot support.
     std::vector<RejectedBall> rejectedBalls;
+    /// 锥检测（classId == coneClassId）。跟踪阶段没有锥通道，所以它只是**原样带下去**，
+    /// 供调试/渲染画框用（不进跟踪、不影响 filteredCounts）。
+    std::vector<Detection> cones;
     DetectionCounts rawCounts;        // copied from the upstream detector
     // Counts after ROI and application-level detection filters. Unlike
     // persons.size(), this remains stable when tracking suppresses a track.
@@ -271,6 +276,9 @@ struct PoseMessage {
     std::vector<PersonPose> persons;
     std::vector<Detection>  balls;      // pass-through from upstream tracker
     std::vector<RejectedBall> rejectedBalls;
+    /// 锥检测（classId == coneClassId）。跟踪阶段没有锥通道，所以它只是**原样带下去**，
+    /// 供调试/渲染画框用（不进跟踪、不影响 filteredCounts）。
+    std::vector<Detection> cones;
     DetectionCounts rawCounts;
     DetectionCounts filteredCounts;
     int   activeTrackCount = 0;
@@ -324,6 +332,9 @@ struct SmoothedPoseMessage {
     std::vector<PersonPose> persons;
     std::vector<Detection>  balls;
     std::vector<RejectedBall> rejectedBalls;
+    /// 锥检测（classId == coneClassId）。跟踪阶段没有锥通道，所以它只是**原样带下去**，
+    /// 供调试/渲染画框用（不进跟踪、不影响 filteredCounts）。
+    std::vector<Detection> cones;
     DetectionCounts rawCounts;
     DetectionCounts filteredCounts;
     int   activeTrackCount = 0;
@@ -379,6 +390,9 @@ struct BallTrackMessage {
     DetectionCounts filteredCounts;
     DetectionCounts detectorCounts;
     std::vector<RejectedBall> rejectedBalls;
+    /// 锥检测（classId == coneClassId）。跟踪阶段没有锥通道，所以它只是**原样带下去**，
+    /// 供调试/渲染画框用（不进跟踪、不影响 filteredCounts）。
+    std::vector<Detection> cones;
     int   rescuedBallCount = 0;
     int   activeTrackCount = 0;
     int   lostTrackCount   = 0;

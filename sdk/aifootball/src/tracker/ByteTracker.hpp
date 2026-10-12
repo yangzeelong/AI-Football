@@ -47,6 +47,9 @@ private:
         int   lostTrackBuffer            = 30;
         int   personClassId              = 1;
         int   ballClassId                = 37;
+        /// 锥（三分类微调模型才有）。默认 -1 = 关闭（COCO 版行为完全不变）；
+        /// 非负时把这些检测原样带进 `TrackedDetectionMessage::cones`，只供调试渲染。
+        int   coneClassId                = -1;
         float personMinConfidence        = 0.0f;
         float personMinWidthPx           = 0.0f;
         float personMinHeightPx          = 0.0f;

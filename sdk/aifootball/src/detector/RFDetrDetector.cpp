@@ -31,6 +31,10 @@ ns::ErrorCode RFDetrDetector::Configure(const ns::Config& config) {
     m_inferParam.confidenceThreshold = config.GetValueOrDefault<float>("confidenceThreshold", 0.25f);
     m_inferParam.numClasses          = config.GetValueOrDefault<int>("numClasses", 80);
     m_inferParam.numQueries          = config.GetValueOrDefault<int>("numQueries", 300);
+    // 类别号可配置（默认 1/37/-1 = 与 COCO 版行为完全一致，向后兼容）
+    m_inferParam.personClassId       = config.GetValueOrDefault<int>("personClassId", 1);
+    m_inferParam.ballClassId         = config.GetValueOrDefault<int>("ballClassId", 37);
+    m_inferParam.coneClassId         = config.GetValueOrDefault<int>("coneClassId", -1);
     m_inferParam.meanR               = config.GetValueOrDefault<float>("meanR", 0.485f);
     m_inferParam.meanG               = config.GetValueOrDefault<float>("meanG", 0.456f);
     m_inferParam.meanB               = config.GetValueOrDefault<float>("meanB", 0.406f);
@@ -63,7 +67,9 @@ ns::ErrorCode RFDetrDetector::Configure(const ns::Config& config) {
              m_batchParam.maxBatchSize, m_instanceCount,
              m_batchParam.batchTimeoutMs, m_batchParam.maxRetryNum,
              m_inferParam.useGpuPreprocess);
-    LOG_INFO("RFDetrDetector: targetClasses count={}", m_inferParam.targetClasses.size());
+    LOG_INFO("RFDetrDetector: targetClasses count={} person={} ball={} cone={}",
+             m_inferParam.targetClasses.size(), m_inferParam.personClassId,
+             m_inferParam.ballClassId, m_inferParam.coneClassId);
     return ns::ErrorCode::SUCCESS;
 }
 
@@ -175,8 +181,11 @@ void RFDetrDetector::DrainBatch() {
                 d.trackId = -1;
                 out.detections.push_back(d);
                 out.rawCounts.total++;
-                if (det.classId == 1) out.rawCounts.person++;
-                else if (det.classId == 37) out.rawCounts.ball++;
+                // 类别号取自配置。早先这里写死 1/37 → 换成三分类微调模型（ball=2）后
+                // ball 计数恒为 0（只影响日志/统计、不影响检测，但会误导排查）。
+                if (det.classId == m_inferParam.personClassId) out.rawCounts.person++;
+                else if (det.classId == m_inferParam.ballClassId) out.rawCounts.ball++;
+                else if (det.classId == m_inferParam.coneClassId) out.rawCounts.cone++;
             }
         }
 

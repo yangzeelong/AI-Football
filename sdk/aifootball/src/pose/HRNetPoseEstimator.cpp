@@ -186,6 +186,7 @@ void HRNetPoseEstimator::DrainPending() {
         out.videoFrame = frame.videoFrame;
         out.balls = frame.balls;
         out.rejectedBalls = frame.rejectedBalls;
+        out.cones = frame.cones;
         out.rawCounts = frame.rawCounts;
         out.filteredCounts = frame.filteredCounts;
         out.activeTrackCount = frame.activeTrackCount;
