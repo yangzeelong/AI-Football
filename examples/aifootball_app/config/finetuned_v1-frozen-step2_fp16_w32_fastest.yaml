@@ -1,0 +1,238 @@
+# ============================================================================
+# finetuned_v1-frozen-step2_fp16_w32_fastest —— 三分类 v1-frozen-step2 + fp16 检测
+#                                        + HRNet-W32(192x256)、flipTest=false（= cpp_app 的 fastest 档）
+#
+# **本目录唯一能跑进 90+ FPS 的一份**（ROI 开的情形）：
+# 实测吞吐（口径与同目录其它 4 份一致：射门1-1080p60、2000 帧、**无渲染**、ROI 开、16 核空闲）：
+#     **99.6 FPS / 10.0 ms 每帧**（人/帧 4.16）   ← 同目录其它 4 份是 26.2–40.1 FPS，即 2.5–3.8×
+#     600 帧口径会更高（106–108 FPS）；短片段跑起来更"好看"是口径差，不是配置差。
+#
+# 为什么这么快（同机同视频的模块级实测）：
+#   * 检测：三分类只有 4 列 → 后处理只造 1200 个候选；COCO 80 类是 24000 个候选 + Top-300 排序
+#     （`RFDetrDetector.Postprocess` 实测 5.24 ms/帧）。同理三分类版比 COCO fp16 版更快。
+#   * 姿态：W32 192x256 且 flipTest=false → 引擎每批 2.79 ms；W48 288x384 + flipTest 是 10.24 ms（3.7×）。
+#   * 人数：ROI 开 → 每帧 3.6~4.2 人被送进姿态；同一份配置关掉 ROI 是 10.7 人 → 立刻掉到 47.4 FPS。
+#
+# 用它之前必须知道的两件事：
+#   1. **本文件 ROI 多边形是按 `射门1-1080p60` 标的**（与同目录另外 4 份一样）。换机位请重标，
+#      或把 `algorithm.roi.enabled` 改成 false —— 套错会**静默裁掉**画面里的人/球。
+#   2. 姿态是 W32（flipTest=false），关键点比 `finetuned_v1_fp16_w48.yaml`（W48+flipTest）**更抖**：
+#      出观测/框级统计没问题；若下游要做精细触球判定，先拿目标视频做一次两档对照。
+#
+# 出处：本文件 = `tools/rollout/cpp_app/v1-frozen-step2/fastest.yaml`（`--keep-roi` 版）的落盘副本，
+#       除本注释头外与生成物**逐字节相同**（可用 diff 校验）。真源在
+#       AI-Football/tools/rollout/rollout.yaml，重新生成：
+#       `$PY rollout.py cpp-config --version v1-frozen-step2 --pose-profile fastest --keep-roi`
+#
+# 复测：
+#   cd /home/hx1/yzl/Work/Nexusflow && ./build/bin/aifootball_app \
+#     examples/aifootball_app/config/finetuned_v1-frozen-step2_fp16_w32_fastest.yaml \
+#     --video_path /home/hx1/yzl/Work/data/射门1-1080p60.mov --output_dir /tmp/fps --max_frames 2000
+# ============================================================================
+graph:
+  name: AIFootball-TensorRT
+
+  modules:
+    - name: VideoReader
+      class: VideoReader
+      config:
+        videoPath: data/射门1-1080p60.mov
+        stride: 1
+        # Decoded RGB frames kept for reuse by the decoder. A slot is recycled
+        # only after the pipeline drops its last reference, so this must cover
+        # algorithm.maxPendingFrames plus the frames in flight inside the
+        # pipeline. Measured with maxPendingFrames=32: 56 slots still allocate a
+        # fresh 1080p buffer (~6 MB) for every frame, 64 and above reuse.
+        rgbRingSize: 64
+
+    - name: VideoDecoder
+      class: VideoDecoder
+      config:
+        pixelFormat: rgb24
+
+    - name: RFDetrDetector
+      class: RFDetrDetector
+      config:
+        # fp16 detector: the fast path (12.95 ms per batch of 4). It drops
+        # whole detections, so use coco_tf32_w48.yaml (TF32
+        # detector, same pose) or coco_tf32_w32.yaml (TF32
+        # detector, HRNet-W32 256x192 pose) when the output has to match the
+        # Python reference.
+        enginePath: /home/hx1/yzl/Work/AI-Football/models/rfdetr/fine-tune/v1-frozen-step2/rf-detr-small-v1-frozen-step2-960-fp16-b8-fp32io.engine
+        inputBindingName: image
+        outputBindingName: detections    # baked [B,N,6]; auto-detected if absent
+        logitsBindingName: pred_logits   # raw format fallback
+        boxesBindingName: pred_boxes     # raw format fallback
+        inputSize: 960                   # Matches the resolution comparison experiment
+        numClasses: 4
+        numQueries: 300
+        confidenceThreshold: 0.25
+        targetClasses: [1, 2, 3]   # classId = logits 列下标（不加 1）；列 0 = no-object
+        personClassId: 1
+        ballClassId: 2
+        coneClassId: 3
+        # ImageNet normalization (applied after /255)
+        meanR: 0.485
+        meanG: 0.456
+        meanB: 0.406
+        stdR: 0.229
+        stdG: 0.224
+        stdB: 0.225
+        useGpuPreprocess: true       # CUDA resize + normalize + HWC->CHW
+        # Batching. Requires a TensorRT engine built from a dynamic-batch ONNX
+        # model for values > 1. Static batch=1 engines are automatically clamped.
+        maxBatchSize: 4
+        instanceCount: 1                 # Each instance owns a TRT context/stream and GPU buffers
+        batchTimeoutMs: 0                # 0 = no timeout, drain only when full or EOF
+        maxRetryNum: 0                   # 0 = disabled; >0 = force drain after N frames (anti-starvation)
+
+    - name: ByteTracker
+      class: ByteTracker
+      config:
+        trackActivationThreshold: 0.25
+        secondAssociationThreshold: 0.10
+        minimumMatchingThreshold: 0.80
+        # Only a confident detection may start a track. Left at 0, a weak
+        # (0.25..0.68) detection opens a track that then outbids the real one on
+        # IoU, which shows up as the track ID changing while the box barely
+        # moves. BoT-SORT calls the same knob new_track_thresh.
+        newTrackThreshold: 0.68
+        lostTrackBuffer: 30
+        personClassId: 1
+        ballClassId: 2
+        # Same post-ROI box filters as AI-Football/config/app.yaml.
+        personMinConfidence: 0.68
+        personMinWidthPx: 8.0
+        personMinHeightPx: 24.0
+        ballMinConfidence: 0.4
+        ballMinWidthPx: 2.0
+        ballMinHeightPx: 2.0
+
+    - name: HRNetPoseEstimator
+      class: HRNetPoseEstimator
+      config:
+        enginePath: /home/hx1/yzl/Work/AI-Football/models/mmpose/hrnet/hrnet-w32-256x192-ch23-fp32tf32-b8.engine
+        inputBindingName: images
+        outputBindingName: heatmaps
+        inputWidth: 192  # W
+        inputHeight: 256  # H
+        heatmapWidth: 48  # W/4
+        heatmapHeight: 64  # H/4
+        numKeypoints: 23                 # COCO-WholeBody body channels kept by the export
+        stride: 4
+        useDark: false  # DARK sub-pixel refinement
+        flipTest: false  # Match MMPose heatmap flip-test TTA
+        darkBlurKernel: 11               # MMPose MSRAHeatmap DARK kernel
+        bboxPadding: 1.25                # MMPose GetBBoxCenterScale padding
+        poseBoxExpansion: true
+        xPadRatio: 0.15
+        yPadRatio: 0.25
+        minPadPx: 12.0
+        maxBatch: 8                     # Engine profile max is 8; do not exceed it
+        batchFrameCount: 4             # Aggregate detector frames before pose inference
+        instanceCount: 2                 # Each instance owns a TRT context/stream and GPU buffers
+        keypointConfThr: 0.05
+        # ImageNet normalization (0..255 scale)
+        meanR: 123.675
+        meanG: 116.28
+        meanB: 103.53
+        stdR: 58.395
+        stdG: 57.12
+        stdB: 57.375
+
+    - name: KeypointSmoother
+      class: KeypointSmoother
+      config:
+        enabled: true
+        method: skeleton
+        staticWindow: 8
+        staticMotionPx: 2.5
+        deadbandPx: 0.8
+        lowConfidence: 0.3
+        lowConfidenceAlpha: 0.12
+        staticAlpha: 0.25
+        movingAlpha: 0.65
+        skeletonAnchorAlpha: 0.35
+        skeletonEndpointAlpha: 0.12
+        skeletonMovingEndpointAlpha: 0.45
+        skeletonFastEndpointAlpha: 0.22
+        skeletonFastMovingEndpointAlpha: 0.62
+        skeletonFastStaticStepPx: 5.0
+        skeletonMaxStaticStepPx: 2.5
+        skeletonLimbTolerance: 0.25
+
+    - name: FootballTracker
+      class: FootballTracker
+      config:
+        maxMissedFrames: 12
+        maxAssociationDistancePx: 180.0
+        confidenceDecay: 0.75
+        ballClassId: 2
+        # false: report every ball candidate, not just the tracked one. The
+        # tracked ball keeps its ID and prediction either way; the extras come
+        # out as untracked observations (track id -1). The sweep variants keep
+        # this true so their ball counts stay comparable with the Python
+        # reference, which follows a single ball.
+        keepOnlyBestBall: false
+
+    - name: VideoRenderer
+      class: VideoRenderer
+      config:
+        enabled: false                 # Rendering is handled by tools/render_jsonl.py
+        outputPath: output/rendered.mp4
+        fps: 60.0
+        stride: 1
+
+    - name: ObservationWriter
+      class: ObservationWriter
+      config:
+        outputPath: output/observations.jsonl
+        cameraId: C1
+        videoPath: data/射门1-1080p60.mov
+        fps: 60.0
+        stride: 1
+
+    - name: AlarmPusher
+      class: AlarmPusher
+      config:
+        savePath: result.txt
+
+  connections:
+    - from: VideoReader
+      to: VideoDecoder
+    - from: VideoDecoder
+      to: RFDetrDetector
+    - from: RFDetrDetector
+      to: ByteTracker
+    - from: ByteTracker
+      to: HRNetPoseEstimator
+    - from: HRNetPoseEstimator
+      to: KeypointSmoother
+    - from: KeypointSmoother
+      to: FootballTracker
+    - from: FootballTracker
+      to: VideoRenderer
+    - from: VideoRenderer
+      to: ObservationWriter
+    - from: VideoRenderer
+      to: AlarmPusher
+
+# Algorithm configuration is parsed by the SDK app and passed through the
+# public AIFootballContext API. Coordinates use the source video resolution.
+algorithm:
+  # Bound the asynchronous input queue. Every frame submitted but not yet
+  # consumed pins one decoded frame (~6 MB at 1080p), so an unbounded queue lets
+  # the decoder run far ahead of the slowest stage and exhaust memory.
+  # 0 = unbounded. QueuePolicy::Block (the default) turns the bound into
+  # backpressure by blocking ProcessAsync().
+  maxPendingFrames: 32
+  inputQueuePolicy: block
+  roi:
+    enabled: true
+    width: 1920
+    height: 1080
+    points:
+      - [1579, 1067]
+      - [56, 733]
+      - [950, 416]
+      - [1796, 493]
