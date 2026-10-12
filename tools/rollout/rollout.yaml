@@ -1,0 +1,102 @@
+# ============================================================================
+# rollout 流水线配置：版本清单 + 路径 + 跑批默认值
+#
+#   $PY rollout.py status / export / cpp-config / run / summary     （见 README.md）
+#
+# 版本名 = 血缘名，与 tools/detection_finetune/runs/<版本>/ 一一对应；
+# 一个版本一条记录，别在一处用两个名字指同一个模型。
+# ============================================================================
+
+paths:
+  # ── 根路径：**留空即自动推导**，换机器 / 换目录不用改这个文件 ──────────────────
+  #    约定布局（三个目录相邻）：<WORKSPACE>/{AI-Football,Nexusflow,data}
+  #    要拆开布局就设环境变量覆盖（与 detection_finetune/base_layout.py 同一套）：
+  #      AI_FOOTBALL_WORKSPACE / AI_FOOTBALL_NEXUSFLOW / AI_FOOTBALL_DATA_DIR
+  repo_root:                                          # 空 = <本文件>/../..（…/AI-Football）
+  nexusflow_root:                                     # 空 = <WORKSPACE>/Nexusflow
+  app: build/bin/aifootball_app                       # 相对 nexusflow_root
+  # 生成 C++ config 的底板：**故意选 W32 + 无 flipTest 的那份**，这样两个版本
+  # （v1 / v1-frozen-step2）除了「检测器权重 + 类别号」外**逐项相同**，A/B 只剩一个变量。
+  cpp_reference_config: examples/aifootball_app/config/coco_fp16_w32_fastest.yaml
+  cpp_config_dir:                                     # 空 = <repo>/tools/rollout/cpp_app
+  models_root: models/rfdetr/fine-tune                # 相对 repo_root：<版本>/ 里放 onnx/fp16/engine/权重软链
+  output_root: tools/rollout/runs                     # 相对 repo_root：<版本>/<视频tag>/…
+  pose_engine: models/mmpose/hrnet/hrnet-w48-dark-ch23-fp16-b8-fp32io.engine
+  # 视频从这些目录递归扫描（`rollout.py videos` 会列出来）；留空 = [<WORKSPACE>/data]
+  video_roots: []
+
+# 跑批默认值；命令行可覆盖（--stride / --max-frames / --render / --keep-roi）
+run:
+  pose_profile: fastest     # 与底板一致（W32 192x256、flipTest=false）→ 两版姿态完全相同
+  stride: 1                # **逐帧**（关键点平滑需要时间连续，抽帧会毁掉 landmark smooth）
+  max_frames: 0            # 0 = 全部帧
+  render: false            # true → 加 --render（出 rendered.mp4；实测 157→68 FPS）
+  keep_roi: false          # false → 生成配置时把 algorithm.roi.enabled 置 false（跨视角安全）
+  device: 0
+  extra_args: []           # 例：["--profile_timers"]
+
+# 姿态档位：检测侧统一用 fp16 engine（三分类微调版也是 fp16）。
+# 实测（射门1-1080p60，7201 帧，3.5 人/帧，no-render）：
+#   accurate  W48 288x384 + flipTest        44.1 FPS / 22.7 ms·帧-1（关键点质量优先，SDK 默认）
+#   fast      W48 288x384 + 关 flipTest     69.9 FPS / 14.3 ms·帧-1（保住 W48 关键点）
+#   fastest   W32 192x256 + 关 flipTest    108.0 FPS /  9.3 ms·帧-1（关键点比 W48 抖约 50%，AGENTS.md:90）
+pose_profiles:
+  # 检测侧统一用 fp16 engine（三分类微调版也是 fp16）。
+  # 实测（射门1-1080p60，7201 帧，3.5 人/帧，no-render）：
+  #   accurate  W48 288x384 + flipTest        44.1 FPS / 22.7 ms·帧-1（SDK 默认，关键点质量优先）
+  #   fast      W48 288x384 + 关 flipTest     69.9 FPS / 14.3 ms·帧-1（保住 W48 关键点）
+  #   fastest   W32 192x256 + 关 flipTest    108.0 FPS /  9.3 ms·帧-1（关键点抖动约 +50%，AGENTS.md:90）
+  # 尺寸字段必须与 engine 对得上：换 engine 不改输入尺寸会静默出错（cpp-config 会断言）。
+  accurate:
+    engine: models/mmpose/hrnet/hrnet-w48-dark-ch23-fp16-b8-fp32io.engine
+    input_width: 288
+    input_height: 384
+    heatmap_width: 72
+    heatmap_height: 96
+    flip_test: true
+    use_dark: true
+  fast:
+    engine: models/mmpose/hrnet/hrnet-w48-dark-ch23-fp16-b8-fp32io.engine
+    input_width: 288
+    input_height: 384
+    heatmap_width: 72
+    heatmap_height: 96
+    flip_test: false
+    use_dark: true
+  fastest:
+    engine: models/mmpose/hrnet/hrnet-w32-256x192-ch23-fp32tf32-b8.engine
+    input_width: 192
+    input_height: 256
+    heatmap_width: 48
+    heatmap_height: 64
+    flip_test: false
+    use_dark: false
+
+# 类别契约（唯一真源与 classes.json 对齐：0 占位 + 1/2/3）
+classes:
+  num_classes: 4           # 列 0 = no-object
+  target_classes: [1, 2, 3]
+  person_class_id: 1
+  ball_class_id: 2
+  cone_class_id: 3
+
+versions:
+  # enabled: false 的版本默认不参与 export/cpp-config/run（显式 --version 仍可单独操作），
+  # 这样"默认跑哪些"是配置里写明的，不靠人记。
+  v1:
+    enabled: true
+    checkpoint: tools/detection_finetune/runs/v1/checkpoint_best_ema.pth
+    note: 全参微调基线（960）
+  v1-frozen-step1:
+    enabled: false           # 只学分类层；四版 A/B 里 ball 精确率最好，但锥误检比 step2 多，默认不跑
+    checkpoint: tools/detection_finetune/runs/v1-frozen-step1/checkpoint_best_ema.pth
+    note: 冻结主干、只学分类层（锥误检 173→36 框，cone mAP 略降）
+  v1-frozen-step2:
+    enabled: true
+    checkpoint: tools/detection_finetune/runs/v1-frozen-step2/checkpoint_best_ema.pth
+    note: 解冻 encoder 精修；四版 A/B 首选（锥误检 173→22 框）
+  autoupdate-smoke:
+    enabled: false           # 冒烟版本：只在显式 --version 时操作，不进默认批次
+    checkpoint: tools/detection_finetune/runs/autoupdate-smoke/checkpoint_best_ema.pth
+    note: 自动化闭环冒烟（960 / 2 epoch / subset 24，仅验证链路，非可用模型）
+  # v2 预留：小目标优化（更小尺度合成 + 更高训练分辨率）
