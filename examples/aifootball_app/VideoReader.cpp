@@ -123,6 +123,10 @@ VideoReader::RgbBuffer VideoReader::AcquireRgbBuffer(std::size_t bytes) {
     return buffer;
 }
 
+// C++14 下类内 `static constexpr` 成员被 odr-use（例如作为 LOG_* 的可变参/引用实参）时
+// 仍需类外定义，否则链接期报 undefined reference；C++17 起才会隐式 inline。
+constexpr std::size_t VideoReader::kDefaultRgbRingSize;
+
 void VideoReader::ReleaseRgbRing() {
     for (RgbBuffer& buffer : m_rgbRing) buffer.reset();
     m_rgbRingCursor = 0;

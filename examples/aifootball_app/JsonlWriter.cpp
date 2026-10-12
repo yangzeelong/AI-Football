@@ -111,9 +111,25 @@ void JsonlWriter::Write(const aifootball::ProcessResult& result) {
         item["state"] = BallStateName(ball.state);
         frame["balls"].append(item);
     }
+    // 锥框（三分类版才有；COCO 版是空数组）——给调试渲染画红框用，别当成跟踪输出。
+    frame["cones"] = Json::arrayValue;
+    for (const auto& cone : result.cones) {
+        Json::Value item;
+        item["bbox"] = FloatArray(cone.bbox);
+        item["confidence"] = cone.confidence;
+        frame["cones"].append(item);
+    }
     frame["raw_detection_counts"]["total"] = result.rawCounts.total;
     frame["raw_detection_counts"]["person"] = result.rawCounts.person;
     frame["raw_detection_counts"]["ball"] = result.rawCounts.ball;
+    // 锥（classId 3）**只有检测器级**统计：跟踪阶段没有锥通道，所以 filteredCounts
+    // 永远不含它（ByteTracker.cpp 只数 total/person/ball）。为了不污染
+    // `raw_detection_counts`（对外口径 = 过滤后计数，与 Python observations 对齐），
+    // 检测器原始计数单独出一块，四类都在，便于算"锥被判成球"的代理指标。
+    frame["detector_counts"]["total"] = result.detectorCounts.total;
+    frame["detector_counts"]["person"] = result.detectorCounts.person;
+    frame["detector_counts"]["ball"] = result.detectorCounts.ball;
+    frame["detector_counts"]["cone"] = result.detectorCounts.cone;
     for (const auto& timing : result.moduleTimingsMs) {
         frame["module_timings_ms"][timing.first] = timing.second;
     }
