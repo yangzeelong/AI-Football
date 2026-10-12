@@ -1,0 +1,47 @@
+# v1-frozen-step1 = **第一步：冻结主干、只学分类层**（新增的 cone 类先有去处）
+#
+# 做法：`--freeze encoder`（把 backbone 的 requires_grad 全置 False，只训分类/回归头）。
+# 参数不靠人记：本文件用 `# EXTRA_ARGS:` 行声明，`s4_train_launch.sh` 会自动带上，
+# 所以"重跑这一步"永远只有一条命令：  ./s4_train_launch.sh v1-frozen-step1
+#
+# 实测效果（固定评测集 test，base → step1）：锥判成球框 173 → 36；person/all 0.848 → 0.905；
+# ball/all 0.594 → 0.664；代价 cone/all 0.336 → 0.270（主干没适配锥）→ 故有 step2 解冻精修。
+#
+# EXTRA_ARGS: --freeze encoder
+# 960 正式微调（部署分辨率）。保守超参：小学习率 + 层衰减 + EMA + 早停。
+#
+# 吞吐实测（tools/detection_finetune/s4_train_throughput.py，本机 16G 卡）：
+#   batch 4 + checkpointing on  → 7.1–9.2 img/s，显存峰值 7.9–8.7 G   ← 最快
+#   batch 6 / 8 / 12            → 2.7–4.6 img/s，显存 12–15.7 G（顶到上限后分配器抖动，反而变慢）
+#   num_workers 4→12            → 无改善（data 只占 0.1s，不是瓶颈）；
+#                                 8 + persistent_workers 会直接卡死（GPU 0% 不动），别用
+#   加 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True → 显存峰值 8657→7873 MiB
+# 所以**不要加大 batch**：显存空着不代表能提速，`run_finetune_v1.sh` 已带上 alloc conf。
+#
+# 若要启用"选择性冻结主干"（更省显存/更快、且是 person 掉点的一级对冲），
+# 用命令行 `--freeze encoder`（配置里没有该字段：ModelConfig/TrainConfig 是 pydantic）。
+model:
+  resolution: 960
+  gradient_checkpointing: true      # 实测：关掉不会更快（batch 8:off 6.9 < on 7.9 img/s），留着省显存
+  device: cuda
+
+train:
+  epochs: 100                       # 长跑：配合早停（patience 15）
+  batch_size: 4
+  grad_accum_steps: 4               # 等效 batch 16
+  num_workers: 4                      # 实测 8+persistent_workers 会卡在第一步（CUDA fork 死锁）
+  lr: 0.00005
+  lr_encoder: 0.000075
+  lr_vit_layer_decay: 0.8
+  lr_component_decay: 0.7
+  use_ema: true
+  ema_decay: 0.993
+  multi_scale: true
+  expanded_scales: true
+  tensorboard: true
+  early_stopping: true
+  early_stopping_patience: 15       # 长跑时给足耐心（原先 10 在 epoch 17 就接近触发）
+  early_stopping_min_delta: 0.001
+  early_stopping_use_ema: true
+  checkpoint_interval: 2            # 每 2 epoch 存一次，断了少丢
+  output_dir: runs/v1-frozen-step1

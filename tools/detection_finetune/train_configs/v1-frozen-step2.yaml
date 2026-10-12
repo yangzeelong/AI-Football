@@ -1,0 +1,39 @@
+# v1-frozen-step2 = **第二步：解冻 encoder（卷积/主干）精修**
+#
+# 由来（实测依据）：
+#   step1 = v1-frozen-step1（`--freeze encoder`，主干冻结、只学分类层）
+#       → 固定评测集 test：锥判成球框 173(v1) → **36**；person/all 0.848 → 0.905；ball/all 0.594 → 0.664
+#       代价：cone/all 0.336 → 0.270（主干没适配锥）
+#   step2 = 本配置：**从 step1 的最好权重 warm start，解冻主干、低 lr 精修**
+#       → 目标：把 cone（尤其远景小锥）拉回来，同时保住 stage-1 的人/球水平
+#
+# 关键点：
+#   * `model.pretrain_weights` 指向 step1 的 checkpoint_best_ema.pth（结构与 base 一致，实测可直接加载）
+#   * 不传 `--freeze`（默认 none）= 全参可训；lr 降到 stage-1 的 ~40%，避免把已学好的东西推坏
+#   * epochs 20 + patience 8：精修阶段不需要长跑，早停兜住
+model:
+  resolution: 960
+  gradient_checkpointing: true
+  device: cuda
+  pretrain_weights: runs/v1-frozen-step1/checkpoint_best_ema.pth   # ← 关键：从"只学分类层"的 step1 warm start
+
+train:
+  epochs: 20
+  batch_size: 4
+  grad_accum_steps: 4               # 等效 batch 16
+  num_workers: 4
+  lr: 0.00002                       # 比 v1(5e-5) 更低：只精修 encoder，不要大改
+  lr_encoder: 0.00003               # 比 v1(7.5e-5) 更低
+  lr_vit_layer_decay: 0.8
+  lr_component_decay: 0.7
+  use_ema: true
+  ema_decay: 0.993
+  multi_scale: true
+  expanded_scales: true             # 保留上采样尺度（1280）→ 对远景小锥有帮助
+  tensorboard: true
+  early_stopping: true
+  early_stopping_patience: 8
+  early_stopping_min_delta: 0.001
+  early_stopping_use_ema: true
+  checkpoint_interval: 2
+  output_dir: runs/v1-frozen-step2

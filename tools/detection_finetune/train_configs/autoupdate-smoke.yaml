@@ -1,0 +1,32 @@
+# autoupdate-smoke：只为验证「训练 → 导出 → pin → C++ 配置 → 跑批」这条自动化链
+# 是否真的通，**不是可用模型**（2 epoch + 小 subset，精度没有意义）。
+#
+# 分辨率必须是 960：`s6_deploy_export.py --resolution` 默认 960，且 `tools/rollout/rollout.py`
+# 的 engine/onnx 文件名里 `-960-` 是写死的。用 512 训练会在导出时对不上
+# （positional encoding size mismatch，见 smoke_512.yaml 的注释）。
+#
+# 与 v1.yaml 同一套超参形状，差异只在：epoch 少、不早停、不 tensorboard、输出独占目录。
+model:
+  resolution: 960
+  gradient_checkpointing: true      # 960 下留着省显存（v1 实测关掉也不会更快）
+  device: cuda
+
+train:
+  epochs: 10                        # 导出对拍的门槛（匹配率>0.8、框差≤5px）本质是"模型得收敛"：
+                                    # 24 图子集训 20 epoch 只有 0.79/13.2px；全量 411 图训 10 epoch
+                                    # 才能过。所以这个"冒烟"必须跑全量，别加 --subset。
+  batch_size: 2
+  grad_accum_steps: 1
+  num_workers: 0
+  lr: 0.00005
+  lr_encoder: 0.000075
+  lr_vit_layer_decay: 0.8
+  lr_component_decay: 0.7
+  use_ema: true                     # 要产出 checkpoint_best_ema.pth，与 v1/v1-frozen-step* 命名一致
+  ema_decay: 0.993
+  multi_scale: false
+  expanded_scales: false
+  tensorboard: false
+  early_stopping: false
+  checkpoint_interval: 5            # 每 5 epoch 存一次：20 epoch 全存会占 ~10 GB
+  output_dir: runs/autoupdate-smoke
