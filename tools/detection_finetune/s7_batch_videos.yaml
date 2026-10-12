@@ -1,0 +1,123 @@
+# ============================================================================
+# 批量跑视频的配置（由 s7_run_batch_videos.py 读取，逐条拼 app.py 命令执行）
+#
+#   $PY s7_run_batch_videos.py --dry-run          # 只打印将要执行的命令，不跑
+#   $PY s7_run_batch_videos.py                    # 跑全部任务（已有的自动跳过）
+#   $PY s7_run_batch_videos.py --only-model v1-frozen-step2 --only-video juggle
+#
+# 路径规则：除 `videos[].path` 外，所有相对路径都相对 `paths.repo_root`（= AI-Football/），
+# 因为 app.py 里的模型/配置路径也是按 CWD 解析的，wrapper 会把 CWD 设成 repo_root。
+# ============================================================================
+
+paths:
+  # 留空即自动推导（约定布局 <WORKSPACE>/{AI-Football,Nexusflow,data}，换机器/换目录不用改这里）：
+  #   repo_root  = <本文件>/../..（…/AI-Football）
+  #   video_roots= [<WORKSPACE>/data]
+  # 可用 AI_FOOTBALL_WORKSPACE / AI_FOOTBALL_DATA_DIR 覆盖。
+  repo_root:
+  # 视频从这些目录递归扫描（`--sync-videos` 用它生成下面的 videos 段；加视频后重跑即可）
+  video_roots: []
+  app: code/app.py                       # 干活的就是它（本 wrapper 只做编排）
+  output_root: tools/detection_finetune/runs/batch_app
+  out_template: "{output_root}/{model}/{tag}"     # 每个任务一个目录（rendered.mp4 + observations.jsonl + run.log）
+
+# 耗时参考（本机实测）：完整管线约 **1.08 秒/帧**（检测+跟踪+姿态+记账），
+#   所以"全部帧"跑 4 段视频 × 2 版本 ≈ 5.8 小时。第一次看效果建议先来一发预览：
+#     $PY s7_run_batch_videos.py --target-fps 2 --no-render     # 每秒采 2 帧、不出渲染视频 → 约 25 分钟
+#     $PY s7_run_batch_videos.py --only-video moving_pass --target-fps 2   # 只跑一段、要渲染视频
+#   看够了再按需去掉 --no-render / 调大 target-fps。
+defaults:                                # 所有任务共用；单个任务可覆盖同名键
+  stride: 1                              # **逐帧**（不抽帧）：关键点平滑需要时间连续，抽帧会毁掉 landmark smooth
+  target_fps: 0                          # 保持 0（>0 会走 app.py 的 --target-fps，即抽帧）
+  # 代价（实测校准前先给量级）：全量 35 段共约 27.4 万帧/版本，
+  #   逐帧 × 两版本 = 54.8 万帧；按 0.8 / 1.5 / 3.0 秒每帧算：
+  #     单版本 ≈ 2.5 / 4.8 / 9.5 天，两版本 ≈ 5 / 9.6 / 19 天
+  #   所以下面 order 是"短而相关"的排在前面，方便你随时中断（批次可续跑：已完成自动跳过）。
+  max_frames: 0                          # 0 = 全部帧；调小可先出"预览版"快速看效果
+  render: true                           # false → 加 --no-render（只写 observations.jsonl，快很多）
+  use_roi: true                          # 是否只统计 ROI 内的球/人
+  roi_config: config/roi.json
+  camera_id: C1
+  device: cuda:0
+  extra_args: []                         # 原样追加（例如 ["--debug"]）
+
+models:                                  # 版本 → (权重, 管线 YAML)。两个都写了才允许对比
+  v1:
+    checkpoint: tools/detection_finetune/runs/v1/checkpoint_best_ema.pth
+    app_config: config/app_v1.yaml
+  v1-frozen-step2:
+    checkpoint: tools/detection_finetune/runs/v1-frozen-step2/checkpoint_best_ema.pth
+    app_config: config/app_v1-frozen-step2.yaml
+
+videos:            # 由 `s7_run_batch_videos.py --sync-videos` 自动生成（勿手改；改 paths.video_roots）
+  # path 一律相对 paths.video_roots[0] 书写 → 换机器/换目录不用改这里
+  - path: "1V2 2.mov"
+    tag: 1V2_2
+  - path: "1V2 3.mov"
+    tag: 1V2_3
+  - path: "1V2.mov"
+    tag: 1V2
+  - path: "20260726/室内/传球-720p60.mov"
+    tag: 20260726_室内_传球-720p60
+  - path: "20260726/室内/冲刺跑1-7.7m-720p60.mov"
+    tag: 20260726_室内_冲刺跑1-7.7m-720p60
+  - path: "20260726/室内/冲刺跑2-7.7m-720p60.mov"
+    tag: 20260726_室内_冲刺跑2-7.7m-720p60
+  - path: "20260726/室内/冲刺跑3-7.7m-720p60.mov"
+    tag: 20260726_室内_冲刺跑3-7.7m-720p60
+  - path: "20260726/室内/单脚跳-右脚-720p60.mov"
+    tag: 20260726_室内_单脚跳-右脚-720p60
+  - path: "20260726/室内/单脚跳-左脚-720p60.mov"
+    tag: 20260726_室内_单脚跳-左脚-720p60
+  - path: "20260726/室内/双脚跳-720p60.mov"
+    tag: 20260726_室内_双脚跳-720p60
+  - path: "20260726/室内/带球-720p60.mov"
+    tag: 20260726_室内_带球-720p60
+  - path: "20260726/室内/折返跑1-4.4m-7.7m-720p60.mov"
+    tag: 20260726_室内_折返跑1-4.4m-7.7m-720p60
+  - path: "20260726/室内/折返跑2-4.4m-7.7m-720p60.mov"
+    tag: 20260726_室内_折返跑2-4.4m-7.7m-720p60
+  - path: "20260726/室内/立定跳-720p60.mov"
+    tag: 20260726_室内_立定跳-720p60
+  - path: "20260726/室内/绕杆-720p60.mov"
+    tag: 20260726_室内_绕杆-720p60
+  - path: "20260726/室内/趟球1-720p60mov.mov"
+    tag: 20260726_室内_趟球1-720p60mov
+  - path: "20260726/室内/趟球2-720p60.mov"
+    tag: 20260726_室内_趟球2-720p60
+  - path: "20260726/室外/右侧比赛3-断电-1080p60.mov"
+    tag: 20260726_室外_右侧比赛3-断电-1080p60
+  - path: "20260726/室外/右边比赛1-1080p60.mov"
+    tag: 20260726_室外_右边比赛1-1080p60
+  - path: "20260726/室外/右边比赛2-1080p60.mov"
+    tag: 20260726_室外_右边比赛2-1080p60
+  - path: "20260726/室外/射门1-1080p60.mov"
+    tag: 20260726_室外_射门1-1080p60
+  - path: "20260726/室外/射门2-1080p60.mov"
+    tag: 20260726_室外_射门2-1080p60
+  - path: "20260726/室外/射门3-1080p60.mov"
+    tag: 20260726_室外_射门3-1080p60
+  - path: "20260726/室外/左边比赛-断电-1080p60.mov"
+    tag: 20260726_室外_左边比赛-断电-1080p60
+  - path: "20260726/室外/左边比赛1-1080p60.mov"
+    tag: 20260726_室外_左边比赛1-1080p60
+  - path: "20260726/室外/开场训练-1080p60.mov"
+    tag: 20260726_室外_开场训练-1080p60
+  - path: "20260726/室外/拉伸1-1080p60.mov"
+    tag: 20260726_室外_拉伸1-1080p60
+  - path: "20260726/室外/拉伸2-1080p60.mov"
+    tag: 20260726_室外_拉伸2-1080p60
+  - path: "20260726/折返跑-720p60.mov"
+    tag: 20260726_折返跑-720p60
+  - path: "a.mov"
+    tag: a
+  - path: "射门1-1080p60.mov"
+    tag: 射门1-1080p60
+  - path: "未命名.mov"
+    tag: 未命名
+  - path: "移动传球.mov"
+    tag: 移动传球
+  - path: "绕障碍.mov"
+    tag: 绕障碍
+  - path: "颠球.mov"
+    tag: 颠球
