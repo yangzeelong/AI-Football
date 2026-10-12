@@ -63,3 +63,15 @@ tmp/*.jsonl
 config/roi.json
 config/*.local.*
 data
+
+# ── 三分类微调/流水线的大体积产物：只留源码与配置，产物不进库 ──
+*.mp4
+*.engine
+*.onnx
+*.onnx.data
+observations.jsonl
+.venv-convert/
+tools/rollout/runs*/
+
+# 演示用 GIF（可重生成）
+*.gif
