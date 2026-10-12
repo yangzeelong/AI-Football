@@ -1,0 +1,11 @@
+{
+  "dataset": "ball_cone_v1",
+  "note": "类别唯一真相源。三分类要在 COCO 里放 **4 个 category**：id 0 是 supercategory=\"none\" 的占位背景类（rfdetr/detr.py:133 会把 supercategory==\"none\" 的类从 class_names 里滤掉，所以它不进类别名，但算进 len(categories) → num_classes 与 logits 列数。不这么放、直接用 1..3 三类的写法会在训练时 target 索引越界触发 CUDA device-side assert（实测踩过）。",
+  "deploy_note": "部署侧 classId = logits 列下标 = category_id（C++ RFDetrDetectorInfer.cpp:752 直接用列下标，不加 1），所以 person=1 / ball=2 / cone=3；Python 侧 class_names 映射是 1-based（detr.py:216），也只有 1..3 才对得上。",
+  "categories": [
+    { "id": 0, "name": "background", "supercategory": "none" },
+    { "id": 1, "name": "person", "supercategory": "person" },
+    { "id": 2, "name": "ball", "supercategory": "ball" },
+    { "id": 3, "name": "cone", "supercategory": "cone" }
+  ]
+}

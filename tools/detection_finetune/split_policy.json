@@ -1,0 +1,45 @@
+{
+  "note": "视频 → split/场景/视角/采样优先级的唯一策略表。split 按整段视频划分（同一来源整组进同一 split，避免同源泄漏）；test 集同时充当检测级 A/B 的固定评测集，绝不进训练。",
+  "defaults": { "split": "train", "scene": "unknown", "view": "unknown", "priority": "normal" },
+  "videos": {
+    "移动传球.mov": { "split": "test", "scene": "indoor_gym", "view": "fixed_wide", "priority": "high", "why": "触球回归固定评测段；含 19 处静止锥/碟，主指标所在" },
+    "颠球.mov": { "split": "test", "scene": "indoor_gym", "view": "fixed_wide", "priority": "high", "why": "含 13 处静止锥/碟" },
+    "20260726/室外/右边比赛1-1080p60.mov": { "split": "test", "scene": "outdoor_pitch", "view": "fixed_wide", "priority": "high", "why": "1080p 远景，ball/person 分布代表" },
+
+    "20260726/室内/带球-720p60.mov": { "split": "valid", "scene": "indoor_gym", "view": "fixed_wide", "priority": "high" },
+    "20260726/室外/射门2-1080p60.mov": { "split": "valid", "scene": "outdoor_pitch", "view": "fixed_wide", "priority": "normal" },
+
+    "绕障碍.mov": { "split": "train", "scene": "indoor_gym", "view": "fixed_wide", "priority": "high" },
+    "a.mov": { "split": "train", "scene": "indoor_gym", "view": "fixed_wide", "priority": "high" },
+    "未命名.mov": { "split": "train", "scene": "indoor_gym", "view": "fixed_wide", "priority": "high" },
+    "1V2.mov": { "split": "train", "scene": "indoor_gym", "view": "fixed_wide", "priority": "normal" },
+    "1V2 2.mov": { "split": "train", "scene": "indoor_gym", "view": "fixed_wide", "priority": "normal" },
+    "1V2 3.mov": { "split": "train", "scene": "indoor_gym", "view": "fixed_wide", "priority": "high" },
+    "20260726/折返跑-720p60.mov": { "split": "train", "scene": "indoor_gym", "view": "fixed_wide", "priority": "high" },
+    "射门1-1080p60.mov": { "split": "train", "scene": "outdoor_pitch", "view": "fixed_wide", "priority": "normal" },
+
+    "20260726/室内/传球-720p60.mov": { "split": "train", "scene": "indoor_gym", "view": "fixed_wide", "priority": "normal" },
+    "20260726/室内/冲刺跑1-7.7m-720p60.mov": { "split": "train", "scene": "indoor_gym", "view": "fixed_wide", "priority": "low" },
+    "20260726/室内/冲刺跑2-7.7m-720p60.mov": { "split": "train", "scene": "indoor_gym", "view": "fixed_wide", "priority": "low" },
+    "20260726/室内/冲刺跑3-7.7m-720p60.mov": { "split": "train", "scene": "indoor_gym", "view": "fixed_wide", "priority": "low" },
+    "20260726/室内/单脚跳-右脚-720p60.mov": { "split": "train", "scene": "indoor_gym", "view": "fixed_wide", "priority": "low" },
+    "20260726/室内/单脚跳-左脚-720p60.mov": { "split": "train", "scene": "indoor_gym", "view": "fixed_wide", "priority": "low" },
+    "20260726/室内/双脚跳-720p60.mov": { "split": "train", "scene": "indoor_gym", "view": "fixed_wide", "priority": "low" },
+    "20260726/室内/折返跑1-4.4m-7.7m-720p60.mov": { "split": "train", "scene": "indoor_gym", "view": "fixed_wide", "priority": "normal" },
+    "20260726/室内/折返跑2-4.4m-7.7m-720p60.mov": { "split": "train", "scene": "indoor_gym", "view": "fixed_wide", "priority": "normal" },
+    "20260726/室内/立定跳-720p60.mov": { "split": "train", "scene": "indoor_gym", "view": "fixed_wide", "priority": "normal" },
+    "20260726/室内/绕杆-720p60.mov": { "split": "train", "scene": "indoor_gym", "view": "fixed_wide", "priority": "high" },
+    "20260726/室内/趟球1-720p60mov.mov": { "split": "train", "scene": "indoor_gym", "view": "fixed_wide", "priority": "high" },
+    "20260726/室内/趟球2-720p60.mov": { "split": "train", "scene": "indoor_gym", "view": "fixed_wide", "priority": "normal" },
+
+    "20260726/室外/右侧比赛3-断电-1080p60.mov": { "split": "train", "scene": "outdoor_pitch", "view": "fixed_wide", "priority": "low" },
+    "20260726/室外/右边比赛2-1080p60.mov": { "split": "train", "scene": "outdoor_pitch", "view": "fixed_wide", "priority": "low" },
+    "20260726/室外/射门1-1080p60.mov": { "split": "train", "scene": "outdoor_pitch", "view": "fixed_wide", "priority": "normal" },
+    "20260726/室外/射门3-1080p60.mov": { "split": "train", "scene": "outdoor_pitch", "view": "fixed_wide", "priority": "low" },
+    "20260726/室外/左边比赛-断电-1080p60.mov": { "split": "train", "scene": "outdoor_pitch", "view": "fixed_wide", "priority": "low" },
+    "20260726/室外/左边比赛1-1080p60.mov": { "split": "train", "scene": "outdoor_pitch", "view": "fixed_wide", "priority": "normal" },
+    "20260726/室外/开场训练-1080p60.mov": { "split": "train", "scene": "outdoor_pitch", "view": "fixed_wide", "priority": "normal" },
+    "20260726/室外/拉伸1-1080p60.mov": { "split": "train", "scene": "outdoor_pitch", "view": "fixed_wide", "priority": "low" },
+    "20260726/室外/拉伸2-1080p60.mov": { "split": "train", "scene": "outdoor_pitch", "view": "fixed_wide", "priority": "low" }
+  }
+}
