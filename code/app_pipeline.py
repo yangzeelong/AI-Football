@@ -221,6 +221,11 @@ def run_video_app(
                 # ROI 之后再做 YAML 阈值过滤，保证输出和可视化使用同一批观测。
                 filter_result = app_config.filter_detections_with_details(detections)
                 detections = filter_result.kept
+                # 可选：球∩锥抑制（默认 suppress_ball_iou=0 → 行为与本文件改动前**完全一致**）
+                suppressed_on_cones = 0
+                if app_config.suppress_ball_iou > 0 and app_config.cone_labels:
+                    detections, suppressed_on_cones = _suppress_balls_on_cones(
+                        detections, app_config)
                 filtered_ball_count = _ball_detection_count(detections)
 
                 person_boxes = person_detections(detections)
@@ -266,6 +271,8 @@ def run_video_app(
                                                       reader.fps)
                     _draw_person_keypoints(rendered, persons)
                     _draw_tracked_balls(rendered, balls)
+                    if app_config.cone_labels:
+                        _draw_cones(rendered, detections, app_config)
                     if debug:
                         _draw_filtered_detections(rendered, filter_result.rejected)
                     if debug:
@@ -276,6 +283,7 @@ def run_video_app(
                                 f"ball: raw={detector_ball_count} roi={roi_ball_count} kept={filtered_ball_count} rescued={len(rescued_balls)} tracked={len(balls)} state={ball_state}",
                                 f"filter: conf={filter_result.confidence_filtered_count} size={filter_result.size_filtered_count} total={filter_result.filtered_count}",
                                 f"persons: det={len(person_boxes)} track={len(persons)}",
+                                *([f"cone: det={sum(1 for d in detections if app_config.is_cone_label(d.label))} suppressed_ball={suppressed_on_cones}"] if app_config.cone_labels else []),
                             ],
                         )
 
@@ -430,6 +438,47 @@ def _expand_bbox(
         min(float(image_width), x2 + x_pad),
         min(float(image_height), y2 + y_pad),
     )
+
+
+def _iou_xyxy(a, b) -> float:
+    """两个 xyxy 框的 IoU。"""
+    ax1, ay1, ax2, ay2 = (float(v) for v in a[:4])
+    bx1, by1, bx2, by2 = (float(v) for v in b[:4])
+    ix = max(0.0, min(ax2, bx2) - max(ax1, bx1))
+    iy = max(0.0, min(ay2, by2) - max(ay1, by1))
+    inter = ix * iy
+    union = (ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _suppress_balls_on_cones(detections, app_config):
+    """球候选与 cone 框高度重叠 → 压制该球（方案 §11 的过滤规则；默认不开）。
+
+    返回 (新列表, 被压制个数)。只在 `filters.cone.suppress_ball_iou > 0` 且配置了 cone 时生效。
+    """
+    cones = [d for d in detections if app_config.is_cone_label(d.label)]
+    if not cones:
+        return list(detections), 0
+    kept, dropped = [], 0
+    for detection in detections:
+        if detection.label in app_config.ball_labels and any(
+                _iou_xyxy(detection.bbox, cone.bbox) >= app_config.suppress_ball_iou
+                for cone in cones):
+            dropped += 1
+            continue
+        kept.append(detection)
+    return kept, dropped
+
+
+def _draw_cones(image, detections, app_config) -> None:
+    """把锥框画成橙色（只在配置了 cone 时调用）。"""
+    for detection in detections:
+        if not app_config.is_cone_label(detection.label):
+            continue
+        x1, y1, x2, y2 = (int(v) for v in detection.bbox)
+        cv2.rectangle(image, (x1, y1), (x2, y2), (0, 165, 255), 2)
+        cv2.putText(image, f"cone {detection.confidence:.2f}", (x1, max(12, y1 - 4)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 165, 255), 1)
 
 
 def _draw_person_keypoints(image, persons) -> None:

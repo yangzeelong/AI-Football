@@ -11,6 +11,7 @@ from football_vision import (
     RfdetrDetector,
     RoiAnnotator,
     RoiManager,
+    YoloDetector,
 )
 from app_config import AppConfig
 from app_pipeline import run_video_app
@@ -116,6 +117,7 @@ def main() -> None:
         config_path=pose_config,
         checkpoint_path=pose_checkpoint,
         device=args.device,
+        flip_test=app_config.pose.flip_test,
     )
     run_video_app(
         video_path=video_path,
@@ -142,24 +144,36 @@ def build_detector(app_config: AppConfig, device: str):
     detector_cfg = app_config.detector
     confidence = detector_cfg.confidence
     class_names = sorted(detector_cfg.class_names)
-    size = detector_cfg.rfdetr_size
-    model_dir = detector_cfg.rfdetr_model_dir
+    backend = detector_cfg.backend.lower()
     logger.info(
-        "loading RF-DETR detector: size={} resolution={} conf={} model_dir={} device={}",
-        size,
+        "loading detector: backend={} resolution={} conf={} device={}",
+        backend,
         detector_cfg.input_resolution,
         confidence,
-        model_dir,
         device,
     )
-    return RfdetrDetector(
-        confidence=confidence,
-        class_names=class_names,
-        size=size,
-        resolution=detector_cfg.input_resolution,
-        preserve_aspect_ratio=detector_cfg.preserve_aspect_ratio,
-        device=device,
-        model_dir=model_dir,
+    common = {
+        "confidence": confidence,
+        "class_names": class_names,
+        "resolution": detector_cfg.input_resolution,
+        "preserve_aspect_ratio": detector_cfg.preserve_aspect_ratio,
+        "device": device,
+        "half": detector_cfg.half,
+    }
+    if backend == "rfdetr":
+        return RfdetrDetector(
+            **common,
+            size=detector_cfg.rfdetr_size,
+            model_dir=detector_cfg.rfdetr_model_dir,
+        )
+    if backend in {"yolo", "yolov8"}:
+        return YoloDetector(
+            **common,
+            model_path=detector_cfg.yolo_model_path,
+        )
+    raise ValueError(
+        f"Unsupported detector backend: {detector_cfg.backend}. "
+        "Expected rfdetr or yolov8."
     )
 
 
@@ -212,7 +226,13 @@ def _save_run_metadata(
             "output_video": str(output_video) if output_video is not None else None,
             "stride": stride,
             "target_fps": target_fps,
-            "detector": "rfdetr",
+            "detector": app_config.detector.backend,
+            "detector_model": (
+                app_config.detector.yolo_model_path
+                if app_config.detector.backend in {"yolo", "yolov8"}
+                else app_config.detector.rfdetr_size
+            ),
+            "detector_input_resolution": app_config.detector.input_resolution,
             "pose_preset": app_config.pose.preset,
             "tracker": app_config.runtime.tracker,
         },
