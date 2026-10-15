@@ -327,7 +327,83 @@ class RoiAnnotator:
         return canvas
 
 
-class RfdetrDetector:
+class _PersonTrackMixin:
+
+    def _build_person_tracker(self):
+        try:
+            import supervision as sv
+        except ImportError as exc:
+            raise RuntimeError(
+                "supervision is required for person tracking."
+            ) from exc
+        return sv.ByteTrack(
+            track_activation_threshold=self.confidence,
+            lost_track_buffer=30,
+            minimum_matching_threshold=0.8,
+            frame_rate=60,
+            minimum_consecutive_frames=1,
+        )
+
+    def _track_persons(
+        self,
+        detections: Sequence[Detection],
+    ) -> list[Detection]:
+        try:
+            import supervision as sv
+        except ImportError as exc:
+            raise RuntimeError(
+                "supervision is required for person tracking."
+            ) from exc
+
+        persons = [
+            detection for detection in detections
+            if detection.label == "person"
+        ]
+        others = [
+            detection for detection in detections
+            if detection.label != "person"
+        ]
+        if not persons:
+            self.person_tracker.update_with_detections(sv.Detections.empty())
+            return list(detections)
+
+        tracked = self.person_tracker.update_with_detections(
+            sv.Detections(
+                xyxy=np.array([person.bbox for person in persons],
+                              dtype=np.float32),
+                confidence=np.array([person.confidence for person in persons],
+                                    dtype=np.float32),
+                class_id=np.array(
+                    [
+                        person.class_id if person.class_id is not None else -1
+                        for person in persons
+                    ],
+                    dtype=np.int32,
+                ),
+            ))
+        if tracked.tracker_id is None:
+            return list(detections)
+
+        tracked_persons: list[Detection] = []
+        for index, track_id in enumerate(tracked.tracker_id):
+            x1, y1, x2, y2 = [float(value) for value in tracked.xyxy[index]]
+            class_id = int(tracked.class_id[index]
+                           ) if tracked.class_id is not None else None
+            confidence = (float(tracked.confidence[index])
+                          if tracked.confidence is not None else 0.0)
+            tracked_persons.append(
+                Detection(
+                    frame_index=persons[0].frame_index,
+                    label="person",
+                    confidence=confidence,
+                    bbox=(x1, y1, x2, y2),
+                    class_id=class_id,
+                    track_id=int(track_id),
+                ))
+        return tracked_persons + others
+
+
+class RfdetrDetector(_PersonTrackMixin):
     WEIGHTS = {
         "nano": (
             "rf-detr-nano.pth",
@@ -360,6 +436,7 @@ class RfdetrDetector:
         preserve_aspect_ratio: bool = True,
         device: str | None = None,
         model_dir: str | Path = "models/rfdetr",
+        half: bool = False,
     ) -> None:
         try:
             from rfdetr import (
@@ -408,6 +485,13 @@ class RfdetrDetector:
         self.resolution = resolution
         self.preserve_aspect_ratio = preserve_aspect_ratio
         self.device = device
+        self.half = half
+        if half:
+            # 导出推理模型并转成 fp16，避免每帧在 fp32 权重上做前向。
+            import torch
+
+            self.model.optimize_for_inference(compile=False,
+                                              dtype=torch.float16)
         self.coco_classes = getattr(self.model, "class_names", COCO_CLASSES)
         self.person_tracker = self._build_person_tracker()
 
@@ -497,77 +581,105 @@ class RfdetrDetector:
             f"RF-DETR weights not found: {weights_path}. Download from {url} "
             f"and save as {weights_path}.")
 
-    def _build_person_tracker(self):
+
+
+class YoloDetector(_PersonTrackMixin):
+    """Ultralytics YOLO detector with the same Detection contract as RF-DETR."""
+
+    def __init__(
+        self,
+        confidence: float = 0.25,
+        class_names: Sequence[str] | None = None,
+        model_path: str | Path = "models/yolo/yolov8s.pt",
+        resolution: int | None = None,
+        preserve_aspect_ratio: bool = True,
+        device: str | None = None,
+        half: bool = False,
+    ) -> None:
         try:
-            import supervision as sv
+            from ultralytics import YOLO
         except ImportError as exc:
             raise RuntimeError(
-                "supervision is required for RF-DETR person tracking."
+                "ultralytics is required for YOLO detection."
             ) from exc
-        return sv.ByteTrack(
-            track_activation_threshold=self.confidence,
-            lost_track_buffer=30,
-            minimum_matching_threshold=0.8,
-            frame_rate=60,
-            minimum_consecutive_frames=1,
+
+        self.confidence = confidence
+        self.class_names = set(class_names or ["person", "sports ball"])
+        self.model_path = Path(model_path)
+        self.resolution = resolution
+        self.preserve_aspect_ratio = preserve_aspect_ratio
+        self.device = device
+        # ultralytics 只支持在 CUDA 上做 fp16 推理。
+        self.half = half and (device is None or
+                              str(device) == "0" or
+                              str(device).startswith("cuda"))
+        self.model = YOLO(str(self.model_path))
+        self.person_tracker = self._build_person_tracker()
+
+    def detect(self, frame: VideoFrame) -> list[Detection]:
+        if self.preserve_aspect_ratio:
+            target_resolution = int(self.resolution or 640)
+            image, scale, pad_x, pad_y = _letterbox_rgb(
+                frame.image, target_resolution)
+        else:
+            image = frame.image
+            scale, pad_x, pad_y = 1.0, 0, 0
+
+        results = self.model.predict(
+            source=image,
+            imgsz=int(self.resolution or 640),
+            conf=self.confidence,
+            device=self.device,
+            verbose=False,
+            rect=False,
+            half=self.half,
         )
-
-    def _track_persons(self,
-                       detections: Sequence[Detection]) -> list[Detection]:
-        try:
-            import supervision as sv
-        except ImportError as exc:
-            raise RuntimeError(
-                "supervision is required for RF-DETR person tracking."
-            ) from exc
-
-        persons = [
-            detection for detection in detections
-            if detection.label == "person"
+        detections = self._parse_predictions(frame, results[0])
+        if not self.preserve_aspect_ratio:
+            return detections
+        return [
+            _unletterbox_detection(
+                detection,
+                scale=scale,
+                pad_x=pad_x,
+                pad_y=pad_y,
+                width=frame.image.shape[1],
+                height=frame.image.shape[0],
+            ) for detection in detections
         ]
-        others = [
-            detection for detection in detections
-            if detection.label != "person"
-        ]
-        if not persons:
-            self.person_tracker.update_with_detections(sv.Detections.empty())
-            return list(detections)
 
-        # RF-DETR 输出检测框，ByteTrack 在这里补齐任务1必需的单镜头 track_id。
-        tracked = self.person_tracker.update_with_detections(
-            sv.Detections(
-                xyxy=np.array([person.bbox for person in persons],
-                              dtype=np.float32),
-                confidence=np.array([person.confidence for person in persons],
-                                    dtype=np.float32),
-                class_id=np.array(
-                    [
-                        person.class_id if person.class_id is not None else -1
-                        for person in persons
-                    ],
-                    dtype=np.int32,
-                ),
-            ))
-        if tracked.tracker_id is None:
-            return list(detections)
+    def track(
+        self,
+        frame: VideoFrame,
+        tracker: str = "botsort.yaml",
+        persist: bool = True,
+    ) -> list[Detection]:
+        return self._track_persons(self.detect(frame))
 
-        tracked_persons: list[Detection] = []
-        for index, track_id in enumerate(tracked.tracker_id):
-            x1, y1, x2, y2 = [float(value) for value in tracked.xyxy[index]]
-            class_id = int(tracked.class_id[index]
-                           ) if tracked.class_id is not None else None
-            confidence = (float(tracked.confidence[index])
-                          if tracked.confidence is not None else 0.0)
-            tracked_persons.append(
+    def _parse_predictions(self, frame: VideoFrame, result) -> list[Detection]:
+        boxes = getattr(result, "boxes", None)
+        if boxes is None:
+            return []
+        xyxy = boxes.xyxy.detach().cpu().numpy()
+        confidences = boxes.conf.detach().cpu().numpy()
+        class_ids = boxes.cls.detach().cpu().numpy().astype(int)
+        names = result.names
+        detections: list[Detection] = []
+        for box, confidence, class_id in zip(xyxy, confidences, class_ids):
+            label = str(names[int(class_id)])
+            if self.class_names and label not in self.class_names:
+                continue
+            x1, y1, x2, y2 = [float(value) for value in box]
+            detections.append(
                 Detection(
-                    frame_index=persons[0].frame_index,
-                    label="person",
-                    confidence=confidence,
+                    frame_index=frame.index,
+                    label=label,
+                    confidence=float(confidence),
                     bbox=(x1, y1, x2, y2),
-                    class_id=class_id,
-                    track_id=int(track_id),
+                    class_id=int(class_id),
+                    track_id=None,
                 ))
-        return tracked_persons + others
+        return detections
 
 
 class ResultVideoWriter:
