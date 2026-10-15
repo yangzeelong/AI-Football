@@ -1,0 +1,196 @@
+# 移动传球.mov (1280x720, 60 fps, 16037 frames) —— **三分类微调模型**的触球回归配置。
+#
+# 为什么单独一份而不是改 moving_pass_720p.yaml：那份是**对外基线**（COCO 80 类 + fp16
+# engine），触球名额级 P/R/F1 = 0.8144 就是它跑出来的。回归对比必须「只变一个变量」，
+# 所以这里把基线整份抄过来，**只改检测器权重与类别号**，其余（W48 姿态 + flipTest、
+# ROI 关、阈值、跟踪参数、渲染关）逐项与基线一致。
+#
+# 与 moving_pass_720p.yaml 的差异（仅这些）：
+#   - RFDetrDetector.enginePath  → 三分类微调 engine（v1-frozen-step2，960 fp16 b8）
+#   - RFDetrDetector.numClasses  → 4（列 0 = no-object；三个真实类 1/2/3）
+#   - RFDetrDetector.targetClasses → [1, 2, 3]（基线是 COCO 的 [1, 37]）
+#   - 新增 personClassId/ballClassId/coneClassId = 1/2/3
+#   - ByteTracker.personClassId/ballClassId 1/2（基线 1/37）、新增 coneClassId = 3
+#   - FootballTracker.ballClassId 2（基线 37）
+#
+# 用法（与基线同一条命令，只换 CONFIG）：
+#   CONFIG=examples/touch_eval/config/moving_pass_720p_3c.yaml \
+#   RENDER=0 ./examples/touch_eval/run_touch_eval.sh
+# 脚本第 3 步只读 observations.jsonl 的 persons/balls，多出的 cones 字段会被忽略。
+graph:
+  name: AIFootball-TensorRT
+
+  modules:
+    - name: VideoReader
+      class: VideoReader
+      config:
+        videoPath: data/移动传球.mov
+        stride: 1
+        rgbRingSize: 64
+
+    - name: VideoDecoder
+      class: VideoDecoder
+      config:
+        pixelFormat: rgb24
+
+    - name: RFDetrDetector
+      class: RFDetrDetector
+      config:
+        # 三分类微调权重：person/ball/cone = 1/2/3，head 宽 4（列 0 = no-object）。
+        # 类别号 = logits 列下标（不加 1），与 models/.../v1-frozen-step2/meta.json 的
+        # deploy 段逐项对齐；改错会让整类静默消失。
+        enginePath: /home/hx1/yzl/Work/AI-Football/models/rfdetr/fine-tune/v1-frozen-step2/rf-detr-small-v1-frozen-step2-960-fp16-b8-fp32io.engine
+        inputBindingName: image
+        outputBindingName: detections
+        logitsBindingName: pred_logits
+        boxesBindingName: pred_boxes
+        inputSize: 960
+        numClasses: 4
+        numQueries: 300
+        confidenceThreshold: 0.25
+        targetClasses: [1, 2, 3]
+        personClassId: 1
+        ballClassId: 2
+        coneClassId: 3
+        meanR: 0.485
+        meanG: 0.456
+        meanB: 0.406
+        stdR: 0.229
+        stdG: 0.224
+        stdB: 0.225
+        useGpuPreprocess: true
+        maxBatchSize: 4
+        instanceCount: 1
+        batchTimeoutMs: 0
+        maxRetryNum: 0
+
+    - name: ByteTracker
+      class: ByteTracker
+      config:
+        trackActivationThreshold: 0.25
+        secondAssociationThreshold: 0.10
+        minimumMatchingThreshold: 0.80
+        newTrackThreshold: 0.68
+        lostTrackBuffer: 30
+        personClassId: 1
+        ballClassId: 2
+        coneClassId: 3
+        personMinConfidence: 0.68
+        personMinWidthPx: 8.0
+        personMinHeightPx: 24.0
+        ballMinConfidence: 0.4
+        ballMinWidthPx: 2.0
+        ballMinHeightPx: 2.0
+
+    - name: HRNetPoseEstimator
+      class: HRNetPoseEstimator
+      config:
+        # 与基线逐项相同：姿态是回归里的「不动量」，换档会让触球指标不可比。
+        enginePath: /home/hx1/yzl/Work/AI-Football/models/mmpose/hrnet/hrnet-w48-dark-ch23-fp16-b8-fp32io.engine
+        inputBindingName: images
+        outputBindingName: heatmaps
+        inputWidth: 288
+        inputHeight: 384
+        heatmapWidth: 72
+        heatmapHeight: 96
+        numKeypoints: 23
+        stride: 4
+        useDark: true
+        flipTest: true
+        darkBlurKernel: 11
+        bboxPadding: 1.25
+        poseBoxExpansion: true
+        xPadRatio: 0.15
+        yPadRatio: 0.25
+        minPadPx: 12.0
+        maxBatch: 8
+        batchFrameCount: 4
+        instanceCount: 2
+        keypointConfThr: 0.05
+        meanR: 123.675
+        meanG: 116.28
+        meanB: 103.53
+        stdR: 58.395
+        stdG: 57.12
+        stdB: 57.375
+
+    - name: KeypointSmoother
+      class: KeypointSmoother
+      config:
+        enabled: true
+        method: skeleton
+        staticWindow: 8
+        staticMotionPx: 2.5
+        deadbandPx: 0.8
+        lowConfidence: 0.3
+        lowConfidenceAlpha: 0.12
+        staticAlpha: 0.25
+        movingAlpha: 0.65
+        skeletonAnchorAlpha: 0.35
+        skeletonEndpointAlpha: 0.12
+        skeletonMovingEndpointAlpha: 0.45
+        skeletonFastEndpointAlpha: 0.22
+        skeletonFastMovingEndpointAlpha: 0.62
+        skeletonFastStaticStepPx: 5.0
+        skeletonMaxStaticStepPx: 2.5
+        skeletonLimbTolerance: 0.25
+
+    - name: FootballTracker
+      class: FootballTracker
+      config:
+        maxMissedFrames: 12
+        maxAssociationDistancePx: 180.0
+        confidenceDecay: 0.75
+        ballClassId: 2
+        # Report every ball candidate: the touch detector needs the boxes the
+        # followed ball may have lost to a closer one.
+        keepOnlyBestBall: false
+
+    - name: VideoRenderer
+      class: VideoRenderer
+      config:
+        enabled: false
+        outputPath: output/rendered.mp4
+        fps: 60.0
+        stride: 1
+
+    - name: ObservationWriter
+      class: ObservationWriter
+      config:
+        outputPath: output/observations.jsonl
+        cameraId: C1
+        videoPath: data/移动传球.mov
+        fps: 60.0
+        stride: 1
+
+    - name: AlarmPusher
+      class: AlarmPusher
+      config:
+        savePath: result.txt
+
+  connections:
+    - from: VideoReader
+      to: VideoDecoder
+    - from: VideoDecoder
+      to: RFDetrDetector
+    - from: RFDetrDetector
+      to: ByteTracker
+    - from: ByteTracker
+      to: HRNetPoseEstimator
+    - from: HRNetPoseEstimator
+      to: KeypointSmoother
+    - from: KeypointSmoother
+      to: FootballTracker
+    - from: FootballTracker
+      to: VideoRenderer
+    - from: VideoRenderer
+      to: ObservationWriter
+    - from: VideoRenderer
+      to: AlarmPusher
+
+algorithm:
+  maxPendingFrames: 32
+  inputQueuePolicy: block
+  # 720p 源：1080p 那份 ROI 多边形会滤掉绝大多数检测，与基线一样关掉。
+  roi:
+    enabled: false
