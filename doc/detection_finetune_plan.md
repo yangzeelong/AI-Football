@@ -36,12 +36,12 @@
 ## 0.5 环境准备（每个新终端做一次）
 
 **所有脚本都必须用 `ai-football` 这个 conda 环境跑。**
-⚠️ 本机默认激活的是 conda **base**（`/root/miniconda3`），**裸 `python` 是错的环境**——base 里没有 `rfdetr`。
+⚠️ 默认激活的可能不是这个环境（常见是 conda **base**），**裸 `python` 往往是错的环境**——base 里没有 `rfdetr`。
 四种写法任选一种（前两种最省事），后文一律用 `$PY` 代表"这个环境的 python"：
 
 ```bash
 # 【方式 1 · 零配置，任何 shell / 脚本里都稳】（推荐写进脚本）
-PY=/root/miniconda3/envs/ai-football/bin/python
+PY=$AI_FOOTBALL_ENV/bin/python
 $PY base_layout.py --check
 
 # 【方式 2 · 本机默认 shell 是 zsh，~/.zshrc:129 已 conda init，可直接激活】
@@ -50,7 +50,7 @@ python base_layout.py --check
 # 激活后也才能直接用该环境的可执行文件：label-studio、pip、uv …
 
 # 【方式 3 · bash / 非交互 shell：先 source hook 再激活】
-source /root/miniconda3/etc/profile.d/conda.sh
+source "$(conda info --base)/etc/profile.d/conda.sh"   # 随你的 conda 安装位置，不用写死
 conda activate ai-football
 
 # 【方式 4 · 一条命令、不改当前环境（适合一次性调用 / CI）】
@@ -60,8 +60,8 @@ conda run -n ai-football python base_layout.py --check
 可选简写（写进 `~/.zshrc`）：
 
 ```bash
-alias py3c='/root/miniconda3/envs/ai-football/bin/python'            # 少打字
-export PATH=/root/miniconda3/envs/ai-football/bin:$PATH              # 让 python/pip/label-studio 都指向该环境
+alias py3c='$AI_FOOTBALL_ENV/bin/python'            # 少打字
+export PATH=$AI_FOOTBALL_ENV/bin:$PATH              # 让 python/pip/label-studio 都指向该环境
 ```
 
 环境自检（三条都应通过）：
@@ -76,8 +76,8 @@ $PY --version                                                                   
 
 * **装包必须装进这个环境**：用 `$PY -m pip install <pkg>`（或先 `conda activate ai-football` 再 `pip install`）；
   裸 `pip install` 会装到 conda base，之后 `$PY -c "import ..."` 依然找不到。
-* **该环境的可执行文件在 `/root/miniconda3/envs/ai-football/bin/`**：未激活时要写全路径，
-  例如 `/root/miniconda3/envs/ai-football/bin/label-studio start --port 8080`。
+* **该环境的可执行文件在 `$AI_FOOTBALL_ENV/bin/`**：未激活时要写全路径，
+  例如 `$AI_FOOTBALL_ENV/bin/label-studio start --port 8080`。
 * Nexusflow 侧的触球评估是另一套（`cd examples/touch_eval/py && uv run touch-eval …`），与 `$PY` 无关。
 
 ---
@@ -184,18 +184,18 @@ $PY s3_label_review_roundtrip.py --import ~/Downloads/project-*.json --batch rep
 
 ## 3. Step-by-Step
 
-所有命令的工作目录：`/home/hx1/yzl/Work/AI-Football/tools/detection_finetune/`
+所有命令的工作目录：`$AI_FOOTBALL_REPO_ROOT/tools/detection_finetune/`
 Python 解释器：**一律用 ai-football 环境**（下称 `$PY`，设置方式见 §0.5）——
 ⚠️ 裸 `python` 默认是 conda **base**，里面没有 `rfdetr`，跑脚本会 `ModuleNotFoundError`。
 
-约定：`DS=/home/hx1/yzl/Work/data/ball_cone_v1`
+约定：`DS=$AI_FOOTBALL_DATASET_DIR`
 
 ---
 
 ### S0 环境与类别真源自检（0 分钟）
 
 ```bash
-cd /home/hx1/yzl/Work/AI-Football/tools/detection_finetune
+cd $AI_FOOTBALL_REPO_ROOT/tools/detection_finetune
 $PY base_layout.py --selftest     # 对拍函数自检：6 类故意写错的 categories 都必须被抓出来
 $PY base_layout.py --check        # 打印三方对齐值 + 目录骨架状态
 ```
@@ -218,7 +218,7 @@ $PY s1_data_extract_frames.py --priority high,normal --stride-sec 3 --per-video-
 **产物**：`$DS/raw/<视频>/<视频>__f000540__t0009.00.jpg`（529 张，243 MB）+ `$DS/manifest.csv`（529 行）
 **通过判据**：`du -sh $DS/raw` ≈ 243 MB；`manifest.csv` 行数 = 图片数；分辨率分布 `{1920x1080: 172, 1280x720: 357}`
 
-> 想加新素材：往 `/home/hx1/yzl/Work/data` 丢视频 → 在 `split_policy.json` 里登记 split/场景 → 重跑本步（已登记的图会自动跳过）。
+> 想加新素材：往 `$AI_FOOTBALL_DATA_DIR` 丢视频 → 在 `split_policy.json` 里登记 split/场景 → 重跑本步（已登记的图会自动跳过）。
 
 ---
 
@@ -319,8 +319,8 @@ $PY s3_label_review_ui.py                     # 默认载入全部批次，界�
 **Label Studio（备选，本机装不上）**
 
 ```bash
-cd AI-Football && LABEL_STUDIO_LOCAL_FILES_SOURCES=/home/hx1/yzl/Work/data/ball_cone_v1 \
-  LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT=/home/hx1/yzl/Work/data/ball_cone_v1 \
+cd AI-Football && LABEL_STUDIO_LOCAL_FILES_SOURCES=$AI_FOOTBALL_DATASET_DIR \
+  LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT=$AI_FOOTBALL_DATASET_DIR \
   .venv-labelstudio/bin/label-studio start --port 8080 --no-browser
 # 本地另开终端：ssh -L 8080:localhost:8080 <user>@<host> → 浏览器 http://localhost:8080
 $PY s3_label_review_roundtrip.py --ls-tasks <batch>      # 打印导入用的 curl（Token 在 Settings → Access Token）
@@ -437,15 +437,65 @@ $PY s6_deploy_export.py --checkpoint runs/v1-frozen-step2/checkpoint_best_ema.pt
 4. **回归**：`examples/touch_eval/py` 跑 `移动传球`，对比 base 基线
    **名额级含 low_quality P/R/F1 = 0.8144**，允许 1–2 个百分点内的波动。
 
+> ### 实测结果（2026-10-12）：**未通过** ✗
+>
+> 只变检测器权重与类别号的并行配置 `examples/touch_eval/config/moving_pass_720p_3c.yaml`
+> （基线 `moving_pass_720p.yaml` **未改动**，姿态/ROI/阈值/跟踪逐项相同），全片 16037 帧：
+>
+> | 口径（名额级） | 基线 TP/FP/FN | 基线 P/R/F1 | 三分类 TP/FP/FN | 三分类 P/R/F1 | ΔF1 |
+> | --- | --- | --- | --- | --- | --- |
+> | 含 low_quality（对外） | 79/18/18 | 0.8144 / 0.8144 / **0.8144** | 75/35/22 | 0.6818 / 0.7732 / **0.7246** | **−0.090** ✗ |
+> | 不含 low_quality | 76/16/10 | 0.8261 / 0.8837 / 0.8539 | 67/33/19 | 0.6700 / 0.7791 / 0.7204 | **−0.134** ✗ |
+>
+> 预测事件 97 → 110，主要是**误报上升**（FP 18 → 35）。
+>
+> **归因（同一份 `observations.jsonl` 对拍，非推测）**：人/帧 1.58 → 3.09（原始检测 25301 → 49601）、
+> 球候选/帧 2.42 → 0.59（原始 37823 → 8268）、球框边长中位 11.4 → 22.5 px、**GT 窗口内有球两侧都是
+> 72/72**（球召回不是瓶颈）；基线有球而三分类无球的 **11494** 个框里 **61.2% 同位置出现锥框**
+> （对照组——保留下来的球框——仅 **3.3%**）→ **过校正：小圆物被从「球」改判成「锥」**。
+>
+> **已排除「参数没调好」**：在同一份三分类观测上单扫 11 个判定参数（判定层是后处理，1~2 秒一轮，
+> 不重跑管线），**最优 F1 仅 0.736**，各档 FP 始终 27–37，没有一组回到 0.814 ✗。
+>
+> 报告：`<data>/ball_cone_v1/reports/touch_regression.md`；产物：`Nexusflow/output/touch_eval_moving_pass-3c/`。
+> **修法（按成本）**：① 补小目标球（本视频球框 11.4 px）+ 锥地面小物强负样本后重训（最对症）；
+> ② 先落 cone 抑制规则（只降误报，与本回归方向一致）；③ 双模型兜底（base 出 ball、微调出 cone）。
+> **重训另行排期，不阻塞闭环与汇报。**
+
 ---
 
 ### S10 闭环回收 + 汇报
 
 ```bash
-$PY s7_recycle_hard_examples.py --video /home/hx1/yzl/Work/data/移动传球.mov
+# ① 先看会挑出什么（不写任何文件；dry-run 也真推理，否则预览是假绿）
+$PY s7_recycle_hard_examples.py --video $AI_FOOTBALL_DATA_DIR/移动传球.mov --dry-run
+# ② 真回收：出图 + COCO 预标注 + 登 manifest
+$PY s7_recycle_hard_examples.py --video $AI_FOOTBALL_DATA_DIR/移动传球.mov
+# ③ 回灌：把导出的预标注合并进 GT（按类别名映射，与 S3 同一套往返）
+$PY s3_label_review_roundtrip.py --import $AI_FOOTBALL_DATASET_DIR/work/recycle/<视频>__recycle_preannot.json
+$PY s4_train_finetune.py --config train_configs/full_960.yaml
 ```
 
-一条命令：跑视频 → 挑出误检帧（cone 被当球）→ 导出待标注图 + 预标注 → 回到 S3/S4 → 重训。
+一条链：跑视频 → 挑出误检帧 → 导出待标注图 + 预标注 → 回到 S3/S4 → 重训。
+
+**两个判据**（命中次数即该帧难度分）：
+
+| 判据 | 内容 | 为什么需要它 |
+| --- | --- | --- |
+| `cross` | **A 判球、B 判锥**（默认 A=`base`、B=`v1-frozen-step2`） | COCO base **没有 cone 类**，它内部永远不可能「球∩锥」→ 只有跨模型比才能捞出"锥被当球"的帧 |
+| `within` | 同一模型内球框与锥框 IoU≥阈值，或球心落在锥框内 | 三分类模型自己的**残留歧义**（本轮回归实测：消失的球框里 61.2% 同位置出现锥框） |
+
+选帧不是"全要"：候选帧按间隔分段（`--segment-gap`）→ 每段取难度最高的 `--per-segment` 帧
+→ 16×16 dHash 去重（**别用 8×8**，会把真实变化当重复）→ 受 `--max-frames` 约束。
+
+**安全闸门（默认拒绝）**：源视频若属于 `valid`/`test`（固定评测集，见 `split_policy.json`），
+回收进它会**污染评测** → 脚本直接报错退出；确要覆盖得显式 `--allow-eval-source`。
+这也是为什么默认只回收 `train` 侧视频。
+
+产物：图 + manifest 行写进 `sources/raw_video/<视频名>/`（命名与 S1 抽帧同构，
+`<视频>__f%06d__t%07.2f.jpg`）；预标注与选帧台账写进 `work/recycle/`；
+报告 `reports/recycle_hard_examples.md`。
+
 最后用 `docx` skill 把 A/B 报告导出成可直接发送的 Word 版（内容与本文档一致）。
 
 ---
@@ -459,6 +509,9 @@ $PY s7_recycle_hard_examples.py --video /home/hx1/yzl/Work/data/移动传球.mov
 | `person` mAP50 | 绝对下降 ≤ 1 个百分点 |
 | `cone` mAP50 | ≥ 0.5（合成+真实混合后） |
 | 端到端触球（名额级含 low_quality P/R/F1） | ≥ 0.8044（基线 0.8144 − 1 个点） |
+
+**实测（2026-10-12）**：端到端触球 **0.7246**，**未达阈值** ✗（基线 0.8144，−0.090）——
+归因与修法见 S9 的「实测结果」小节；**该未通过项不阻塞闭环与汇报**，重训另行排期。
 
 ---
 
@@ -490,7 +543,7 @@ $PY s7_recycle_hard_examples.py --video /home/hx1/yzl/Work/data/移动传球.mov
 ### 5.2 当前产物
 
 ```
-/home/hx1/yzl/Work/data/ball_cone_v1/
+$AI_FOOTBALL_DATASET_DIR/
 ├── dataset/                     # ① 最终数据（s3_label_convert_dataset.py 生成，可整目录重建）
 │   ├── train/images  572 张（_annotations.coco.json：6265 框；person 4192 / ball 1640 / cone 433）
 │   ├── valid/images   53 张（纯真实）
@@ -510,7 +563,8 @@ $PY s7_recycle_hard_examples.py --video /home/hx1/yzl/Work/data/移动传球.mov
 ├── manifest.csv                703 行（raw_video 529 + ai_gen_bg 3 + ai_cut 128 + ai_bg_cut 43）
 ├── ledger.csv                  许可台账（自有素材 / AI 生成 / 公开数据）
 └── reports/                    54 项：46 张三色拼图 · 锥候选 CSV(69) · synth_qa.jpg · dataset_stats.md/json
-                                 ⏳ review_batches/*.zip（待标包）· review_diff.md（往返差异）
+                                ⏳ review_batches/*.zip（待标包）· review_diff.md（往返差异）
+                                ✅ touch_regression.md（端到端触球回归：未通过 + 归因）· metrics_ledger.md
 
 AI-Football/tools/detection_finetune/
 ├── classes.json · base_layout.py（含 --tree/--readmes/--migrate）· split_policy.json

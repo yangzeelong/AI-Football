@@ -40,9 +40,9 @@ finetune 迭代会**反复**走同一条路：数据准备 → 训练 → 导出
 * 复测命令（三条对照即可复现上面每一行）：
 
 ```bash
-cd /home/hx1/yzl/Work/Nexusflow
-APP=./build/bin/aifootball_app; CFG=/home/hx1/yzl/Work/AI-Football/tools/rollout/cpp_app/v1-frozen-step2/fastest.yaml
-V=/home/hx1/yzl/Work/data/射门1-1080p60.mov
+cd $AI_FOOTBALL_NEXUSFLOW
+APP=./build/bin/aifootball_app; CFG=$AI_FOOTBALL_REPO_ROOT/tools/rollout/cpp_app/v1-frozen-step2/fastest.yaml
+V=$AI_FOOTBALL_DATA_DIR/射门1-1080p60.mov
 $APP $CFG --video_path $V --output_dir /tmp/t_off --max_frames 1200                      # 无渲染
 $APP $CFG --video_path $V --output_dir /tmp/t_on  --max_frames 1200 --render 1 --render_path /tmp/t_on.mp4   # 开渲染
 # ROI 对照：rollout.py cpp-config --version v1-frozen-step2 --pose-profile fastest --keep-roi
@@ -51,7 +51,7 @@ $APP $CFG --video_path $V --output_dir /tmp/t_on  --max_frames 1200 --render 1 -
 ## 一条命令的用法
 
 ```bash
-cd /home/hx1/yzl/Work/AI-Football/tools/rollout && source ../detection_finetune/env.sh
+cd $AI_FOOTBALL_REPO_ROOT/tools/rollout && source ../detection_finetune/env.sh
 $PY rollout.py doctor                 # 预检：app/姿态engine/类别契约/磁盘/各版本就绪（不过就退出非 0）
 $PY rollout.py status                 # 版本 × (权重/ONNX/engine/软链) + 各版本任务进度
 $PY rollout.py videos                 # 扫描到的视频（tag / 路径）
@@ -132,7 +132,7 @@ $PY stitch_compare.py --root tools/rollout/runs_review
    触球判定/精度口径以 Nexusflow 那份为准：
 
    ```bash
-   cd /home/hx1/yzl/Work/Nexusflow
+   cd $AI_FOOTBALL_NEXUSFLOW
    ./examples/touch_eval/run_touch_eval.sh data/移动传球.mov data/移动传球.touches.csv output/touch_eval_moving_pass
    # 或：cd examples/touch_eval/py && uv run touch-eval --observations <observations.jsonl> ...
    ```
@@ -141,7 +141,7 @@ $PY stitch_compare.py --root tools/rollout/runs_review
 
 ```bash
 # 1) 训练（配置自带参数，如 step1 的 --freeze encoder）
-cd /home/hx1/yzl/Work/AI-Football/tools/detection_finetune && ./s4_train_launch.sh v2
+cd $AI_FOOTBALL_REPO_ROOT/tools/detection_finetune && ./s4_train_launch.sh v2
 
 # 2) 登记：在 tools/rollout/rollout.yaml 的 versions: 里加一条（enabled: true + note 写清血缘）
 

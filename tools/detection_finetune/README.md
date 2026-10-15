@@ -1,7 +1,7 @@
 # detection_finetune —— 人/足球/锥形桶 三分类微调工具集
 
 完整方案与逐步骤手册见 **`../../doc/detection_finetune_plan.md`**（含每步验收判据与人工工作量估计）。
-数据侧的说明在 **`/home/hx1/yzl/Work/data/ball_cone_v1/README.md`**（由 `base_layout.py --readmes` 生成，含命名规则与当前规模）。
+数据侧的说明在 **`$AI_FOOTBALL_DATASET_DIR/README.md`**（由 `base_layout.py --readmes` 生成，含命名规则与当前规模）。
 
 ## 一句话流程
 
@@ -84,6 +84,93 @@ $PY base_layout.py --readmes     # 写数据根 README.md + 每个目录 _README
 $PY base_layout.py --migrate     # 按命名规则搬目录 + 改写文件内路径/source（幂等）
 ```
 
+## 路径约定（换机器 / 换目录不用改代码）
+
+三个目录**相邻**即可，所有路径都能从仓库位置推导出来：
+
+```
+<WORKSPACE>/                      ← 工作区根
+├── AI-Football/                  ← 本仓库
+├── Nexusflow/                    ← C++ / TensorRT 侧
+└── data/                         ← 视频与数据集（ball_cone_v1 在这下面）
+```
+
+`source env.sh` 之后下面这些变量就绪；**脚本与文档统一用它们，不再出现绝对路径**：
+
+| 变量 | 默认值（推导） | 说明 |
+| --- | --- | --- |
+| `AI_FOOTBALL_REPO_ROOT` | `<WORKSPACE>/AI-Football` | 本仓库根 |
+| `AI_FOOTBALL_WORKSPACE` | 仓库的父目录 | 三个目录的共同父级 |
+| `AI_FOOTBALL_NEXUSFLOW` | `<WORKSPACE>/Nexusflow` | C++ / TensorRT 仓库 |
+| `AI_FOOTBALL_DATA_DIR` | `<WORKSPACE>/data` | 视频与数据集所在目录 |
+| `AI_FOOTBALL_DATASET_DIR` | `<AI_FOOTBALL_DATA_DIR>/ball_cone_v1` | 数据集本体 |
+| `AI_FOOTBALL_ENV` | `/root/miniconda3/envs/ai-football` | conda 环境目录（`$PY` 的来源） |
+
+Python 侧读的是同一批变量（`base_layout.py`），所以 shell 与脚本口径一致。
+
+**要拆开布局**（例如数据放另一块盘）就先设变量再 source——`env.sh` 只补缺省、**不覆盖**已有值：
+
+```bash
+export AI_FOOTBALL_DATA_DIR=/mnt/bigdisk/data
+export AI_FOOTBALL_ENV=/opt/conda/envs/ai-football
+source env.sh
+```
+
+配置文件（`tools/rollout/rollout.yaml`、`s7_batch_videos.yaml`）里的根路径**留空即自动推导**；
+`s7_batch_videos.yaml` 的 `videos[].path` 一律写相对 `video_roots[0]` 的相对路径。
+所以换机器只需要保证三个目录相邻，**不必改任何 yaml**。
+
+## 数据集目录要求（训练输入的唯一口径）
+
+训练走 rfdetr 的 **roboflow 布局**。结构不对会**启动即失败**；类别写错会**静默错指标、甚至 CUDA assert**。
+
+```
+<dataset_dir>/                        # 默认 = $AI_FOOTBALL_DATASET_DIR/dataset
+├── train/
+│   ├── _annotations.coco.json
+│   └── images/*.jpg
+├── valid/
+│   ├── _annotations.coco.json
+│   └── images/*.jpg
+└── test/                             # ⚠️ 必须有：run_test 默认开启
+    ├── _annotations.coco.json
+    └── images/*.jpg
+```
+
+| 要求 | 说明 |
+| --- | --- |
+| split 目录名 | 固定 `train` / `valid` / `test`，三个都得有 |
+| 每个目录的内容 | `_annotations.coco.json` + `images/`，缺一不可 |
+| `categories` | **必须 4 条**：`id=0` 是 `supercategory:"none"` 的占位背景类，真实类 `1/2/3 = person/ball/cone`。原因与后果见「两条不能忘的契约」 |
+| `images[].file_name` | **必须**写成 `images/<文件名>`（roboflow 加载器按这个前缀拼路径） |
+| `annotations[].bbox` | `[x, y, w, h]`（左上角 + 宽高），`id` 唯一；越界会被裁回图内，面积 ≤1px 的框被丢弃 |
+| 类别名 | 逐字 `person` / `ball` / `cone`（`classes.json` 是唯一真源，按**名字**对拍） |
+| 同源泄漏 | 同一段视频**不得**跨 split |
+
+三道校验，违规直接报错：
+
+```bash
+$PY base_layout.py --check-annotations   # 对拍三个 split 的 categories 与 classes.json
+$PY s3_label_convert_dataset.py --link   # 转换时对拍 + 泄漏检查 + 文件名冲突
+$PY s3_label_dataset_stats.py            # 类别/尺度/来源/空标注/过小框哨兵
+```
+
+训练启动时也会自检，并把结果写进 `finetune_meta.json`：
+
+```
+类别: ['person','ball','cone']（应为 ['person','ball','cone']）| 输出列数应为 4
+```
+
+**别手搓 COCO JSON。** 用生成器产出这一整套结构（它会把 `file_name` 强制写成 `images/xxx`、
+做类别对拍、并按 `split_policy.json` 保证同源不跨集）：
+
+```bash
+$PY s3_label_convert_dataset.py --link
+```
+
+* `--dataset-dir` 可以指到别处（或设 `AI_FOOTBALL_DATASET_DIR`），但**结构必须照上表**；
+* 冒烟用的 `--subset N` 会把每个 split 前 N 张复制到 `/tmp/ds_subset`（结构同上，并**保证 `test/` 存在**），不动原数据。
+
 ## 环境准备（每个新终端一次）
 
 **必须用 `ai-football` 环境跑**；本机默认激活的是 conda **base**，裸 `python` 里没有 `rfdetr`。
@@ -92,7 +179,7 @@ $PY base_layout.py --migrate     # 按命名规则搬目录 + 改写文件内路
 ```bash
 cd AI-Football/tools/detection_finetune
 source env.sh                # 最省事：设好 $PY 与 PATH（推荐）
-PY=/root/miniconda3/envs/ai-football/bin/python   # 等价写法（任何 shell 都稳）
+PY=$AI_FOOTBALL_ENV/bin/python   # 等价写法（任何 shell 都稳）
 ```
 
 自检：`$PY -c "import torch, rfdetr, cv2; print(torch.__version__, torch.cuda.is_available())"`。
@@ -101,7 +188,7 @@ PY=/root/miniconda3/envs/ai-football/bin/python   # 等价写法（任何 shell 
 
 ## 命令索引
 
-工作目录为本目录；数据根：`/home/hx1/yzl/Work/data/ball_cone_v1`。
+工作目录为本目录；数据根：`$AI_FOOTBALL_DATASET_DIR`。
 
 按流程顺序排列（`ls` 的顺序就是执行顺序）。
 
@@ -114,6 +201,7 @@ PY=/root/miniconda3/envs/ai-football/bin/python   # 等价写法（任何 shell 
 | `s2a_data_compose_cones.py` | 抠素材贴到背景合成锥桶，自动精确 GT | `--extract --min-score 0.75` → `--compose --n 400 --backgrounds mixed --ai-share 0.25 --per-image-max 4` → `--qa` → `--ablate` | ✅（12 素材 → 128 + 43 张） |
 | `s2b_data_gen_backgrounds.py` | AI 生成空场地背景池（只作粘贴背景） | `--prompts` → 用 `[skill:多模态内容生成]` 出图 → `--validate`（裁水印只做一次，原图备份 `_orig/`） | ✅ 3 张背景池（**云服务已停用**，见坑表） |
 | `s2c_data_spec_stress.py` | 标注规范示例图 + 分布外压力集 | `$PY s2c_data_spec_stress.py --spec --count 6` / `--stress --per-bucket 8` / `--list` | ✅（真实帧派生） |
+| `s2d_data_cut_person_assets.py` | **人体素材库**：多视频扫描 + 七道质量闸门（框高/面积/形态/截断/遮挡/清晰度/去重）→ PNG + index + 拼图 | `$PY s2d_data_cut_person_assets.py`（默认自动挑 6 段）｜`--min-height 160` ｜`--videos 移动传球.mov,颠球.mov` ｜`--list-videos` | ✅（136 张 / 6 段，框高中位 170 px） |
 | `s3_label_review_ui.py` | 人工复核界面（零依赖，标准库实现） | `$PY s3_label_review_ui.py`（一次载入全部批次，界面内下拉切换；改前端后跑 `node tests/ui_smoke.js` 回归） | ✅ |
 | `s3_label_start_ui.sh` | 复核界面启动/重启（pidfile 管理；**别用 pkill**，见坑表） | `./s3_label_start_ui.sh`（`PORT=8090` 可改） | ✅ |
 | `s3_label_review_roundtrip.py` | 校验往返：导出待标包 / 回收 + 差异报告 | `--export` / `--ls-tasks <batch>` / `--ls-setup` / `--import <导出.json> --batch <batch>` / `--status` | ✅（S3） |
@@ -134,7 +222,7 @@ PY=/root/miniconda3/envs/ai-football/bin/python   # 等价写法（任何 shell 
 | `s7_run_batch_videos.py` | 批量跑 `code/app.py`（读 YAML → 拼命令 → 执行 → 记账） | `$PY s7_run_batch_videos.py [--dry-run] [--only-model v1] [--only-video <tag>]` | ✅ |
 | `s7_run_ab_videos.py` | 多视频检测级 A/B（同一批视频上比多个版本，源视频只解码一遍） | `$PY s7_run_ab_videos.py --videos-dir <目录> --version v1 --version v1-frozen-step2` | ✅ |
 | `util_unify_model_names.py` | 把历史指标文件的 tag/文件名/checkpoint 统一成规范名 | `$PY util_unify_model_names.py`（**dry-run**）→ `--apply` 才写 | ✅（2026-10-12 已对 3 个历史文件执行一次） |
-| `s7_recycle_hard_examples.py` | 误检回收回灌（还没写） | `$PY s7_recycle_hard_examples.py --video /home/hx1/yzl/Work/data/移动传球.mov` | ⏳ 待实现 |
+| `s7_recycle_hard_examples.py` | **误检回收闭环**：跑视频 → 挑「锥被当球」的帧 → 出图 + COCO 预标注 + 登 manifest → 交回 S3/S4 | `$PY s7_recycle_hard_examples.py --video <视频> [--dry-run]` | ✅（判据 `cross` A 判球/B 判锥 + `within` 球∩锥；**默认拒绝从 valid/test 源回收**，防污染评测集） |
 
 数据/配置文件（非脚本）：
 
@@ -178,8 +266,8 @@ $PY s3_label_dataset_stats.py
 
 **Label Studio / CVAT 备选**：脚本已内置（`--ls-tasks` 打印导入 curl；`--ls-setup` 一条命令建项目+导入；
 CVAT 用 `<batch>.zip` 的 `images/` + `preannot.json` 走 COCO 1.0）。**但本机装不上 Label Studio**：
-沙箱给所有 Python 进程注入了 `sitecustomize` 钩子，安装其依赖 `python-json-logger` 时创建
-`pythonjsonlogger` 目录被 EACCES 拒绝（换 conda / 换目录 / `/tmp` 同样被拦，已实测），
+其依赖 `python-json-logger` 安装时创建 `pythonjsonlogger` 目录被拒（EACCES，root 也一样；
+换 conda / 换目录 / `/tmp` 同样被拦，已实测），
 所以本机一律用上面的自带界面；换到不受限的机器再用 LS/CVAT。
 
 ## 长跑训练（S4）
@@ -213,7 +301,7 @@ kill -- -"$(cat /tmp/v1.pid)"   # 停止（负号=杀进程组；**别用 pkill*
 
 1. **类别**：COCO 里放 4 个 category —— `id=0` 是 `supercategory:"none"` 的占位背景类，真实类 **1=person / 2=ball / 3=cone**。
    直接写 1/2/3 三类会在训练时 target 越界触发 **CUDA device-side assert**；写 0/1/2 会让 Python 侧的
-   `{i+1: name}` 类别名映射错位、person 被丢。
+   `{i+1: name}` 类别名映射错位、person 被丢。（目录结构与其余字段要求见「数据集目录要求」）
 2. **分辨率**：只传 `resolution=960`，**不要**传 `positional_encoding_size=60`（base 权重位置编码是 32²，
    传 60² 会在 `load_state_dict(strict=False)` 上 size mismatch 报错）。
 
@@ -233,8 +321,9 @@ kill -- -"$(cat /tmp/v1.pid)"   # 停止（负号=杀进程组；**别用 pkill*
 | 训练脚本默认数据目录 | 迁移后指向 `ball_cone_v1/train`（不存在） | 默认 `base_layout.DATASET_DIR` |
 | 合成文件名用 `syn_` 前缀 | 与命名规则不符，找不着来源 | 文件名前缀 = 来源键（`ai_cut_*` / `ai_bg_cut_*`） |
 | GUI 导出重排 category id | 按 id 映射会把 ball 当 person | 只按**名字**映射（`classes.json` 为真源） |
-| 沙箱 `sitecustomize` 钩子 | 装 Label Studio 时建 `pythonjsonlogger` 目录被 EACCES（root 也不行） | 用零依赖的 `s3_label_review_ui.py`；换机器再上 LS |
-| **云端图片生成已停用** | `buddy-cloud.py image` 返回"图片和视频功能已停止服务，请勿重试" | 规范示例/压力集改**真实帧派生**（`s2c_data_spec_stress.py`）；背景池沿用已有的 3 张 |
+| 素材文件名按"框高+清晰度"命名 | 同帧两个人框高与清晰度都相同时**撞名**：后者覆盖前者 PNG，前者被去重删掉 → 索引指向不存在的文件 | 文件名必须带框坐标（`_x%04d_y%04d_`），并在收尾做一次**索引 vs 磁盘一致性自检** |
+| Label Studio 依赖装不上 | 装 LS 时创建 `pythonjsonlogger` 目录被拒（EACCES，root 也不行） | 用零依赖的 `s3_label_review_ui.py`；换机器再上 LS |
+| **云端图片生成已停用** | 文生图服务返回"图片和视频功能已停止服务" | 规范示例/压力集改**真实帧派生**（`s2c_data_spec_stress.py`）；背景池沿用已有的 3 张 |
 | 预标注里的"小到离谱的球框" | train 有 **516 个 <5px 的框（ball 512）**，全是静止锥/碟被当球 | `s3_label_dataset_stats.py` 的"过小框哨兵"盯着这个数；S3 复核后应显著下降 |
 | 大文件下载（pip / urllib） | pyarrow 48MB、label-studio 73MB 都会卡住不动 | 一律用 `curl -C - --retry`（`s4b_train_person_coco.py` 已内置） |
 | 台账重复行 | `s2b_data_gen_backgrounds.py --validate` 每次跑都追加一行（实测 6 条重复） | 只有真登记了新图才写台账（幂等） |

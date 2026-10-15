@@ -5,37 +5,72 @@
 ## 目录结构
 
 ```markdown
-├── code
-│   ├── app.py
-│   ├── app_config.py
-│   ├── app_pipeline.py
-│   ├── replay_observations.py
-│   └── ...
-├── config
-│   ├── app.yaml
-│   ├── roi.json
-│   └── ...
-├── doc
-│   └── ...
-├── scripts
-│   ├── example.sh
-│   └── ...
-├── data
-│   └── ...
-├── tmp
-├── reports
+├── code                    # 单视角推理管线（检测 / 跟踪 / 关键点 → observations.jsonl）
+├── config                  # ROI、模型路径、app 过滤配置
+├── doc                     # 方案与路线图文档
+├── models                  # 本地权重（.pth / .pt / .engine，不进 git）
+├── reports                 # 质量评估报告输出
+├── runs                    # 跑批产物
+├── scripts                 # 可直接参考的示例脚本
+├── tools                   # 微调与部署流水线（各有自己的 README，见下节）
+│   ├── detection_finetune  # 抽帧 → 标注 → 复核 → 三分类微调
+│   ├── model_conversion    # ONNX / fp16 / TensorRT engine 转换
+│   └── rollout             # 版本 → 导出 → C++ 配置 → 批量跑视频 → 汇总
+├── tmp                     # 中间输出，如 JSONL 观测文件
+├── requirements.txt
 └── README.md
 ```
 
+> **数据不在本仓库内**：约定放在工作区的兄弟目录 `<WORKSPACE>/data`（视频 + `ball_cone_v1` 数据集）。
+> 详见下节「路径约定」。
+
 ## 目录说明
 
-- `code`：核心代码
-- `config`：ROI、模型路径和 app 过滤配置
-- `doc`：任务说明、路线图和方案文档
-- `scripts`：可直接参考的示例脚本
-- `data`：输入视频和素材
-- `tmp`：中间输出，如 JSONL 观测文件
-- `reports`：质量评估报告输出
+| 目录 | 说明 |
+| --- | --- |
+| `code` | 单视角推理核心代码（检测、跟踪、关键点、JSONL 输出） |
+| `config` | ROI、模型路径和 app 过滤配置 |
+| `doc` | 任务说明、路线图和方案文档 |
+| `models` | 本地权重（不含 git） |
+| `reports` | 质量评估报告输出 |
+| `runs` | 跑批产物 |
+| `scripts` | 可直接参考的示例脚本 |
+| `tools` | 微调 / 模型转换 / 部署跑批三条流水线 |
+| `tmp` | 中间输出，如 JSONL 观测文件 |
+
+## 路径约定（换机器不用改代码）
+
+三个目录**相邻**即可，所有路径都能从仓库位置推导出来：
+
+```
+<WORKSPACE>/                      ← 工作区根
+├── AI-Football/                  ← 本仓库
+├── Nexusflow/                    ← C++ / TensorRT 侧
+└── data/                         ← 视频与数据集（ball_cone_v1 在这下面）
+```
+
+`source tools/detection_finetune/env.sh` 之后，`AI_FOOTBALL_WORKSPACE / DATA_DIR /
+DATASET_DIR / NEXUSFLOW / ENV` 这批变量就绪（脚本与文档统一用它们，仓库里不再出现绝对路径）；
+要拆开布局就先设这些变量，`env.sh` 只补缺省、不覆盖。完整说明见
+`tools/detection_finetune/README.md` 的「路径约定」。
+
+## 训练 / 部署流水线（`tools/`）
+
+单视角推理之外的「微调 → 导出 → 部署跑批」在 `tools/` 下，每条链都有自己的 README：
+
+| 目录 | 做什么 | 入口文档 |
+| --- | --- | --- |
+| `tools/detection_finetune/` | 抽帧 → 预标注 → 合成扩充 → 人工复核 → 三分类微调 | 该目录 `README.md`（含**数据集目录要求**、路径约定、命令索引） |
+| `tools/model_conversion/` | 权重 → ONNX → fp16 → TensorRT engine（含与 PyTorch 数值对拍） | 该目录 `README.md` |
+| `tools/rollout/` | 版本 → 导出 engine → 生成 C++ 配置 → 批量跑视频 → 汇总对比 | 该目录 `README.md` |
+
+跑之前务必先看两条硬约束：
+
+* **数据集目录**：训练输入必须是 roboflow 三目录（`train/ valid/ test` 各带 `_annotations.coco.json`
+  与 `images/`），且 `categories` **必须 4 条**（`id=0` 为占位背景类，真实类 `1/2/3 = person/ball/cone`）
+  —— 写错会**静默错指标甚至 CUDA assert**。完整要求见
+  `tools/detection_finetune/README.md` 的「数据集目录要求（训练输入的唯一口径）」一节。
+* **类别名**：逐字 `person` / `ball` / `cone`，唯一真源是 `tools/detection_finetune/classes.json`。
 
 ## 核心脚本
 
@@ -46,16 +81,18 @@
 
 ## 运行前准备
 
-1. 安装依赖：
+本项目统一用 `ai-football` 这个 conda 环境跑。先 source 一次环境脚本，它会设好 `$PY`
+与上面那批路径变量——**别用裸 `python` / `pip`**（那是 conda base，里面没有 `rfdetr`）：
 
 ```bash
-pip install -r requirements.txt
+source tools/detection_finetune/env.sh
+$PY -m pip install -r requirements.txt
 ```
 
-2. 准备输入视频，例如 `data/素材/射门1-1080p60.mov`
-3. 如需 26 keypoints，准备本地 MMPose 配置和对应权重
-4. 如需 ROI 过滤，先完成 ROI 标定，配置保存在 `config/roi.json`
-5. 模型路径、检测阈值、过滤阈值和关键点平滑配置保存在 `config/app.yaml`
+1. 准备输入视频（数据目录下，例如 `$AI_FOOTBALL_DATA_DIR/素材/射门1-1080p60.mov`）
+2. 如需 26 keypoints，准备本地 MMPose 配置和对应权重
+3. 如需 ROI 过滤，先完成 ROI 标定，配置保存在 `config/roi.json`
+4. 模型路径、检测阈值、过滤阈值和关键点平滑配置保存在 `config/app.yaml`
 
 ## 推荐流程
 

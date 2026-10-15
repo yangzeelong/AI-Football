@@ -37,9 +37,9 @@ ONNX 是**中间产物，必须保留**——engine 与 GPU/TRT 版本绑定，�
 以「从零做出 HRNet-W48-DARK 的 engine」为例，7 步照抄即可。全程在仓库根目录执行。
 
 ```bash
-cd /home/hx1/yzl/Work/AI-Football
-PY=/root/miniconda3/envs/ai-football/bin/python
-NEXUS=/home/hx1/yzl/Work/Nexusflow
+cd $AI_FOOTBALL_REPO_ROOT
+PY=$AI_FOOTBALL_ENV/bin/python
+NEXUS=$AI_FOOTBALL_NEXUSFLOW
 ```
 
 ### Step 1 · 装转换依赖，并把 numpy 压回 < 2
@@ -74,9 +74,9 @@ $PY -c "import onnx, onnxscript, onnxruntime, onnxsim, onnx_graphsurgeon; print(
 
 ```bash
 (cd $NEXUS && $PY tools/model_conversion/export_hrnet_onnx.py \
-    --config      /home/hx1/yzl/Work/AI-Football/models/mmpose/configs/wholebody_2d_keypoint/topdown_heatmap/coco-wholebody/td-hm_hrnet-w48_dark-8xb32-210e_coco-wholebody-384x288.py \
-    --checkpoint  /home/hx1/yzl/Work/AI-Football/models/mmpose/hrnet/hrnet_w48_coco_wholebody_384x288_dark-f5726563_20200918.pth \
-    --output      /home/hx1/yzl/Work/AI-Football/models/mmpose/hrnet/hrnet-w48-dark.onnx \
+    --config      $AI_FOOTBALL_REPO_ROOT/models/mmpose/configs/wholebody_2d_keypoint/topdown_heatmap/coco-wholebody/td-hm_hrnet-w48_dark-8xb32-210e_coco-wholebody-384x288.py \
+    --checkpoint  $AI_FOOTBALL_REPO_ROOT/models/mmpose/hrnet/hrnet_w48_coco_wholebody_384x288_dark-f5726563_20200918.pth \
+    --output      $AI_FOOTBALL_REPO_ROOT/models/mmpose/hrnet/hrnet-w48-dark.onnx \
     --height 384 --width 288 \
     --opset 18 --device cuda:0 --dynamic-batch)
 ```
@@ -155,7 +155,7 @@ TensorRT 的 Python 绑定只装在系统解释器里，所以这一步换解释
 
 ```yaml
 PoseEstimator:
-  enginePath: /home/hx1/yzl/Work/AI-Football/models/mmpose/hrnet/hrnet-w48-dark-fp16-b8-fp32io.engine
+  enginePath: $AI_FOOTBALL_REPO_ROOT/models/mmpose/hrnet/hrnet-w48-dark-fp16-b8-fp32io.engine
   inputWidth: 288     # W，注意与 --width 一致
   inputHeight: 384    # H
   maxBatch: 8         # 必须 <= engine 的 profile max
@@ -190,7 +190,7 @@ FORCE=1 bash tools/model_conversion/run_all.sh hrnet-w32   # 覆盖已有产物
 除项目 `requirements.txt` 外，转换还需要 5 个包：
 
 ```bash
-PY=/root/miniconda3/envs/ai-football/bin/python
+PY=$AI_FOOTBALL_ENV/bin/python
 $PY -m pip install onnx onnxscript onnxruntime onnxsim onnx-graphsurgeon
 ```
 
@@ -245,19 +245,19 @@ engine 的 device 输入缓冲）。一旦 engine 输入变成 HALF：
 
 ## 3. 步骤 A：导出 fp32 动态 batch ONNX
 
-导出脚本在 **Nexusflow** 仓库里（`/home/hx1/yzl/Work/Nexusflow/tools/model_conversion/`），
+导出脚本在 **Nexusflow** 仓库里（`$AI_FOOTBALL_NEXUSFLOW/tools/model_conversion/`），
 不在本目录——它们是 C++ 侧部署契约的唯一真源，不要复制过来。
 
 ### RF-DETR
 
 ```bash
-NEXUS=/home/hx1/yzl/Work/Nexusflow
-PY=/root/miniconda3/envs/ai-football/bin/python
+NEXUS=$AI_FOOTBALL_NEXUSFLOW
+PY=$AI_FOOTBALL_ENV/bin/python
 
 (cd "$NEXUS" && $PY tools/model_conversion/export_rfdetr_onnx.py \
     --size small \
-    --checkpoint /home/hx1/yzl/Work/AI-Football/models/rfdetr/rf-detr-small.pth \
-    --output-dir /home/hx1/yzl/Work/AI-Football/models/rfdetr/onnx \
+    --checkpoint $AI_FOOTBALL_REPO_ROOT/models/rfdetr/rf-detr-small.pth \
+    --output-dir $AI_FOOTBALL_REPO_ROOT/models/rfdetr/onnx \
     --device cpu --resolution 960 --dynamic-batch)
 ```
 
@@ -272,9 +272,9 @@ PY=/root/miniconda3/envs/ai-football/bin/python
 
 ```bash
 (cd "$NEXUS" && $PY tools/model_conversion/export_hrnet_onnx.py \
-    --config  /home/hx1/yzl/Work/AI-Football/models/mmpose/configs/wholebody_2d_keypoint/topdown_heatmap/coco-wholebody/td-hm_hrnet-w48_dark-8xb32-210e_coco-wholebody-384x288.py \
-    --checkpoint /home/hx1/yzl/Work/AI-Football/models/mmpose/hrnet/hrnet_w48_coco_wholebody_384x288_dark-f5726563_20200918.pth \
-    --output /home/hx1/yzl/Work/AI-Football/models/mmpose/hrnet/hrnet-w48-dark.onnx \
+    --config  $AI_FOOTBALL_REPO_ROOT/models/mmpose/configs/wholebody_2d_keypoint/topdown_heatmap/coco-wholebody/td-hm_hrnet-w48_dark-8xb32-210e_coco-wholebody-384x288.py \
+    --checkpoint $AI_FOOTBALL_REPO_ROOT/models/mmpose/hrnet/hrnet_w48_coco_wholebody_384x288_dark-f5726563_20200918.pth \
+    --output $AI_FOOTBALL_REPO_ROOT/models/mmpose/hrnet/hrnet-w48-dark.onnx \
     --height 384 --width 288 \
     --opset 18 --device cuda:0 --dynamic-batch)
 ```

@@ -1,6 +1,14 @@
 # 标注规范（人 / 足球 / 锥形桶）
 
-配套：三色抽查拼图（`ball_cone_v1/reports/montage_*.jpg`）、锥桶候选清单（`reports/preannot_cone_candidates.csv`）。
+本文件规定**标什么、怎么标**。改标注的操作方式见下一节（本项目自带复核界面为主，
+Label Studio / CVAT 只在换到不受限的机器时作备选）。
+
+配套材料：三色抽查拼图（`$AI_FOOTBALL_DATASET_DIR/reports/montage_*.jpg`）、
+锥桶候选清单（`reports/preannot_cone_candidates.csv`）。
+
+> 路径约定：下文 `$PY` 与 `$AI_FOOTBALL_*` 由 `tools/detection_finetune/env.sh` 设置
+> （`source env.sh` 一次即可）。数据根默认是 `<WORKSPACE>/data/ball_cone_v1`，
+> 换机器不用改文档里的命令，见 README「目录与命名规则」。
 
 ## 类别定义
 
@@ -29,36 +37,47 @@
 * `person` 只需保证"人在框内"即可（下游是关键点/跟踪，不是检测精度竞赛）；
 * 遮挡严重的人：可见部分 > 30% 就标，框住可见部分。
 
-## 改标注的操作方式：GUI 往返（推荐）
+## 改标注的操作方式（自带复核界面，推荐）
 
-完整 UI 步骤见 `../../doc/detection_finetune_plan.md` 的 S3；这里只列要点。
+完整流程说明见主 README 的「S3 人工校验」；这里只列与标注规范相关的要点。
 
 ```bash
-cd /home/hx1/yzl/Work/AI-Football/tools/detection_finetune
-# $PY = /root/miniconda3/envs/ai-football/bin/python（必须用该环境，见 plan 文档 §0.5；裸 python 是 conda base）
-$PY s3_label_review_roundtrip.py --export --split train        # ① 出待标包 reports/review_batches/train.zip
-#  ② 浏览器里改（Label Studio 或 CVAT）
-$PY s3_label_review_roundtrip.py --import ~/Downloads/project-*.json --batch reports/review_batches/train.zip
-#  → work/annotations/GT.json + reports/review_diff.md（改类 N / 新增 M / 删除 K / 移动 L）
+cd tools/detection_finetune && source env.sh        # 设好 $PY 与路径变量
+
+# ① 出待标批次（默认跳过已进过批次的图；100 图/批）
+$PY s3_label_review_roundtrip.py --export --split train --source raw_video --limit 100
+$PY s3_label_review_roundtrip.py --export --split valid --source raw_video --limit 100
+$PY s3_label_review_roundtrip.py --export --split test  --source raw_video --limit 100
+$PY s3_label_review_roundtrip.py --export --split all   --source ai_cut,ai_bg_cut --synth-sample 0.1
+$PY s3_label_review_roundtrip.py --status
+
+# ② 复核（零依赖界面：标准库 http.server + Canvas，一次载入全部批次）
+./s3_label_start_ui.sh
+#    本地另开终端：ssh -L 8090:localhost:8090 <user>@<host> → 浏览器 http://localhost:8090
+#    与标注规范相关的操作：
+#      拖拽框选（Shift+拖拽加选）→ 1 person / 2 ball / 3 cone 批量改类，Del 批量删除
+#      N 切换新建模式（拖拽画框，类别取"新建框类别"下拉）→ 补漏标的目标
+#      C 叠加"上一张新增/改过的框"到本图（相邻帧几乎一致时最快）；Shift+C 整图覆盖
+#      S 保存 → 各批写各自的 reports/review_batches/<批>/<批>_edited.json
+
+# ③ 回收（按类别名映射回 classes.json，产出 GT.json + 差异报告 + 判废清单）
+$PY s3_label_review_roundtrip.py --import \
+    $AI_FOOTBALL_DATASET_DIR/reports/review_batches/<批>/<批>_edited.json --batch <批>
+$PY s3_label_convert_dataset.py --link       # 默认优先用 GT.json，并跳过判废清单
+$PY s3_label_dataset_stats.py                # 类别 / 尺度 / 来源 分布
 ```
 
-**Label Studio**（本机唯一可行：pypi 可达、docker registry 不可达、机器 headless）：
-`pip install label-studio` → `label-studio start --port 8080 --no-browser` → 本机 `ssh -L 8080:localhost:8080`
-→ 建项目（Labels 必须叫 `person`/`ball`/`cone`）→ Import 选 **COCO** 传 `preannot.json`
-→ 改完 Export **COCO**。
+**为什么以自带界面为主**：它直接读写本项目的 COCO 结构，类别名与 `classes.json` 天生一致，
+不会像第三方工具那样**重排 category id**；改完的差异会进 `review_diff.md`，可逐条追溯。
+Label Studio / CVAT 仍可用（脚本内置 `--ls-tasks` / `--ls-setup`，CVAT 走 `<批>.zip` 的
+`images/` + `preannot.json`，COCO 1.0），但换到那些工具时唯一要注意的是——
+**标签名必须逐字为 `person` / `ball` / `cone`**，差一个字符就会在 `--import` 时报「未知标签」。
 
-**CVAT**（需 docker registry 可达）：`docker compose up -d` → 建 project（Labels 同样三个名字）
-→ 建 task 上传 `images/` → **Upload annotations → COCO 1.0**（传 `preannot.json`）
-→ 改完 **Export → COCO 1.0** → 取 zip 里的 `annotations/instances_default.json` 交给 `--import`。
-
-> 两个工具都会**重排 category id**，`s3_label_review_roundtrip.py` **按名字**映射回 `classes.json`；
-> 标签名差一个字符就会在导入时报"未知标签"。图片路径带 `images/` 前缀或 URL 会被自动归一。
-
-### 备选：直接改 JSON（无 GUI 环境）
+### 备选：直接改 JSON（无界面环境）
 
 ```bash
-cp /home/hx1/yzl/Work/data/ball_cone_v1/work/annotations/preannot.json \
-   /home/hx1/yzl/Work/data/ball_cone_v1/work/annotations/GT.json
+DATA=$AI_FOOTBALL_DATASET_DIR/work/annotations
+cp "$DATA/preannot.json" "$DATA/GT.json"
 ```
 
 * 改类：把该条的 `"category_id": 2`（ball）改成 `3`（cone）；
@@ -75,17 +94,17 @@ cp /home/hx1/yzl/Work/data/ball_cone_v1/work/annotations/preannot.json \
 | 锥悬空（阴影/接触点不在同一平面） | 删掉该图并写 note（合成图是"可弃样本"，不是必须修） |
 | 锥越出画面 / 尺寸明显不合理（比人还大等） | 删图 |
 | 锥与球员框重叠（本该被脚本拦下） | 删图 + 报告脚本 bug（说明避让断言失效） |
-| 背景里自带球/人/锥（AI 背景没筛干净） | 删图 + 该背景图移出 `ai_backgrounds/` |
+| 背景里自带球/人/锥（AI 背景没筛干净） | 删图 + 该背景图移出 `ai_bg_cut` 的素材池 |
 
-删图的动作在 GUI 里就是"把这张图的框全删掉 + 在 note 里写 `drop: 原因`"，
-`s3_label_review_roundtrip.py --import` 会把它记进 `review_diff.md`，S4 之后该图不进任何 split。
+删图的动作在复核界面里就是"把这张图的框全删掉 + 在 note 里写 `drop: 原因`"，
+`s3_label_review_roundtrip.py --import` 会把它记进 `review_diff.md`，之后该图不进任何 split。
 
 ## 提交前自检（脚本会强制）
 
 ```bash
-cd /home/hx1/yzl/Work/AI-Football/tools/detection_finetune
-$PY s3_label_convert_dataset.py --annotations work/annotations/review.json --link   # 类别对拍 / 泄漏检查 / 文件名冲突
-$PY s3_label_dataset_stats.py                                                  # 类别分布 / 尺度分布 / 空标注统计
+cd tools/detection_finetune && source env.sh
+$PY s3_label_convert_dataset.py --link      # 类别对拍 / 泄漏检查 / 文件名冲突
+$PY s3_label_dataset_stats.py               # 类别分布 / 尺度分布 / 空标注统计
 ```
 
 * `categories` 顺序或数量与 `classes.json` 不一致 → **直接报错**（这是故意的，错一位就是"球消失"或"锥桶又算进球"）；
@@ -94,7 +113,8 @@ $PY s3_label_dataset_stats.py                                                  #
 
 ## 对照示例图（真实帧派生）
 
-云端图片生成服务停用后，示例图改为从自有视频帧派生（`s2c_data_spec_stress.py --spec`），框色：人=蓝、球=绿、锥=橙。全部在 `/home/hx1/yzl/Work/data/ball_cone_v1/sources/spec_examples/`，逐图说明见同目录 `SPEC_INDEX.md`：
+示例图由自有视频帧派生（`$PY s2c_data_spec_stress.py --spec`），框色：人=蓝、球=绿、锥=橙。
+全部在 `$AI_FOOTBALL_DATASET_DIR/sources/spec_examples/`，逐图说明见同目录 `SPEC_INDEX.md`：
 
 | 文件 | 看什么 |
 | --- | --- |
@@ -103,4 +123,5 @@ $PY s3_label_dataset_stats.py                                                  #
 | `spec_03_tiny_targets.jpg` | 远景小目标（球在 960 下 ~12px）：要标，但别把<5px 的噪声框留下 |
 | `spec_04_synth_sample.jpg` | 合成样本（`ai_cut_*`）：GT 是粘贴几何算的，抽检只看"贴得像不像" |
 
-> 注意：示例图当前仍来自 bootstrap 预标注，S3 人工复核完应重跑 `s2c_data_spec_stress.py --spec`（它会自动优先用 `work/annotations/review.json`）。
+> 示例图若仍来自 bootstrap 预标注，人工复核完成后应重跑一次
+> `$PY s2c_data_spec_stress.py --spec`（它会自动优先用复核后的 `GT.json`）。
