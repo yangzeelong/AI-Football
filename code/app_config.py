@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Sequence
 
@@ -13,11 +13,13 @@ DEFAULT_POSE_CONFIG = (
 )
 DEFAULT_POSE_CHECKPOINT = (
     "models/mmpose/rtmpose-wholebody/"
-    "rtmpose-m_simcc-coco-wholebody_pt-aic-coco_270e-256x192-cd5e845c_20230123.pth"
+    "rtmpose-m_simcc-coco-wholebody_pt-aic-coco_270e_coco-wholebody-256x192-cd5e845c_20230123.pth"
 )
 DEFAULT_DETECTOR_CLASSES = frozenset({"person", "sports ball"})
 DEFAULT_RFDETR_SIZE = "small"
 DEFAULT_RFDETR_MODEL_DIR = "models/rfdetr"
+DEFAULT_DETECTOR_BACKEND = "rfdetr"
+DEFAULT_YOLO_MODEL_PATH = "models/yolo/yolov8s.pt"
 DEFAULT_TRACKER_CONFIG = "botsort.yaml"
 
 
@@ -93,12 +95,16 @@ class KeypointSmoothingConfig:
 
 @dataclass(frozen=True)
 class DetectorConfig:
+    backend: str = DEFAULT_DETECTOR_BACKEND
     confidence: float = 0.25
     class_names: set[str] = DEFAULT_DETECTOR_CLASSES
     rfdetr_size: str = DEFAULT_RFDETR_SIZE
     rfdetr_model_dir: str = DEFAULT_RFDETR_MODEL_DIR
+    yolo_model_path: str = DEFAULT_YOLO_MODEL_PATH
     input_resolution: int | None = None
     preserve_aspect_ratio: bool = True
+    # torch.float16 推理；GPU 上更快，但会轻微改变检测框与置信度。
+    half: bool = False
 
 
 @dataclass(frozen=True)
@@ -106,6 +112,8 @@ class PoseModelConfig:
     preset: str = "rtmpose-m"
     config_path: str = DEFAULT_POSE_CONFIG
     checkpoint_path: str = DEFAULT_POSE_CHECKPOINT
+    # 水平翻转 TTA：与 MMPose 默认一致，质量更好但每次前向翻倍。
+    flip_test: bool = True
 
 
 @dataclass(frozen=True)
@@ -125,12 +133,20 @@ class AppConfig:
     detector: DetectorConfig
     pose: PoseModelConfig
     runtime: RuntimeConfig
+    # 以下三项必须放在**最后**（dataclass 要求有默认值的字段不能早于无默认值字段）。
+    # 默认关闭：不配 cone 时整条管线行为与改动前**逐字节一致**。
+    cone_labels: set[str] = field(default_factory=set)
+    cone_filter: "BoxFilterConfig | None" = None
+    suppress_ball_iou: float = 0.0
 
     @classmethod
     def default(cls) -> "AppConfig":
         return cls(
             person_labels={"person"},
             ball_labels={"sports ball", "ball", "football", "soccer ball"},
+            cone_labels=set(),
+            cone_filter=None,
+            suppress_ball_iou=0.0,
             person_filter=BoxFilterConfig(
                 min_confidence=0.25,
                 min_width_px=8.0,
@@ -186,12 +202,21 @@ class AppConfig:
         box_smoothing = raw["box_smoothing"]
         pose_box_expansion = raw["pose_box_expansion"]
         models = raw["models"]
-        _require_exact_keys(labels, {"person", "ball"}, "labels")
-        _require_exact_keys(filters, {"person", "ball"}, "filters")
+        # labels/filters 允许**可选**的第三类 cone（不写 = 老行为，两类管线完全不受影响）
+        _require_keys_in(labels, required={"person", "ball"},
+                         allowed={"person", "ball", "cone"}, section="labels")
+        _require_keys_in(filters, required={"person", "ball"},
+                         allowed={"person", "ball", "cone"}, section="filters")
         _require_exact_keys(models, {"detector", "pose", "runtime"}, "models")
         return cls(
             person_labels=_string_set(labels["person"], "labels.person"),
             ball_labels=_string_set(labels["ball"], "labels.ball"),
+            cone_labels=(_string_set(labels["cone"], "labels.cone")
+                         if "cone" in labels else set()),
+            cone_filter=(_cone_box_filter_from_raw(filters["cone"], "filters.cone")
+                         if "cone" in filters else None),
+            suppress_ball_iou=(_cone_suppress_iou(filters["cone"], "filters.cone")
+                               if "cone" in filters else 0.0),
             person_filter=_box_filter_from_raw(
                 filters["person"],
                 "filters.person",
@@ -291,7 +316,13 @@ class AppConfig:
             return self.person_filter
         if label in self.ball_labels:
             return self.ball_filter
+        if self.cone_filter is not None and label in self.cone_labels:
+            return self.cone_filter
         return None
+
+    def is_cone_label(self, label: str) -> bool:
+        """是否为锥类标签（未配置 cone 时恒为 False → 老行为）。"""
+        return bool(self.cone_labels) and label in self.cone_labels
 
 
 def _box_filter_from_raw(raw: dict, section: str) -> BoxFilterConfig:
@@ -407,40 +438,69 @@ def _detector_from_raw(raw: dict, section: str) -> DetectorConfig:
     _require_exact_keys(
         raw,
         {
+            "backend",
             "confidence",
             "class_names",
             "rfdetr_size",
             "rfdetr_model_dir",
+            "yolo_model_path",
             "input_resolution",
             "preserve_aspect_ratio",
+            "half",
         },
         section,
     )
     return DetectorConfig(
+        backend=str(raw["backend"]),
         confidence=float(raw["confidence"]),
         class_names=_string_set(raw["class_names"], f"{section}.class_names"),
         rfdetr_size=str(raw["rfdetr_size"]),
         rfdetr_model_dir=str(raw["rfdetr_model_dir"]),
+        yolo_model_path=str(raw["yolo_model_path"]),
         input_resolution=(
             None if raw["input_resolution"] is None else int(raw["input_resolution"])
         ),
         preserve_aspect_ratio=bool(raw["preserve_aspect_ratio"]),
+        half=bool(raw["half"]),
     )
 
 
 def _pose_model_from_raw(raw: dict, section: str) -> PoseModelConfig:
-    _require_exact_keys(raw, {"preset", "config_path", "checkpoint_path"},
-                        section)
+    _require_exact_keys(
+        raw, {"preset", "config_path", "checkpoint_path", "flip_test"}, section)
     return PoseModelConfig(
         preset=str(raw["preset"]),
         config_path=str(raw["config_path"]),
         checkpoint_path=str(raw["checkpoint_path"]),
+        flip_test=bool(raw["flip_test"]),
     )
 
 
 def _runtime_from_raw(raw: dict, section: str) -> RuntimeConfig:
     _require_exact_keys(raw, {"tracker"}, section)
     return RuntimeConfig(tracker=str(raw["tracker"]))
+
+
+def _require_keys_in(data: dict, required: set[str], allowed: set[str],
+                     section: str) -> None:
+    """必填 ⊆ required、且所有键 ⊆ allowed（用于允许"可选新类别"的段）。"""
+    missing = required - set(data)
+    if missing:
+        raise ValueError(f"Missing keys in {section}: {sorted(missing)}")
+    unknown = set(data) - allowed
+    if unknown:
+        raise ValueError(f"Unknown keys in {section}: {sorted(unknown)}")
+
+
+def _cone_box_filter_from_raw(raw: dict, section: str) -> "BoxFilterConfig":
+    keys = {"min_confidence", "min_width_px", "min_height_px"}
+    _require_keys_in(raw, required=keys, allowed=keys | {"suppress_ball_iou"},
+                     section=section)
+    return _box_filter_from_raw({k: raw[k] for k in keys}, section)
+
+
+def _cone_suppress_iou(raw: dict, section: str) -> float:
+    return float(raw.get("suppress_ball_iou", 0.0))
 
 
 def _require_exact_keys(data: dict, expected: set[str], section: str) -> None:

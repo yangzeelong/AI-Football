@@ -67,17 +67,21 @@ keypoint_smoothing:
 
 models:
   detector:
+    backend: rfdetr
     confidence: 0.25
     class_names:
       - person
       - sports ball
     rfdetr_size: small
     rfdetr_model_dir: models/rfdetr
+    yolo_model_path: models/yolo/yolov8s.pt
     input_resolution: 960
     preserve_aspect_ratio: true
+    half: false
   pose:
     preset: hrnet-w48-dark
     config_path: models/mmpose/configs/wholebody_2d_keypoint/topdown_heatmap/coco-wholebody/td-hm_hrnet-w48_dark-8xb32-210e_coco-wholebody-384x288.py
     checkpoint_path: models/mmpose/hrnet/hrnet_w48_coco_wholebody_384x288_dark-f5726563_20200918.pth
+    flip_test: true
   runtime:
     tracker: botsort.yaml
