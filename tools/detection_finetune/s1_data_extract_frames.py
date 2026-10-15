@@ -209,7 +209,7 @@ def sample_video(plan: VideoPlan, stride_sec: float, per_video_max: int, start_s
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="按策略表抽帧并登记 manifest")
     parser.add_argument("--videos", nargs="*", default=None,
-                        help="只抽这些视频（相对 /home/hx1/yzl/Work/data 的路径，支持子串匹配）")
+                        help="只抽这些视频（相对 DATA_ROOT 的路径，支持子串匹配）")
     parser.add_argument("--priority", default="high,normal",
                         help="只抽这些优先级（逗号分隔，high,normal,low；all=全部）")
     parser.add_argument("--split", default=None, help="只抽某个 split（train/valid/test）")

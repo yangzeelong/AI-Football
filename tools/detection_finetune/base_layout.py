@@ -153,7 +153,7 @@ MANIFEST_FIELDS: tuple[str, ...] = (
     "image",           # 相对 ball_cone_v1 的图片路径
     "source",          # raw_video | ai_cut | ai_bg_cut | ai_gen_bg | spec_example |
                        # stress_set | web | coco_person | pseudo_person（见文件顶部命名规则表）
-    "source_video",    # 原始视频相对 /home/hx1/yzl/Work/data 的路径（合成图为背景图来源）
+    "source_video",    # 原始视频相对 DATA_ROOT 的路径（合成图为背景图来源）
     "frame_index",     # 源视频帧号（合成图为背景帧号）
     "time_sec",        # 源视频时间戳
     "width", "height", # 原始分辨率（分辨率不统一缩放，训练侧统一 letterbox 到 960）

@@ -2,9 +2,10 @@
 # -*- coding: utf-8 -*-
 """S3 人工校验界面（**零依赖**：只用 Python 标准库，不装 Label Studio/CVAT）。
 
-为什么自带界面：本机 headless，且运行环境的 Python 被注入了 `sitecustomize` 钩子（删除被重定向到
-回收站，并对含 `jsonlogger` 的目录名直接 EACCES）→ `pip install label-studio` 装其依赖
-`python-json-logger` 必失败（换 conda、换目录、`/tmp` 同样被拦，已实测）。本界面只需浏览器 + 端口转发。
+为什么自带界面：本机 headless（浏览器靠 ssh 端口转发），且 Label Studio 的依赖
+`python-json-logger` 在本机装不上——安装时创建 `pythonjsonlogger` 目录被拒（EACCES，root 也一样；
+换 conda / 换目录 / `/tmp` 同样，已实测）。本界面只需浏览器 + 端口转发，且直接读写本项目的
+COCO 结构，类别名与 `classes.json` 天生一致。
 
 **一次启动覆盖全部批次**（批次在界面里下拉切换，各批结果写各自的 `<batch>_edited.json`，
 差异报告仍按批分，便于 `s3_label_review_roundtrip.py --import --batch <批>` 分批回收）：

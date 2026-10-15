@@ -7,7 +7,7 @@
 
 **只读视频**，产物全部写到 `--out-dir`（默认仓库 runs/render/），不碰 data/。
 
-    $PY s5_eval_render.py --video /home/hx1/yzl/Work/data/移动传球.mov \\
+    $PY s5_eval_render.py --video "$AI_FOOTBALL_DATA_DIR/移动传球.mov" \\
         --model v1=runs/v1/checkpoint_best_ema.pth \\
         --start 0 --end 30 --stride 4 --gif-range 0,30 --contact 8 --tag mp_v1
     $PY s5_eval_render.py --video ... --model base=... --model v1=...   # 并排对照

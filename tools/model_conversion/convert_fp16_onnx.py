@@ -6,7 +6,7 @@ TensorRT 11 删除了 trtexec 的 `--fp16` 开关（strongly-typed），精度�
 GPU 预处理（依赖 float32 输入绑定）和全部 float32 缓冲区都不需要改动。
 
 用法：
-    PY=/root/miniconda3/envs/ai-football/bin/python
+    PY=$AI_FOOTBALL_ENV/bin/python        # 或用 tools/detection_finetune/env.sh 设好的 $PY
     $PY tools/model_conversion/convert_fp16_onnx.py            # 全部登记模型，fp32 I/O
     $PY tools/model_conversion/convert_fp16_onnx.py --fp16-io  # 纯 fp16 I/O（仅对比实验）
     $PY tools/model_conversion/convert_fp16_onnx.py --only hrnet-w48-dark

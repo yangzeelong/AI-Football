@@ -74,10 +74,16 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Stop after N processed frames.",
     )
-    parser.add_argument(
+    render_group = parser.add_mutually_exclusive_group()
+    render_group.add_argument(
+        "--render",
+        action="store_true",
+        help="Enable rendered video output. Disabled by default for benchmarks.",
+    )
+    render_group.add_argument(
         "--no-render",
         action="store_true",
-        help="Skip rendered video output and write observations JSONL only.",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--dry-run",
@@ -110,7 +116,7 @@ def main() -> None:
             stride=args.stride,
             target_fps=args.target_fps,
             max_frames=args.max_frames,
-            no_render=args.no_render,
+            no_render=not args.render,
         )
         rows.append(execute_run(run, args.dry_run))
 
@@ -137,7 +143,7 @@ def build_run(
     observation_path = run_dir / "observations.jsonl"
     report_json_path = run_dir / "quality_report.json"
     report_md_path = run_dir / "quality_report.md"
-    rendered_video_path = run_dir / "rendered.mp4"
+    rendered_video_path = None if no_render else run_dir / "rendered.mp4"
     app_config_path = run_dir / "app.yaml"
     command_path = run_dir / "command.txt"
 
@@ -258,7 +264,8 @@ def execute_run(run: dict[str, Any], dry_run: bool) -> dict[str, Any]:
         "max_missing_streak": "",
         "false_ball_frame_ratio": "",
         "observations": str(run["observation_path"]),
-        "rendered_video": str(run["rendered_video_path"]),
+        "rendered_video": str(run["rendered_video_path"])
+        if run["rendered_video_path"] is not None else "",
         "report": str(run["report_md_path"]),
         "command": str(run["command_path"]),
         "returncode": "",

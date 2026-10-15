@@ -22,7 +22,7 @@
     $PY s7_run_ab_videos.py
     # 指定视频（逗号分隔 / glob / 目录都行）
     $PY s7_run_ab_videos.py --videos "data/移动传球.mov,data/颠球.mov"
-    $PY s7_run_ab_videos.py --videos-glob "/home/hx1/yzl/Work/data/20260726/*.mov" --stride 10
+    $PY s7_run_ab_videos.py --videos-glob "$AI_FOOTBALL_DATA_DIR/20260726/*.mov" --stride 10
     # 只看前 200 帧、置信度 0.25、并把逐帧计数存 CSV
     $PY s7_run_ab_videos.py --max-frames 200 --frames-csv
 """

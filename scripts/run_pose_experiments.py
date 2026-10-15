@@ -26,6 +26,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Print commands without running them.",
     )
+    parser.add_argument(
+        "--render",
+        action="store_true",
+        help="Enable rendered video output. Disabled by default for benchmarks.",
+    )
     return parser.parse_args()
 
 
@@ -56,6 +61,7 @@ def main() -> None:
             roi_config=roi_config,
             video_labels=video_labels,
             experiment=experiment,
+            render=args.render,
         )
         rows.append(execute_run(run, args.dry_run))
 
@@ -77,6 +83,7 @@ def build_run(
     roi_config: str,
     video_labels: str,
     experiment: dict[str, Any],
+    render: bool,
 ) -> dict[str, Any]:
     name = str(experiment["name"])
     run_dir = run_root / name
@@ -85,7 +92,7 @@ def build_run(
     observation_path = run_dir / "observations.jsonl"
     report_json_path = run_dir / "quality_report.json"
     report_md_path = run_dir / "quality_report.md"
-    rendered_video_path = run_dir / "rendered.mp4"
+    rendered_video_path = run_dir / "rendered.mp4" if render else None
     app_config_path = run_dir / "app.yaml"
     command_path = run_dir / "command.txt"
 
@@ -101,6 +108,7 @@ def build_run(
         roi_config=roi_config,
         defaults=defaults,
         experiment=experiment,
+        render=render,
     )
     report_cmd = build_report_cmd(
         observation_path=observation_path,
@@ -147,9 +155,12 @@ def build_app_overrides(
     overrides: dict[str, Any] = {}
 
     detector_keys = {
+        "backend": "backend",
         "confidence": "confidence",
         "rfdetr_size": "rfdetr_size",
         "rfdetr_model_dir": "rfdetr_model_dir",
+        "yolo_model_path": "yolo_model_path",
+        "input_resolution": "input_resolution",
     }
     detector_overrides = {}
     for source_key, config_key in detector_keys.items():
@@ -173,6 +184,7 @@ def build_app_cmd(
     roi_config: str,
     defaults: dict[str, Any],
     experiment: dict[str, Any],
+    render: bool,
 ) -> list[str]:
     cmd = [
         sys.executable,
@@ -194,6 +206,8 @@ def build_app_cmd(
         cmd.extend(["--stride", str(experiment["stride"])])
     if experiment.get("use_roi", defaults.get("use_roi", True)):
         cmd.append("--use-roi")
+    if not render:
+        cmd.append("--no-render")
     if experiment.get("max_frames") is not None:
         cmd.extend(["--max-frames", str(experiment["max_frames"])])
     return cmd

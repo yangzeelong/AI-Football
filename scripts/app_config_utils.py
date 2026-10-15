@@ -13,7 +13,7 @@ POSE_MODEL_PATHS: dict[str, dict[str, str]] = {
         "rtmpose-m_8xb64-270e_coco-wholebody-256x192.py",
         "checkpoint_path":
         "models/mmpose/rtmpose-wholebody/"
-        "rtmpose-m_simcc-coco-wholebody_pt-aic-coco_270e-256x192-cd5e845c_20230123.pth",
+        "rtmpose-m_simcc-coco-wholebody_pt-aic-coco_270e_coco-wholebody-256x192-cd5e845c_20230123.pth",
     },
     "hrnet-w32": {
         "preset": "hrnet-w32",
